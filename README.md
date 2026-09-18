@@ -17,12 +17,9 @@ The repository is in foundation setup. The first technical gate is an installabl
 ## Repository layout
 
 ```text
-apps/       Platform application placeholders and platform notes
-docs/       Project plan, decisions, and research notes
+docs/       Project plan and delivery milestones
 protocol/   Versioned wire-format and cross-platform fixtures
-simulator/  Deterministic routing simulator and experiments
-gateway/    Optional public-bundle gateway (later milestone)
-tools/      Fixture and demo-data tooling
+TrailMesh.md  Product, protocol, security, testing, and diploma specification
 ```
 
 ## Development principles
