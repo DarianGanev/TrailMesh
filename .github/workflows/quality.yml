@@ -1,0 +1,37 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  repository-hygiene:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check required project files
+        shell: bash
+        run: |
+          test -s TrailMesh.md
+          test -s README.md
+          test -s .coderabbit.yaml
+          ! find . -type f \( -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.mobileprovision' \) -print -quit | grep -q .
+      - name: Check specification headings
+        shell: bash
+        run: |
+          grep -q '^# TrailMesh' TrailMesh.md
+          grep -q '## 8\. Mandatory feasibility experiments' TrailMesh.md
+          grep -q '## 25\. Nine-month milestones' TrailMesh.md
+  markdown:
+    name: Markdown
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DavidAnson/markdownlint-cli2-action@v20
+        with:
+          globs: '**/*.md'
