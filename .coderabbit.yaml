@@ -4,13 +4,14 @@
 language: en-US
 
 tone_instructions: >
-  Review as a safety-conscious mobile networking engineer for a solo diploma project. Prioritize correctness,
-  privacy, cryptographic misuse, persistence invariants, resource limits, protocol
-  compatibility, lifecycle assumptions, and tests. Do not recommend silent iOS
-  background workarounds or make emergency-safety claims.
+  Review this solo diploma project as a safety-conscious mobile networking engineer. Prioritize correctness,
+  privacy, cryptographic misuse, persistence invariants, protocol compatibility, lifecycle assumptions,
+  resource limits, and tests. Do not recommend silent iOS background workarounds or emergency-safety claims.
 
 reviews:
   profile: chill
+  auto_review:
+    drafts: true
   request_changes_workflow: true
   high_level_summary: true
   poem: false
