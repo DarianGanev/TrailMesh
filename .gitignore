@@ -1,0 +1,39 @@
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Secrets and signing material
+.env
+.env.*
+*.p12
+*.mobileprovision
+*.cer
+*.keystore
+*.jks
+*.pem
+*.key
+
+# Build output
+build/
+dist/
+DerivedData/
+.gradle/
+Pods/
+xcuserdata/
+*.xcuserstate
+
+# Local data and traces
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+local-data/
+private-traces/
+device-logs/
+map-packs/
+
+# Generated analysis output
+simulator/results/
+coverage/

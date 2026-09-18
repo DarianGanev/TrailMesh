@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.md linguist-language=Markdown
+*.swift linguist-language=Swift
+*.kt linguist-language=Kotlin
+*.py linguist-language=Python

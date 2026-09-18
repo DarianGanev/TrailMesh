@@ -1,0 +1,7 @@
+config:
+  # The specification contains deliberate long-form engineering prose and
+  # tables. Keep structural Markdown checks while allowing those paragraphs.
+  MD013: false
+  MD028: false
+  MD036: false
+  MD041: false
