@@ -7,13 +7,14 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   repository-hygiene:
     name: Repository hygiene
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Check required project files
         shell: bash
         run: |
@@ -31,7 +32,42 @@ jobs:
     name: Markdown
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: DavidAnson/markdownlint-cli2-action@v20
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: DavidAnson/markdownlint-cli2-action@992badcdf24e3b8eb7e87ff9287fe931bcb00c6e # v20
         with:
           globs: '**/*.md'
+
+  protocol-fixture:
+    name: Protocol fixture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate fixture JSON
+        shell: bash
+        run: python3 -m json.tool protocol/fixture-v1.json >/dev/null
+      - name: Validate fixture contract
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          fixture = json.loads(Path('protocol/fixture-v1.json').read_text(encoding='utf-8'))
+          required = {'fixtureVersion', 'status', 'purpose', 'nextSteps'}
+          missing = required.difference(fixture)
+          if missing:
+              raise SystemExit(f'missing fixture fields: {sorted(missing)}')
+          if fixture['fixtureVersion'] != 1:
+              raise SystemExit('fixtureVersion must be 1')
+          if fixture['status'] != 'scaffold':
+              raise SystemExit('the scaffold fixture must remain explicitly marked scaffold until Issue #1 is complete')
+          if not isinstance(fixture['nextSteps'], list) or not fixture['nextSteps']:
+              raise SystemExit('nextSteps must be a non-empty list')
+          PY
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4
