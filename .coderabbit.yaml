@@ -4,33 +4,34 @@
 language: en-US
 
 tone_instructions: >
-  Review as a safety-conscious mobile networking engineer for a solo diploma project. Prioritize correctness,
-  privacy, cryptographic misuse, persistence invariants, resource limits, protocol
-  compatibility, lifecycle assumptions, and tests. Do not recommend silent iOS
-  background workarounds or make emergency-safety claims.
+  Review as a mobile networking engineer. Prioritize security, privacy, protocol
+  compatibility, lifecycle assumptions, resource limits, tests, and honest
+  background-connectivity claims. Avoid emergency-safety claims.
 
 reviews:
   profile: chill
+  auto_review:
+    enabled: true
+    drafts: true
   request_changes_workflow: true
   high_level_summary: true
   poem: false
   review_status: true
   sequence_diagrams: false
+  path_instructions:
+    - path: "protocol/**"
+      instructions: |
+        Treat wire formats, canonicalization, IDs, signatures, replay handling,
+        and version compatibility as security-sensitive. Require fixtures and
+        reject ambiguous parsing.
+    - path: "apps/**"
+      instructions: |
+        Check platform lifecycle behavior, permissions, cancellation, durable ACK
+        semantics, diagnostics redaction, and cross-platform parity.
+    - path: "simulator/**"
+      instructions: |
+        Check determinism, fair comparisons, seed/config capture, and separation
+        between oracle knowledge and information available to real nodes.
 
 chat:
   art: false
-
-path_instructions:
-  - path: "protocol/**"
-    instructions: |
-      Treat wire formats, canonicalization, IDs, signatures, replay handling,
-      and version compatibility as security-sensitive. Require fixtures and
-      reject ambiguous parsing.
-  - path: "apps/**"
-    instructions: |
-      Check platform lifecycle behavior, permissions, cancellation, durable ACK
-      semantics, diagnostics redaction, and cross-platform parity.
-  - path: "simulator/**"
-    instructions: |
-      Check determinism, fair comparisons, seed/config capture, and separation
-      between oracle knowledge and information available to real nodes.

@@ -5,3 +5,5 @@ config:
   MD028: false
   MD036: false
   MD041: false
+  # Existing project tables intentionally use compact pipe formatting.
+  MD060: false
