@@ -4,8 +4,9 @@
 language: en-US
 
 tone_instructions: >
-  Review as a safety-conscious mobile networking engineer. Prioritize security, privacy, protocol compatibility,
-  lifecycle assumptions, resource limits, and tests. Do not recommend silent iOS background workarounds.
+  Review as a mobile networking engineer. Prioritize security, privacy, protocol
+  compatibility, lifecycle assumptions, resource limits, tests, and honest
+  background-connectivity claims. Avoid emergency-safety claims.
 
 reviews:
   profile: chill
