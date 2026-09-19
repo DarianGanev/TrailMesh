@@ -1,0 +1,11 @@
+{
+  "fixtureVersion": 1,
+  "status": "scaffold",
+  "purpose": "Reserved for the first cross-platform canonical bundle fixture.",
+  "nextSteps": [
+    "Define canonical serialization",
+    "Compute the SHA-256 bundle identifier",
+    "Add Ed25519 signing and verification vectors",
+    "Verify equivalent parsing on iOS, Android, and the simulator"
+  ]
+}
