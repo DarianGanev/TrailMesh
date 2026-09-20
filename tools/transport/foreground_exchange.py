@@ -25,6 +25,15 @@ class ExchangeError(ValueError):
     """Raised when an exchange frame or evidence record is invalid."""
 
 
+class AdapterError(RuntimeError):
+    """Raised by a platform adapter with a safe code and lifecycle stage."""
+
+    def __init__(self, message: str, *, code: str = "adapter_error", stage: str = "transport"):
+        super().__init__(message)
+        self.code = code
+        self.stage = stage
+
+
 @dataclass(frozen=True)
 class LifecycleEvent:
     """One observable stage transition in an exchange attempt."""
@@ -43,9 +52,15 @@ class ExchangeEvidence:
     internet_disabled: bool
     payload_size: int
     expected_sha256: str
+    strategy: str | None = None
+    permission_state: str | None = None
+    radio_state: str | None = None
+    consent_result: str | None = None
+    authentication_result: str | None = None
     received_sha256: str | None = None
     success: bool = False
     error: str | None = None
+    failure_reason: dict[str, str] | None = None
     events: list[LifecycleEvent] = field(default_factory=list)
 
     def record(self, state: str) -> None:
@@ -102,12 +117,17 @@ def decode_frame(frame: bytes) -> bytes:
 
 def run_exchange(
     payload: bytes,
-    send: Callable[[bytes], bytes],
+    send: Callable[[bytes, Callable[[str], None]], bytes],
     *,
     direction: str,
     transport: str = "test-loopback",
-    internet_disabled: bool = True,
+    internet_disabled: bool,
     attempt_id: str | None = None,
+    strategy: str | None = None,
+    permission_state: str | None = None,
+    radio_state: str | None = None,
+    consent_result: str | None = None,
+    authentication_result: str | None = None,
 ) -> ExchangeEvidence:
     """Run one foreground exchange through an adapter and record its outcome.
 
@@ -125,27 +145,39 @@ def run_exchange(
         internet_disabled=internet_disabled,
         payload_size=len(payload),
         expected_sha256=sha256_hex(payload),
+        strategy=strategy,
+        permission_state=permission_state,
+        radio_state=radio_state,
+        consent_result=consent_result,
+        authentication_result=authentication_result,
     )
     try:
-        evidence.record("discovering")
-        evidence.record("connecting")
-        evidence.record("verifying_link")
         frame = encode_frame(payload)
-        evidence.record("transferring")
-        received = decode_frame(send(frame))
+        received = decode_frame(send(frame, evidence.record))
         evidence.record("validating")
         evidence.received_sha256 = sha256_hex(received)
         if received != payload:
             raise ExchangeError("received payload differs from the sent payload")
         evidence.record("accepted")
         evidence.success = True
-    except (ExchangeError, TypeError, ValueError) as exc:
+    except (AdapterError, ExchangeError, OSError, TimeoutError, TypeError, ValueError) as exc:
         evidence.error = str(exc)
+        evidence.failure_reason = {
+            "code": getattr(exc, "code", type(exc).__name__.lower()),
+            "stage": getattr(
+                exc,
+                "stage",
+                evidence.events[-1].state if evidence.events else "setup",
+            ),
+            "message": str(exc),
+        }
         evidence.record("failed")
     return evidence
 
 
-def loopback_send(frame: bytes) -> bytes:
-    """Return a frame unchanged for deterministic local contract tests."""
+def loopback_send(frame: bytes, record: Callable[[str], None]) -> bytes:
+    """Return a frame unchanged while emulating adapter lifecycle callbacks."""
 
+    for state in ("discovering", "connecting", "verifying_link", "transferring"):
+        record(state)
     return frame

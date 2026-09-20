@@ -2,6 +2,7 @@ import unittest
 
 from tools.transport.foreground_exchange import (
     MAX_PAYLOAD_BYTES,
+    AdapterError,
     ExchangeError,
     decode_frame,
     encode_frame,
@@ -18,6 +19,7 @@ class ForegroundExchangeTests(unittest.TestCase):
             payload,
             loopback_send,
             direction="iphone-to-android",
+            internet_disabled=True,
             attempt_id="attempt-001",
         )
 
@@ -41,7 +43,8 @@ class ForegroundExchangeTests(unittest.TestCase):
     def test_corruption_is_recorded_as_failure(self):
         payload = b"trailmesh"
 
-        def corrupt(frame: bytes) -> bytes:
+        def corrupt(frame: bytes, record) -> bytes:
+            loopback_send(frame, record)
             damaged = bytearray(frame)
             damaged[-1] ^= 0x01
             return bytes(damaged)
@@ -50,11 +53,30 @@ class ForegroundExchangeTests(unittest.TestCase):
             payload,
             corrupt,
             direction="android-to-iphone",
+            internet_disabled=True,
             attempt_id="attempt-002",
         )
 
         self.assertFalse(evidence.success)
         self.assertEqual(evidence.error, "payload checksum mismatch")
+        self.assertEqual(evidence.failure_reason["stage"], "transferring")
+        self.assertEqual(evidence.events[-1].state, "failed")
+
+    def test_adapter_failure_is_structured_without_false_success(self):
+        def fail(_frame: bytes, record) -> bytes:
+            record("discovering")
+            raise AdapterError("permission denied", code="permission_denied", stage="discovering")
+
+        evidence = run_exchange(
+            b"payload",
+            fail,
+            direction="iphone-to-android",
+            internet_disabled=False,
+        )
+
+        self.assertFalse(evidence.success)
+        self.assertEqual(evidence.failure_reason["code"], "permission_denied")
+        self.assertEqual(evidence.failure_reason["stage"], "discovering")
         self.assertEqual(evidence.events[-1].state, "failed")
 
     def test_frame_rejects_oversized_payloads(self):
