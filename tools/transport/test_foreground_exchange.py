@@ -58,8 +58,8 @@ class ForegroundExchangeTests(unittest.TestCase):
         )
 
         self.assertFalse(evidence.success)
-        self.assertEqual(evidence.error, "payload checksum mismatch")
-        self.assertEqual(evidence.failure_reason["stage"], "transferring")
+        self.assertEqual(evidence.error, "exchange validation failed")
+        self.assertEqual(evidence.failure_reason["stage"], "validating")
         self.assertEqual(evidence.events[-1].state, "failed")
 
     def test_adapter_failure_is_structured_without_false_success(self):
@@ -77,6 +77,8 @@ class ForegroundExchangeTests(unittest.TestCase):
         self.assertFalse(evidence.success)
         self.assertEqual(evidence.failure_reason["code"], "permission_denied")
         self.assertEqual(evidence.failure_reason["stage"], "discovering")
+        self.assertEqual(evidence.error, "adapter operation failed")
+        self.assertEqual(evidence.failure_reason["message"], "adapter operation failed")
         self.assertEqual(evidence.events[-1].state, "failed")
 
     def test_frame_rejects_oversized_payloads(self):

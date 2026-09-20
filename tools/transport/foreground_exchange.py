@@ -85,6 +85,20 @@ def sha256_hex(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _safe_failure_message(exc: BaseException) -> str:
+    """Map internal exceptions to stable messages safe for exported evidence."""
+
+    if isinstance(exc, AdapterError):
+        return "adapter operation failed"
+    if isinstance(exc, TimeoutError):
+        return "transport timed out"
+    if isinstance(exc, OSError):
+        return "transport I/O failed"
+    if isinstance(exc, ExchangeError):
+        return "exchange validation failed"
+    return "exchange input failed"
+
+
 def encode_frame(payload: bytes) -> bytes:
     """Encode one bounded payload as length, digest, and bytes."""
 
@@ -153,15 +167,16 @@ def run_exchange(
     )
     try:
         frame = encode_frame(payload)
-        received = decode_frame(send(frame, evidence.record))
+        received_frame = send(frame, evidence.record)
         evidence.record("validating")
+        received = decode_frame(received_frame)
         evidence.received_sha256 = sha256_hex(received)
         if received != payload:
             raise ExchangeError("received payload differs from the sent payload")
         evidence.record("accepted")
         evidence.success = True
     except (AdapterError, ExchangeError, OSError, TimeoutError, TypeError, ValueError) as exc:
-        evidence.error = str(exc)
+        evidence.error = _safe_failure_message(exc)
         evidence.failure_reason = {
             "code": getattr(exc, "code", type(exc).__name__.lower()),
             "stage": getattr(
@@ -169,7 +184,7 @@ def run_exchange(
                 "stage",
                 evidence.events[-1].state if evidence.events else "setup",
             ),
-            "message": str(exc),
+            "message": evidence.error,
         }
         evidence.record("failed")
     return evidence
