@@ -1,11 +1,33 @@
 {
   "fixtureVersion": 1,
-  "status": "scaffold",
-  "purpose": "Reserved for the first cross-platform canonical bundle fixture.",
-  "nextSteps": [
-    "Define canonical serialization",
-    "Compute the SHA-256 bundle identifier",
-    "Add Ed25519 signing and verification vectors",
-    "Verify equivalent parsing on iOS, Android, and the simulator"
-  ]
+  "status": "frozen",
+  "purpose": "Cross-platform RFC 8785 canonicalization, SHA-256 bundle ID, and Ed25519 verification vector.",
+  "coreDomain": "TrailMesh/core/v1\n",
+  "idDomain": "TrailMesh/id/v1\n",
+  "core": {
+    "author_key": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+    "body": {
+      "accuracy_m": 30,
+      "category": "water",
+      "event_id": "ABEiM0RVZneImaq7zN3u_w",
+      "lat_e7": 421790000,
+      "lon_e7": 235850000,
+      "note": "No flow observed at the spring.",
+      "observed_at_ms": 1789646100000,
+      "status": "dry",
+      "supersedes": null
+    },
+    "created_at_ms": 1789646400000,
+    "expires_at_ms": 1789732800000,
+    "kind": "report",
+    "max_hops": 12,
+    "nonce": "_-7dzLuqmYh3ZlVEMyIRAA",
+    "protocol": "trailmesh",
+    "version": 1
+  },
+  "canonicalCore": "{\"author_key\":\"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo\",\"body\":{\"accuracy_m\":30,\"category\":\"water\",\"event_id\":\"ABEiM0RVZneImaq7zN3u_w\",\"lat_e7\":421790000,\"lon_e7\":235850000,\"note\":\"No flow observed at the spring.\",\"observed_at_ms\":1789646100000,\"status\":\"dry\",\"supersedes\":null},\"created_at_ms\":1789646400000,\"expires_at_ms\":1789732800000,\"kind\":\"report\",\"max_hops\":12,\"nonce\":\"_-7dzLuqmYh3ZlVEMyIRAA\",\"protocol\":\"trailmesh\",\"version\":1}",
+  "canonicalCoreSha256": "07a986275f580d5e5cf9903479c11252461ae5b10b4e7bb06d666bb16b46083d",
+  "bundleId": "78dc6fce5951274be68ba560addc2576153b200040368f906c0694983af12e74",
+  "publicKey": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+  "signature": "-KjTOzqOa-SsXPxSQ1aSxcz3HCcqeir5wAgWtSU9UVRY1H22EQWBDZa-5JlgVZBkrkkSLhw_pA5A0Ny-z5okCw"
 }

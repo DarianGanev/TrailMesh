@@ -53,17 +53,29 @@ jobs:
           from pathlib import Path
 
           fixture = json.loads(Path('protocol/fixture-v1.json').read_text(encoding='utf-8'))
-          required = {'fixtureVersion', 'status', 'purpose', 'nextSteps'}
+          required = {
+              'fixtureVersion', 'status', 'purpose', 'coreDomain', 'idDomain',
+              'core', 'canonicalCore', 'canonicalCoreSha256', 'bundleId',
+              'publicKey', 'signature',
+          }
           missing = required.difference(fixture)
           if missing:
               raise SystemExit(f'missing fixture fields: {sorted(missing)}')
           if fixture['fixtureVersion'] != 1:
               raise SystemExit('fixtureVersion must be 1')
-          if fixture['status'] != 'scaffold':
-              raise SystemExit('the scaffold fixture must remain explicitly marked scaffold until Issue #1 is complete')
-          if not isinstance(fixture['nextSteps'], list) or not fixture['nextSteps']:
-              raise SystemExit('nextSteps must be a non-empty list')
+          if fixture['status'] != 'frozen':
+              raise SystemExit('fixtureVersion 1 must remain explicitly frozen after Issue #1')
           PY
+
+  protocol-tests:
+    name: Protocol vectors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install protocol tooling
+        run: python3 -m pip install --disable-pip-version-check --requirement tools/protocol/requirements.txt
+      - name: Run protocol vector tests
+        run: python3 -m unittest tools.protocol.test_vector
 
   dependency-review:
     name: Dependency review
