@@ -2,6 +2,13 @@
 
 All notable changes to TrailMesh are documented here.
 
+## [Unreleased]
+
+### Protocol fixture
+
+- Frozen protocol v1 RFC 8785 canonicalization, SHA-256 bundle ID, and Ed25519 verification vector.
+- Reference Python tooling and tests for strict Base64URL, duplicate-key rejection, and signature verification.
+
 ## [0.1.0] - 2026-09-18
 
 ### Added
