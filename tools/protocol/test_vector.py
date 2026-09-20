@@ -42,7 +42,7 @@ TEST_SEED = bytes.fromhex(
 
 class ProtocolVectorTests(unittest.TestCase):
     def test_frozen_fixture_matches_rfc8785_hash_and_signature_vectors(self):
-        fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+        fixture = parse_json_strict(FIXTURE_PATH.read_text(encoding="utf-8"))
         core_bytes = canonical_core_bytes(fixture["core"])
 
         self.assertEqual(fixture["fixtureVersion"], 1)
@@ -94,7 +94,7 @@ class ProtocolVectorTests(unittest.TestCase):
         self.assertEqual(sign_core(private_key, canonical_core_bytes(core)), EXPECTED_SIGNATURE)
 
     def test_tampering_invalidates_the_signature(self):
-        fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+        fixture = parse_json_strict(FIXTURE_PATH.read_text(encoding="utf-8"))
         tampered = dict(fixture["core"])
         tampered["max_hops"] = 11
 
@@ -113,6 +113,8 @@ class ProtocolVectorTests(unittest.TestCase):
             b64url_decode(encoded + "=")
         with self.assertRaises(ValueError):
             b64url_decode("not base64!")
+        with self.assertRaises(ValueError):
+            b64url_decode("AB")
 
     def test_json_parser_rejects_duplicate_keys_and_non_standard_constants(self):
         with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
