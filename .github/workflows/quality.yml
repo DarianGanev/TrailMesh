@@ -42,6 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install protocol tooling
+        run: python3 -m pip install --disable-pip-version-check --requirement tools/protocol/requirements.txt
       - name: Validate fixture JSON
         shell: bash
         run: python3 -m json.tool protocol/fixture-v1.json >/dev/null
@@ -49,10 +51,13 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
-          import json
           from pathlib import Path
+          import sys
 
-          fixture = json.loads(Path('protocol/fixture-v1.json').read_text(encoding='utf-8'))
+          sys.path.insert(0, '.')
+          from tools.protocol.vector import parse_json_strict
+
+          fixture = parse_json_strict(Path('protocol/fixture-v1.json').read_text(encoding='utf-8'))
           required = {
               'fixtureVersion', 'status', 'purpose', 'coreDomain', 'idDomain',
               'core', 'canonicalCore', 'canonicalCoreSha256', 'bundleId',

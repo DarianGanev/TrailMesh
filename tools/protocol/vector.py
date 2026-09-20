@@ -36,9 +36,14 @@ def b64url_decode(value: str) -> bytes:
     if not isinstance(value, str) or "=" in value or not _BASE64URL_RE.fullmatch(value):
         raise ValueError("value must be unpadded Base64URL")
     try:
-        return base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
+        decoded = base64.b64decode(
+            value + "=" * (-len(value) % 4), altchars=b"-_", validate=True
+        )
     except (ValueError, base64.binascii.Error) as exc:
         raise ValueError("invalid Base64URL") from exc
+    if b64url_encode(decoded) != value:
+        raise ValueError("value is not canonical Base64URL")
+    return decoded
 
 
 def canonical_core_bytes(core: Any) -> bytes:
