@@ -12,7 +12,7 @@ Read [TrailMesh.md](TrailMesh.md) for the complete product, protocol, security, 
 
 ## Current phase
 
-The repository is in foundation implementation. The protocol v1 canonical fixture is frozen and tested; the next technical gate is a small foreground iPhone-to-Android exchange with internet disabled.
+The repository is in foundation implementation. The protocol v1 canonical fixture and a bounded foreground exchange contract are frozen and tested; the next technical gate is physical iPhone-to-Android validation with internet disabled.
 
 ## Repository layout
 
