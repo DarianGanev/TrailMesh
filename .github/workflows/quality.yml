@@ -82,6 +82,14 @@ jobs:
       - name: Run protocol vector tests
         run: python3 -m unittest tools.protocol.test_vector
 
+  transport-tests:
+    name: Foreground exchange tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run bounded exchange contract tests
+        run: python3 -m unittest discover -s tools/transport -p 'test_*.py'
+
   dependency-review:
     name: Dependency review
     if: github.event_name == 'pull_request'

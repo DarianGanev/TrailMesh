@@ -1,0 +1,38 @@
+{
+  "schema": "trailmesh.foreground-exchange-evidence",
+  "version": 1,
+  "status": "not_started",
+  "purpose": "Gate A physical foreground exchange evidence",
+  "internet": {
+    "disabled_during_exchange": null,
+    "verification_method": "Record how internet access was disabled while required local radios remained enabled."
+  },
+  "devices": {
+    "iphone": {
+      "model": null,
+      "os_version": null,
+      "app_build": null,
+      "permissions": []
+    },
+    "android": {
+      "model": null,
+      "os_version": null,
+      "app_build": null,
+      "permissions": []
+    }
+  },
+  "transport": {
+    "adapter": null,
+    "strategy": null,
+    "radio_state": null,
+    "consent_or_authentication": null
+  },
+  "attempts": [],
+  "required_payload_sizes_bytes": [256, 2048, 8192],
+  "required_attempts_per_direction": 20,
+  "acceptance_rule": "At least 18 of 20 2048-byte attempts must complete with matching SHA-256 hashes in each direction; report every attempt and failure.",
+  "limitations": [
+    "This template is not evidence until populated by physical devices.",
+    "The local loopback tests validate framing and evidence recording only."
+  ]
+}
