@@ -1,15 +1,5 @@
 # TrailMesh UI and interaction brief
 
-This is the product-level reference for implementing the current TrailMesh screens. It reflects the map-first direction and the hiking-session behavior requested for the project. The complete requirements live in [TrailMesh.md](../TrailMesh.md), and delivery is tracked in [PROJECT_PLAN.md](PROJECT_PLAN.md).
-
-The [Google Stitch project](https://stitch.withgoogle.com/u/1/projects/2531057108629913746) is a visual reference. Keep the Explore map screen as the home screen. Treat Stitch output as a prototype: it does not establish that the illustrated basemap is real, licensed, current, or technically connected to a map provider.
-
-## Product intent
-
-TrailMesh should feel like a practical trail companion for people who want clear information and may not use smartphone apps often. The map is the primary surface. Reports explain what a hiker observed, when they observed it, and how recently another device received it. The interface should help a person prepare, make one useful contribution, start a trail session, and understand what happened without reading networking terminology.
-
-The iPhone is the presentation priority. Android must support the same core field tasks, with a simpler native layout where that improves delivery.
-
 ## Visual and accessibility direction
 
 - Use the platform system font and system text scaling. Keep sentence case for normal labels and use familiar words before technical terms.
