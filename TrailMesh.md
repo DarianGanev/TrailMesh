@@ -1352,7 +1352,7 @@ Keep the iPhone as the primary product. Android compatibility is required, even 
 ### 30.2 First execution sequence
 
 1. Inspect repository state and applicable project instructions; preserve existing work.
-2. Record the actual phone models, OS versions, permissions, and supported build/signing workflow.
+2. Record the actual phone models, OS versions, permissions, and supported build/signing workflow, then complete and prove the iPhone build/install/update/redacted diagnostics export cycle described in section 6.6.
 3. Review the approved field UI/UX brief and preserve the map as the home screen.
 4. Create a concise decision log and milestone checklist.
 5. Verify current documentation and exact SDK versions for the target phones.
