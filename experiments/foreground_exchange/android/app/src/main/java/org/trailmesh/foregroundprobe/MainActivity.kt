@@ -49,6 +49,7 @@ class MainActivity : Activity() {
     private lateinit var sizePicker: Spinner
     private var role: Role? = null
     private var sessionActive = false
+    private var sessionGeneration = 0L
     private var endpointId: String? = null
     private var requestedEndpointId: String? = null
     private var attemptIndex = 0
@@ -176,6 +177,7 @@ class MainActivity : Activity() {
 
     private fun startSession(selectedRole: Role) {
         stopSession("Restarting the probe session.", record = false)
+        sessionGeneration++
         role = selectedRole
         sessionActive = true
         attemptIndex = 0
@@ -331,6 +333,7 @@ class MainActivity : Activity() {
         val payload = ForegroundFrame.makeTestPayload(attemptSize, attemptIndex)
         val digest = ForegroundFrame.sha256(payload)
         val timedAttempt = attemptIndex
+        val timedSessionGeneration = sessionGeneration
         pendingDigest = digest
         records.put(JSONObject()
             .put("event", "payload_sent")
@@ -340,7 +343,11 @@ class MainActivity : Activity() {
             .put("observed_at", Instant.now().toString()))
         client.sendPayload(peer, Payload.fromBytes(ForegroundFrame.encodeDataMessage(attemptIndex, payload)))
             .addOnFailureListener {
-                if (sessionActive && attemptIndex == timedAttempt && pendingDigest != null) {
+                if (sessionActive &&
+                    sessionGeneration == timedSessionGeneration &&
+                    attemptIndex == timedAttempt &&
+                    pendingDigest != null
+                ) {
                     completeAttempt(false, "payload_send_failed", null)
                 }
             }
