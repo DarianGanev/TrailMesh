@@ -35,9 +35,9 @@ For iOS, open `experiments/foreground_exchange/ios/TrailMeshTransportProbe.xcode
 
 1. Install the debug probe on the target iPhone and Android phone. Keep both apps open and unlocked.
 2. Disable mobile data and disconnect each device from internet-connected Wi-Fi. Leave Bluetooth and Wi-Fi enabled. Record the exact method in the evidence file.
-3. On the iPhone choose **Find and send**; on Android choose **Advertise and receive**. Select 2 KiB and start a session on both phones. Wait for the batch to finish and record its success count.
-4. Export a redacted test log from both apps. Stop both sessions, switch the roles, and repeat so Android sends to iPhone.
-5. Enter the exact device models, OS versions, builds, permission state, radio state, consent/authentication behavior, and results in `evidence-template-v1.json`. The apps cannot verify that internet access was disabled, so record that manually. Do not add payload bytes or authentication tokens.
-6. The gate passes only if each sender reports at least 18 matching 2-KiB hashes out of 20 and the receiver log corroborates those hashes. Foreground results do not establish lock-screen or background behavior.
+3. On the iPhone choose **Find and send**; on Android choose **Advertise and receive**. Run one 20-transfer batch at each size (256 bytes, 2 KiB, and 8 KiB), starting the same size on both phones. Export both redacted logs after each batch; starting a new iOS session clears its previous log. Stop both sessions before changing size.
+4. Stop both apps' sessions, switch the roles, and repeat all three payload sizes so Android sends to iPhone. Save both device logs after every batch.
+5. Enter the exact device models, OS versions, builds, permission state, radio state, consent/authentication behavior, and all attempts in `evidence-template-v1.json`. The apps cannot verify that internet access was disabled, so record that manually. Do not add payload bytes or authentication tokens.
+6. Issue #2's gate passes only if the 2-KiB batch has at least 18 matching SHA-256 results out of 20 in each direction and the receiver logs corroborate those results. The 256-byte and 8-KiB batches characterize the transport. Foreground results do not establish lock-screen or background behavior.
 
 If the phones cannot discover or connect, preserve the failed logs and reasons. Do not substitute loopback, simulator, or LAN results for this physical test.
