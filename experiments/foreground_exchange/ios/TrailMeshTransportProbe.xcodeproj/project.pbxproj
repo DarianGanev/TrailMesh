@@ -1,0 +1,82 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+		B00000000000000000000001 = {isa = PBXBuildFile; fileRef = F00000000000000000000001; };
+		B00000000000000000000002 = {isa = PBXBuildFile; fileRef = F00000000000000000000002; };
+		B00000000000000000000003 = {isa = PBXBuildFile; fileRef = F00000000000000000000003; };
+		B00000000000000000000004 = {isa = PBXBuildFile; fileRef = F00000000000000000000004; };
+		B00000000000000000000005 = {isa = PBXBuildFile; fileRef = F00000000000000000000005; };
+		B00000000000000000000006 = {isa = PBXBuildFile; productRef = 8936a81b184c243e4bc02a94; };
+		B00000000000000000000007 = {isa = PBXBuildFile; fileRef = F00000000000000000000009; };
+
+		F00000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrailMeshTransportProbeApp.swift; sourceTree = "<group>"; };
+		F00000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		F00000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundFrame.swift; sourceTree = "<group>"; };
+		F00000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbeModel.swift; sourceTree = "<group>"; };
+		F00000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundFrameTests.swift; sourceTree = "<group>"; };
+		F00000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F00000000000000000000007 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TrailMeshTransportProbe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00000000000000000000008 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrailMeshTransportProbeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00000000000000000000009 = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
+
+		eeb2bfa69ef74c17646df682 = {isa = PBXGroup; children = (5db25555e01f75d30dbab63b, 6dade0b2b734e4e7d5c32bbd, F00000000000000000000006, 653157048931e853b03f4e56, ed9485fe02d09be9de2a463a, ); sourceTree = "<group>"; };
+		5db25555e01f75d30dbab63b = {isa = PBXGroup; children = (F00000000000000000000001, F00000000000000000000002, F00000000000000000000003, F00000000000000000000004, ); path = Sources; sourceTree = "<group>"; };
+		6dade0b2b734e4e7d5c32bbd = {isa = PBXGroup; children = (F00000000000000000000005, ); path = Tests; sourceTree = "<group>"; };
+		653157048931e853b03f4e56 = {isa = PBXGroup; children = (F00000000000000000000007, F00000000000000000000008, ); name = Products; sourceTree = "<group>"; };
+		ed9485fe02d09be9de2a463a = {isa = PBXGroup; children = (F00000000000000000000009, ); name = Frameworks; sourceTree = "<group>"; };
+
+		8936a81b184c243e4bc02a94 = {isa = XCSwiftPackageProductDependency; package = 056488e8f6d0a5a57a9f6fce; productName = NearbyConnections; };
+		056488e8f6d0a5a57a9f6fce = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/google/nearby.git"; requirement = {kind = revision; revision = 970a168f38cd084c4d6a3181cf435e61c5229473; }; };
+
+		4e9273c4785e5a953e1128b6 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C00000000000000000000002;
+			buildPhases = (0f154163ea9833f23c016a4d, d48508947dee549be76bae84, 48c4dcc0270f546c7439f750, );
+			buildRules = ();
+			dependencies = ();
+			name = TrailMeshTransportProbe;
+			packageProductDependencies = (8936a81b184c243e4bc02a94, );
+			productName = TrailMeshTransportProbe;
+			productReference = F00000000000000000000007;
+			productType = "com.apple.product-type.application";
+		};
+		258e133cd8427f805cc8a881 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C00000000000000000000003;
+			buildPhases = (2b1d663c3327d783428e1b2e, 003d87044fad63a545bafc7d, df68a216b4dd3d7301f1755f, );
+			buildRules = ();
+			dependencies = (D00000000000000000000001, );
+			name = TrailMeshTransportProbeTests;
+			productName = TrailMeshTransportProbeTests;
+			productReference = F00000000000000000000008;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+
+		fa649056e2d80b6b7173d561 = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {4e9273c4785e5a953e1128b6 = {CreatedOnToolsVersion = 16.0; }; 258e133cd8427f805cc8a881 = {CreatedOnToolsVersion = 16.0; TestTargetID = 4e9273c4785e5a953e1128b6; }; }; }; buildConfigurationList = C00000000000000000000001; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base, ); mainGroup = eeb2bfa69ef74c17646df682; packageReferences = (056488e8f6d0a5a57a9f6fce, ); productRefGroup = 653157048931e853b03f4e56; projectDirPath = ""; projectRoot = ""; targets = (4e9273c4785e5a953e1128b6, 258e133cd8427f805cc8a881, ); };
+
+		0f154163ea9833f23c016a4d = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000001, B00000000000000000000002, B00000000000000000000003, B00000000000000000000004, ); runOnlyForDeploymentPostprocessing = 0; };
+		2b1d663c3327d783428e1b2e = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000005, ); runOnlyForDeploymentPostprocessing = 0; };
+		d48508947dee549be76bae84 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000006, ); runOnlyForDeploymentPostprocessing = 0; };
+		003d87044fad63a545bafc7d = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000007, ); runOnlyForDeploymentPostprocessing = 0; };
+		48c4dcc0270f546c7439f750 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		df68a216b4dd3d7301f1755f = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+
+		D00000000000000000000001 = {isa = PBXTargetDependency; target = 4e9273c4785e5a953e1128b6; targetProxy = 2a193d1380c9397ac6f09551; };
+		2a193d1380c9397ac6f09551 = {isa = PBXContainerItemProxy; containerPortal = fa649056e2d80b6b7173d561; proxyType = 1; remoteGlobalIDString = 4e9273c4785e5a953e1128b6; remoteInfo = TrailMeshTransportProbe; };
+
+		C00000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000001, A00000000000000000000002, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		C00000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000003, A00000000000000000000004, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		C00000000000000000000003 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000005, A00000000000000000000006, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+
+		A00000000000000000000001 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; }; name = Debug; };
+		A00000000000000000000002 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; }; name = Release; };
+		A00000000000000000000003 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEFINES_MODULE = YES; ENABLE_PREVIEWS = YES; ENABLE_TESTABILITY = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.0; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = org.trailmesh.foregroundprobe.ios; PRODUCT_NAME = TrailMeshTransportProbe; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
+		A00000000000000000000004 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.0; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = org.trailmesh.foregroundprobe.ios; PRODUCT_NAME = TrailMeshTransportProbe; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
+		A00000000000000000000005 = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = org.trailmesh.foregroundprobe.ios.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TrailMeshTransportProbe.app/TrailMeshTransportProbe"; }; name = Debug; };
+		A00000000000000000000006 = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = org.trailmesh.foregroundprobe.ios.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TrailMeshTransportProbe.app/TrailMeshTransportProbe"; }; name = Release; };
+	};
+	rootObject = fa649056e2d80b6b7173d561;
+}

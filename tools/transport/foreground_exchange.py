@@ -85,6 +85,16 @@ def sha256_hex(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def make_test_payload(size: int, *, attempt_index: int) -> bytes:
+    """Create deterministic synthetic bytes shared by the native probe apps."""
+
+    if not isinstance(size, int) or isinstance(size, bool) or not 0 < size <= MAX_PAYLOAD_BYTES:
+        raise ExchangeError("test payload size must be between 1 byte and 16 KiB")
+    if not isinstance(attempt_index, int) or isinstance(attempt_index, bool) or attempt_index < 0:
+        raise ExchangeError("attempt index must be a non-negative integer")
+    return bytes((index + attempt_index) % 251 for index in range(size))
+
+
 def _safe_failure_message(exc: BaseException) -> str:
     """Map internal exceptions to stable messages safe for exported evidence."""
 

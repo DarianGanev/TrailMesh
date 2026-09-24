@@ -21,6 +21,8 @@ The repository is in foundation implementation. The protocol v1 canonical fixtur
 ```text
 docs/       Project plan, UI/UX brief, and feasibility notes
 protocol/   Versioned wire-format and cross-platform fixtures
+tools/      Python protocol reference and local transport contract tests
+experiments/ Device evidence templates and native foreground transport probes
 TrailMesh.md  Product, protocol, security, testing, and diploma specification
 ```
 
