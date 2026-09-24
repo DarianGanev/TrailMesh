@@ -10,14 +10,16 @@ Phones store signed reports and encrypted messages, carry them while people move
 
 Read [TrailMesh.md](TrailMesh.md) for the complete product, protocol, security, testing, evaluation, and nine-month delivery plan.
 
+The current map-first screen hierarchy, accessibility direction, and trail-session interaction are in [docs/UI_UX.md](docs/UI_UX.md). The milestone and GitHub project workflow is in [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md).
+
 ## Current phase
 
-The repository is in foundation implementation. The protocol v1 canonical fixture and a bounded foreground exchange contract are frozen and tested; the next technical gate is physical iPhone-to-Android validation with internet disabled.
+The repository is in foundation implementation. The protocol v1 canonical fixture and a bounded local exchange contract are frozen and tested; the next technical gate is physical iPhone-to-Android validation with internet disabled. The local loopback harness is not physical radio evidence. The updated product direction keeps the Explore map as home and targets a single user-started public-report trail session, with no approval at each encounter; background and transport behavior remain subject to device validation.
 
 ## Repository layout
 
 ```text
-docs/       Project plan and delivery milestones
+docs/       Project plan, UI/UX brief, and feasibility notes
 protocol/   Versioned wire-format and cross-platform fixtures
 TrailMesh.md  Product, protocol, security, testing, and diploma specification
 ```
