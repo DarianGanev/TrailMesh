@@ -147,9 +147,10 @@ class MainActivity : Activity() {
             add(Manifest.permission.BLUETOOTH_ADVERTISE)
             add(Manifest.permission.BLUETOOTH_CONNECT)
             add(Manifest.permission.BLUETOOTH_SCAN)
-        } else if (Build.VERSION.SDK_INT in Build.VERSION_CODES.Q..Build.VERSION_CODES.S_V2) {
+        }
+        if (Build.VERSION.SDK_INT in Build.VERSION_CODES.Q..Build.VERSION_CODES.S) {
             add(Manifest.permission.ACCESS_FINE_LOCATION)
-        } else {
+        } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             add(Manifest.permission.ACCESS_COARSE_LOCATION)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -329,6 +330,7 @@ class MainActivity : Activity() {
         val peer = endpointId ?: return
         val payload = ForegroundFrame.makeTestPayload(attemptSize, attemptIndex)
         val digest = ForegroundFrame.sha256(payload)
+        val timedAttempt = attemptIndex
         pendingDigest = digest
         records.put(JSONObject()
             .put("event", "payload_sent")
@@ -337,8 +339,11 @@ class MainActivity : Activity() {
             .put("expected_sha256", ForegroundFrame.sha256Hex(payload))
             .put("observed_at", Instant.now().toString()))
         client.sendPayload(peer, Payload.fromBytes(ForegroundFrame.encodeDataMessage(attemptIndex, payload)))
-            .addOnFailureListener { completeAttempt(false, "payload_send_failed", null) }
-        val timedAttempt = attemptIndex
+            .addOnFailureListener {
+                if (sessionActive && attemptIndex == timedAttempt && pendingDigest != null) {
+                    completeAttempt(false, "payload_send_failed", null)
+                }
+            }
         timeout = Runnable {
             if (attemptIndex == timedAttempt && pendingDigest != null) {
                 completeAttempt(false, "acknowledgement_timeout", null)

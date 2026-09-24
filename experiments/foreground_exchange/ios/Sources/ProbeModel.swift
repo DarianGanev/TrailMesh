@@ -30,11 +30,12 @@ final class ProbeModel: ObservableObject {
     private let attemptsPerBatch = 20
     private let ackTimeoutSeconds: TimeInterval = 15
     private var records: [[String: Any]] = []
+    private var sessionGeneration = 0
 
     var exportJSON: String {
         let device = UIDevice.current
-        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ? "unknown"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ? "unknown"
+        let appVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "unknown"
+        let build = (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "unknown"
         let document: [String: Any] = [
             "schema": "trailmesh.foreground-probe-log",
             "version": 1,
@@ -58,6 +59,7 @@ final class ProbeModel: ObservableObject {
 
     func start(role: ProbeRole, payloadSize: Int) {
         stop(reason: "Restarting test session.", writeStatus: false)
+        sessionGeneration &+= 1
         self.role = role
         self.payloadSize = payloadSize
         attemptIndex = 0
@@ -141,14 +143,19 @@ final class ProbeModel: ObservableObject {
             let message = try ForegroundFrame.encodeDataMessage(attemptIndex: attemptIndex, payload: payload)
             pendingDigest = digest
             let attempt = attemptIndex
+            let generation = sessionGeneration
             record(["event": "payload_sent", "attempt_index": attempt,
                     "payload_size_bytes": payloadSize, "expected_sha256": ForegroundFrame.hex(digest)])
             _ = manager.send(message, to: [endpointID], id: Int64(attempt + 1)) { [weak self] error in
-                guard let self, error != nil, self.attemptIndex == attempt else { return }
+                guard let self, self.sessionActive,
+                      self.sessionGeneration == generation, self.attemptIndex == attempt,
+                      self.pendingDigest != nil, error != nil else { return }
                 self.completeAttempt(success: false, reason: "payload_send_failed", receivedDigest: nil)
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + ackTimeoutSeconds) { [weak self] in
-                guard let self, self.attemptIndex == attempt, self.pendingDigest != nil else { return }
+                guard let self, self.sessionActive,
+                      self.sessionGeneration == generation, self.attemptIndex == attempt,
+                      self.pendingDigest != nil else { return }
                 self.completeAttempt(success: false, reason: "acknowledgement_timeout", receivedDigest: nil)
             }
         } catch {
@@ -194,9 +201,9 @@ final class ProbeModel: ObservableObject {
         record(["event": "attempt_result", "attempt_index": attemptIndex,
                 "payload_size_bytes": payloadSize,
                 "direction": role == .sender ? "iphone-to-android" : "android-to-iphone",
-                "expected_sha256": expectedDigest.map(ForegroundFrame.hex),
-                "received_sha256": receivedDigest.map(ForegroundFrame.hex),
-                "success": success, "failure_reason": reason as Any? ? NSNull()])
+                "expected_sha256": jsonValue(expectedDigest.map(ForegroundFrame.hex)),
+                "received_sha256": jsonValue(receivedDigest.map(ForegroundFrame.hex)),
+                "success": success, "failure_reason": jsonValue(reason)])
         if success { successfulAttempts += 1 } else { failedAttempts += 1 }
         pendingDigest = nil
         attemptIndex += 1
@@ -205,6 +212,8 @@ final class ProbeModel: ObservableObject {
     }
 
     private func clearPendingTimeout() {
+        // Invalidate send and timeout callbacks captured by the previous session.
+        sessionGeneration &+= 1
         pendingDigest = nil
     }
 
@@ -212,13 +221,19 @@ final class ProbeModel: ObservableObject {
         var item = record
         item["observed_at"] = ISO8601DateFormatter().string(from: Date())
         records.append(item)
-        let event = record["event"] as? String ? "event"
+        let event = record["event"] as? String ?? "event"
         if let attempt = record["attempt_index"] as? Int {
-            logs.append("\(event) #\(attempt): \(record["success"] ? "pending")")
+            let result = (record["success"] as? Bool).map { $0 ? "success" : "failed" } ?? "pending"
+            logs.append("\(event) #\(attempt): \(result)")
         } else {
             logs.append(event)
         }
     }
+}
+
+private func jsonValue(_ value: String?) -> Any {
+    guard let value else { return NSNull() }
+    return value
 }
 
 extension ProbeModel: AdvertiserDelegate, DiscovererDelegate, ConnectionManagerDelegate {

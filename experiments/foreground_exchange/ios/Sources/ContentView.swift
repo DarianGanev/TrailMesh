@@ -64,7 +64,7 @@ struct ContentView: View {
             }
             .navigationTitle("TrailMesh probe")
             .onChange(of: scenePhase) { phase in
-                if phase != .active, model.sessionActive {
+                if phase == .background, model.sessionActive {
                     model.stop(reason: "Foreground session stopped when the app left the foreground.")
                 }
             }

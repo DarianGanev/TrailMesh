@@ -126,6 +126,7 @@ jobs:
           -project TrailMeshTransportProbe.xcodeproj
           -scheme TrailMeshTransportProbe
           -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}"
+          -arch arm64
           -derivedDataPath "$RUNNER_TEMP/TrailMeshDerivedData"
           CODE_SIGNING_ALLOWED=NO
 
