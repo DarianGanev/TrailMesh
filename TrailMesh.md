@@ -149,14 +149,14 @@ Novelty is not “inventing mesh networking,” “inventing encryption,” or p
 ### 3.2 Non-goals
 
 - Guaranteed rescue, SOS delivery, emergency dispatch, or replacement for emergency equipment.
-- Silent unlimited background communication on iOS.
+- Silent, unlimited background communication on iOS.
 - Real-time tracking of strangers or live worldwide chat.
 - Voice, video, large attachments, or sharing entire map packs through encounters.
 - A new cryptographic primitive or an unsupported radio/background workaround.
-- Automatic phone pairing without required platform consent.
+- Per-encounter approval for public-report relaying is not part of the intended user flow. The user opts into one trail session; any transport-required peer confirmation remains an unresolved feasibility constraint until proven avoidable.
 - Building a full navigation engine, social network, commercial moderation service, or global reputation authority.
 - Full feature parity between the first iPhone and Android interfaces.
-- Claims that “offline” means Bluetooth and Wi-Fi are switched off.
+- Claims that offline use means Bluetooth and Wi-Fi are switched off.
 
 An account, payment, or cloud login MUST NOT be required to use a downloaded map, create a local report, or exchange bundles with another prepared device.
 
@@ -173,7 +173,7 @@ An account, payment, or cloud login MUST NOT be required to use a downloaded map
 
 ### 4.1 Prepare for a hike
 
-The user downloads one region and its style assets, imports or selects a GPX route, optionally exchanges contact cards with friends, and checks permissions. The app verifies that the map pack is complete. It explains what will be public and what remains private.
+The user downloads one permitted map region, optionally selects a route, reviews what public reports can be shared, checks the required permissions, and starts a trail session before setting off. TrailMesh verifies that the map pack is complete and explains that public reports may be exchanged during the active session while private messages remain addressed to chosen contacts.
 
 ### 4.2 Create an observation offline
 
@@ -181,7 +181,7 @@ The user places a pin or uses their current location, chooses a category, select
 
 ### 4.3 Exchange with another hiker
 
-Both users tap “Exchange nearby.” The app discovers a compatible peer, follows the transport's consent/authentication flow, exchanges bounded inventories, and requests useful bundles. The interface reports “Received 4 reports; shared 2” only after durable acknowledgements.
+The user starts a clearly visible trail session once before the hike. While it is active, TrailMesh is intended to discover nearby compatible devices and exchange eligible public reports without asking either hiker to approve each encounter. Selection uses freshness and configured proximity or route relevance; it does not require sharing a precise route with peers. The app reports receipt and durable storage only after verification and commit. If the chosen transport requires per-encounter approval, that is a documented product limitation and an open transport decision, not behavior to disguise with UI wording.
 
 ### 4.4 Carry information onward
 
@@ -203,16 +203,18 @@ If gateway sync is enabled, the phone uploads eligible public bundles and fetche
 
 ### 5.1 Main screens
 
-1. **Map:** downloaded coverage, route, current location when available, and reports.
-2. **Report details:** category, observation time, receipt time, approximate location accuracy, supporting/conflicting evidence, expiry, and source status.
-3. **Add report:** a short, offline-safe form with explicit public visibility.
-4. **Nearby exchange:** availability, discover/connect/exchange progress, cancellation, and useful error recovery.
-5. **Messages:** contacts, compose, inbox, outbox, and precise delivery states.
-6. **Offline regions:** download estimate, progress, verification, storage, and removal.
-7. **Settings:** permissions, relay consent, route sharing, storage and battery limits, gateway sync, and data deletion.
-8. **Research diagnostics:** hidden behind an explicit developer setting; export redacted encounter statistics.
+1. **Explore map (home):** a real, permitted topographic map; downloaded coverage; optional route and current location; restrained report markers; and a compact report preview. The map remains the app's home screen.
+2. **Reports:** a readable list and detail view showing category, observation and receipt times, location accuracy, supporting or conflicting reports, expiry, and provenance.
+3. **New report:** a short, offline-safe form with a clear public-visibility explanation and a local saved confirmation.
+4. **Nearby session:** one start/stop control for public-report exchange, a plain-language active state, current capability, and recovery for Bluetooth, location, or lifecycle limits. The target UX does not ask for approval on each public-report encounter.
+5. **Private messages:** verified contacts, inbox, conversation, compose, and exact delivery states. This flow is separate from automatic public-report relaying.
+6. **Offline maps:** available regions, download progress, verification, storage use, and removal.
+7. **Settings:** sharing and route-privacy choices, permissions, storage and battery limits, gateway sync, and data deletion.
+8. **Research diagnostics:** separate from ordinary hiking screens; available through a deliberate developer entry and exports redacted encounter statistics.
 
-The iPhone interface is the presentation priority. Android initially needs a simpler map/list, report form, nearby exchange, message inbox/outbox, and diagnostics.
+The iPhone interface is the presentation priority. Android initially needs a simpler map/list, report form, nearby session, message inbox/outbox, and diagnostics.
+
+The interaction and visual direction are specified in [docs/UI_UX.md](docs/UI_UX.md). Use actual licensed cartographic data in the product and preserve its required attribution. A design prototype or generated map image is not proof of a permitted or operational map source.
 
 ### 5.2 Requirement identifiers
 
@@ -221,7 +223,7 @@ The iPhone interface is the presentation priority. Android initially needs a sim
 | FR-01 | Prepared map works without internet after restart | Device walkthrough with all required resources cached. |
 | FR-02 | Report creation persists without a peer | Restart and verify original signed bytes. |
 | FR-03 | iPhone and Android exchange both directions | Physical transfer log and matching bundle hashes. |
-| FR-04 | Relay survives disconnection | A→B, restart B, B→C, with A absent. |
+| FR-04 | Relay survives disconnection | A -> B, restart B, B -> C, with A absent. |
 | FR-05 | Duplicate transfers create one logical object | Repeated and concurrent ingest test. |
 | FR-06 | Expired data is not forwarded as current | Controlled-clock expiry test. |
 | FR-07 | Private relays cannot decrypt message content | Three-device test and cryptographic negative tests. |
@@ -230,14 +232,16 @@ The iPhone interface is the presentation priority. Android initially needs a sim
 | FR-10 | Interrupted transfers recover safely | Disconnect/crash tests at protocol boundaries. |
 | FR-11 | Route privacy is configurable | Captured application frames contain only allowed fields. |
 | FR-12 | Simulator results are reproducible | Same configuration and seed produce the same event digest. |
+| FR-13 | A user-started trail session exchanges relevant public reports without per-encounter approval in the intended flow | Three-device encounter test demonstrates exchange without either hiker handling the phone; report selection matches the configured relevance rule. |
+| FR-14 | UI states reflect measured transport and lifecycle capability | Permission denial, disabled radio, foreground-only, background-limited, interrupted, and active states are distinguishable; unvalidated background behavior is never promised. |
 
 ### 5.3 User-facing state language
 
-Use “Saved on this phone,” “Shared with a relay,” “Delivered to recipient,” “Expired without delivery confirmation,” and “Delivery unknown.” Never infer recipient delivery from an SDK send callback or gateway upload.
+Use plain states such as "Trail session active", "Exchange paused", "Open TrailMesh to continue", and "Bluetooth is off" based on measured capability. Explain that public reports can exchange during the active session and that no per-encounter approval is expected in the target flow. Until background behavior is verified for the exact adapter and device state, state clearly when the app must remain open. Do not display "Connected" when no active peer is known.
 
-Use “Exchange active,” “Limited in background,” “Open the app to exchange,” and “Bluetooth unavailable” based on actual capability. Do not display “Mesh connected” when there is no known active peer.
+Use "Saved on this phone", "Shared with a relay", "Delivered to recipient", "Expired without delivery confirmation", and "Delivery unknown." Never infer recipient delivery from an SDK send callback or gateway upload.
 
-Report information should say “Observed 47 minutes ago; received 3 minutes ago,” “One unverified source,” or “Conflicting observations.” Do not use a green check mark that implies safety merely because a signature verified.
+Report information should say "Observed 47 minutes ago; received 3 minutes ago", "One unverified source", or "Conflicting observations." Do not use a green check mark that implies safety merely because a signature verified.
 
 ### 5.4 Initial nonfunctional targets
 
@@ -1192,14 +1196,14 @@ Plan for roughly 36 weeks with variable school workload. This assumes consistent
 
 | Month | Deliverables | Exit evidence | Scope control |
 |---|---|---|---|
-| 1 | Device/tooling inventory, Apple build pipeline, literature notes, Nearby/BLE spikes, initial lifecycle tests | Install/update/log-export cycle proven; actual iPhone↔Android foreground bytes with hashes | Avoid polished UI; include diagnostics immediately. |
-| 2 | Transport decision, protocol v1 draft, persistence and map spike, crypto vectors | Durable signed report transfer and prepared offline map on iPhone | Freeze primary adapter; limit background investigation. |
-| 3 | iPhone report/map flow, Android companion, exact dedup and expiry | A→B→C public report with A absent; restart B | No photos/social features. |
-| 4 | Contact QR exchange, encrypted messages, verified receipts, quotas | Relay cannot decrypt; wrong keys and false receipts rejected | One-to-one text only. |
+| 1 | Device/tooling inventory, protocol fixture, field UI/UX baseline, foreground transport spike, initial lifecycle matrix | Install/update/log-export cycle; documented map-first screen and session behavior; actual iPhone/Android foreground bytes with hashes | No background guarantee; no polished secondary flows before feasibility evidence. |
+| 2 | Transport decision, durable signed report storage, report/map vertical slice, session controls, permitted offline map spike | Stored and deduplicated report survives restart; prepared map works offline; active public-report session behavior and limitations recorded | Freeze the first adapter only after physical evidence; no per-encounter prompt in the target public-report UX. |
+| 3 | iPhone map/report experience, Android companion, expiry and three-device relay | A -> B -> C public report with A absent; restart B; usable field workflow on both platforms | Keep Android interface smaller; no photos or social feed. |
+| 4 | Verified contacts, private message screens and encrypted envelope, delivery receipts, quotas | Relay cannot decrypt; false receipt rejected; public-report sharing remains separate | One-to-one text only. |
 | 5 | Deterministic simulator, bounded epidemic and limited-copy baselines, measured contact profiles | Repeatable traces and token-conservation tests | Simulator supports research before visual animation. |
 | 6 | PRoPHET-style comparison, GeoRoute, privacy controls, initial ablations | Shared-policy fixtures and preliminary held-out results | Freeze tuning procedure. |
-| 7 | Field/lifecycle measurements, integration hardening, optional public gateway | Failure injection passes; gateway-off core still works | Drop gateway if critical work slips. |
-| 8 | Final experiments, statistical analysis, thesis draft, usability walkthrough | Reproducible result package with failures and limitations | Feature freeze. |
+| 7 | Field/lifecycle measurements, accessibility walkthrough, integration hardening, optional public gateway | Failure injection passes; field tasks are understandable; gateway-off core still works | Drop gateway if critical work slips. |
+| 8 | Final experiments, statistical analysis, thesis draft, usability evaluation | Reproducible result package with failures, limitations, and usability findings | Feature freeze. |
 | 9 | Defect fixes, thesis revision, mentor review, presentation rehearsals | Tagged build, finished report, repeatable demo and backup recording | No major new transport or crypto scheme. |
 
 Monthly mentor review: demonstrate one working capability, inspect evidence, review risks, and decide the next bounded milestone. Begin writing background/methodology chapters early; do not leave the whole diploma document for month nine.
@@ -1309,16 +1313,17 @@ The diploma should be judged on functioning cross-platform offline exchange, cor
 
 ### 29.1 Main seven-minute scenario
 
-Use three physical devices: A is the primary iPhone, B an Android relay, C a compatible recipient phone. Prepare the region and contacts before the demonstration. Use fictional test identities and a clearly labeled synthetic report.
+Use three physical devices: A is the primary iPhone, B an Android relay, and C a compatible recipient phone. Prepare the region and contacts before the demonstration. Use fictional test identities and a clearly labeled synthetic report.
 
 1. **Explain the problem:** the map shows a spring, but the map cannot say whether water is flowing today.
-2. **Prove preparation:** disable internet while keeping the transport's required local radios enabled. Show the downloaded map and the app's gateway-disabled state. Airplane mode alone is not sufficient proof if radios are later re-enabled; document the actual setup.
-3. **Create:** A records “Demo: spring reported dry” and a private message addressed to C.
-4. **First contact:** A and B perform an explicit foreground exchange. B receives the public report and opaque private bundle.
-5. **Separate:** disable A's exchange or remove A from radio range. If practical, restart B to demonstrate persistence.
-6. **Second contact:** B meets C; C receives the original report and decrypts the private message. B never displays private text.
-7. **Explain delivery:** C can create a receipt, but A may remain at “Shared with a relay” until that receipt makes a return journey.
-8. **Show research:** display a chart comparing useful coverage/bytes under the same scenario and explain one case where GeoRoute loses or offers no benefit.
+2. **Prove preparation:** disable internet while keeping the transport's required local radios enabled. Show the downloaded map and gateway-disabled state. Document the actual setup.
+3. **Start once:** A's hiker starts the clearly labeled trail session before putting the phone away. Explain what public data can be exchanged and how to stop the session.
+4. **Create:** A records "Demo: spring reported dry" and a separate private message addressed to C.
+5. **First encounter:** A and B pass within range while the session is active. The intended public-report flow transfers the eligible report without per-encounter approval. B stores the separate private bundle as opaque ciphertext.
+6. **Separate:** A leaves radio range. If practical, restart B to demonstrate persistence.
+7. **Second encounter:** B later meets C; C receives the original report and decrypts the private message. B never displays private text.
+8. **Explain delivery and evidence:** show durable relay status and report age. If the tested transport still requires a foreground screen or peer action, state that limitation and demonstrate the strongest verified behavior instead of presenting the target UX as already achieved.
+9. **Show research:** display a chart comparing useful coverage and bytes under the same scenario and explain one case where GeoRoute loses or offers no benefit.
 
 Keep the report's original observation timestamp visible to demonstrate that forwarding does not make it fresh again. Show identical bundle IDs in a researcher view if useful, without overwhelming the audience with implementation details.
 
@@ -1347,18 +1352,19 @@ Keep the iPhone as the primary product. Android compatibility is required, even 
 ### 30.2 First execution sequence
 
 1. Inspect repository state and applicable project instructions; preserve existing work.
-2. Record the development setup, selected phones, and Apple build environment. Prove the build/install/update/log-export cycle in section 6.6. Ask only for missing facts that block the next gate.
-3. Create a concise decision log and milestone checklist.
-4. Verify current documentation and exact SDK versions for the target phones.
-5. Implement the smallest foreground cross-platform byte exchange and collect Gate A evidence.
-6. Add canonical envelope fixtures and cross-platform hash/signature verification.
-7. Add transactional local storage, deduplication, expiry, and one durable ACK.
-8. Demonstrate A→B→C with the original signed bytes.
-9. Add the iPhone offline-map/report slice and minimal Android UX.
-10. Add preverified contacts and encrypted text using the frozen crypto profile.
-11. Build the simulator and routing baselines; calibrate contact behavior.
-12. Add GeoRoute and run the predeclared evaluation.
-13. Add optional gateway/background/stretch features only after core milestones are secure.
+2. Record the actual phone models, OS versions, permissions, and supported build/signing workflow, then complete and prove the iPhone build/install/update/redacted diagnostics export cycle described in section 6.6.
+3. Review the approved field UI/UX brief and preserve the map as the home screen.
+4. Create a concise decision log and milestone checklist.
+5. Verify current documentation and exact SDK versions for the target phones.
+6. Implement the smallest foreground cross-platform byte exchange and collect Gate A evidence.
+7. Add canonical envelope fixtures and cross-platform hash/signature verification.
+8. Add transactional local storage, deduplication, expiry, and one durable ACK.
+9. Demonstrate A -> B -> C with the original signed bytes.
+10. Add the iPhone offline-map/report slice, automatic-session UX, and minimal Android equivalent. Treat unattended background behavior as unproven until device measurements support it.
+11. Add preverified contacts and encrypted text using the frozen crypto profile.
+12. Build the simulator and routing baselines; calibrate contact behavior.
+13. Add GeoRoute and run the predeclared evaluation.
+14. Add optional gateway/background/stretch features only after core milestones are secure.
 
 ### 30.3 First concrete backlog
 
