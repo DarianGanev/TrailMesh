@@ -7,12 +7,43 @@ from tools.transport.foreground_exchange import (
     decode_frame,
     encode_frame,
     loopback_send,
+    make_test_payload,
     run_exchange,
     sha256_hex,
 )
 
 
 class ForegroundExchangeTests(unittest.TestCase):
+    def test_probe_payload_matches_the_cross_platform_golden_vector(self):
+        payload = make_test_payload(2048, attempt_index=0)
+
+        self.assertEqual(len(payload), 2048)
+        self.assertEqual(
+            sha256_hex(payload),
+            "b2a8170614e23194ae2951423d601987f518ce2f11205d7b0b708080103b9f76",
+        )
+        frame = encode_frame(payload)
+        self.assertEqual(
+            frame[:36].hex(),
+            "00000800b2a8170614e23194ae2951423d601987f518ce2f11205d7b0b708080103b9f76",
+        )
+        self.assertEqual(decode_frame(frame), payload)
+
+    def test_probe_payload_changes_for_each_attempt(self):
+        first = make_test_payload(2048, attempt_index=0)
+        second = make_test_payload(2048, attempt_index=1)
+
+        self.assertNotEqual(first, second)
+        self.assertNotEqual(sha256_hex(first), sha256_hex(second))
+
+    def test_probe_payload_rejects_invalid_sizes_and_attempts(self):
+        with self.assertRaises(ExchangeError):
+            make_test_payload(0, attempt_index=0)
+        with self.assertRaises(ExchangeError):
+            make_test_payload(MAX_PAYLOAD_BYTES + 1, attempt_index=0)
+        with self.assertRaises(ExchangeError):
+            make_test_payload(2048, attempt_index=-1)
+
     def test_two_kib_loopback_records_a_successful_lifecycle(self):
         payload = bytes(range(256)) * 8
         evidence = run_exchange(
