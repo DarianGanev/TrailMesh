@@ -14,7 +14,7 @@ class NearbyOperationFailureTest {
         )
 
         assertEquals(
-            "Discovery failed (8029: MISSING_PERMISSION_NEARBY_WIFI_DEVICES). See test log.",
+            "Discovery failed (8029: MISSING_PERMISSION_NEARBY_WIFI_DEVICES, ApiException). See test log.",
             failure.userMessage(),
         )
     }
