@@ -20,7 +20,7 @@ class NearbyOperationFailureTest {
     }
 
     @Test
-    fun fallsBackToTheOperationWhenGoogleStatusCodeIsUnavailable() {
+    fun includesExceptionTypeWhenGoogleStatusCodeIsUnavailable() {
         val failure = NearbyOperationFailure(
             operation = "Discovery",
             statusCode = null,
@@ -28,6 +28,6 @@ class NearbyOperationFailureTest {
             exceptionType = "IllegalStateException",
         )
 
-        assertEquals("Discovery failed. See test log.", failure.userMessage())
+        assertEquals("Discovery failed (IllegalStateException). See test log.", failure.userMessage())
     }
 }

@@ -10,7 +10,7 @@ internal data class NearbyOperationFailure(
         val details = statusCode?.let { code ->
             val name = statusName?.takeIf(String::isNotBlank)?.let { ": $it" }.orEmpty()
             " ($code$name)"
-        }.orEmpty()
+        } ?: " (${exceptionType.ifBlank { "unknown error" }})"
         return "$operation failed$details. See test log."
     }
 }
