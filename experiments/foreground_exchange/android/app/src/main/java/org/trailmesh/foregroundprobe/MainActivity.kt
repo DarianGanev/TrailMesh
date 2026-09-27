@@ -15,6 +15,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
+import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.AdvertisingOptions
 import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback
@@ -201,20 +202,14 @@ class MainActivity : Activity() {
         val options = AdvertisingOptions.Builder().setStrategy(Strategy.P2P_POINT_TO_POINT).build()
         client.startAdvertising("TrailMesh probe", SERVICE_ID, lifecycleCallback, options)
             .addOnSuccessListener { status("Ready to receive; foreground session active.") }
-            .addOnFailureListener {
-                status("Advertising failed. Check permissions and radio settings.")
-                appendLog("advertising_failed")
-            }
+            .addOnFailureListener { recordNearbyFailure("Advertising", it) }
     }
 
     private fun startDiscovery() {
         val options = DiscoveryOptions.Builder().setStrategy(Strategy.P2P_POINT_TO_POINT).build()
         client.startDiscovery(SERVICE_ID, discoveryCallback, options)
             .addOnSuccessListener { status("Searching for the receiver; foreground session active.") }
-            .addOnFailureListener {
-                status("Discovery failed. Check permissions and radio settings.")
-                appendLog("discovery_failed")
-            }
+            .addOnFailureListener { recordNearbyFailure("Discovery", it) }
     }
 
     private val discoveryCallback = object : EndpointDiscoveryCallback() {
@@ -409,6 +404,26 @@ class MainActivity : Activity() {
     private fun status(message: String) {
         if (::statusView.isInitialized) statusView.text = message
         appendLog(message)
+    }
+
+    private fun recordNearbyFailure(operation: String, exception: Exception) {
+        val statusCode = (exception as? ApiException)?.statusCode
+        val statusName = statusCode?.let(ConnectionsStatusCodes::getStatusCodeString)
+        val failure = NearbyOperationFailure(
+            operation = operation,
+            statusCode = statusCode,
+            statusName = statusName,
+            exceptionType = exception.javaClass.simpleName,
+        )
+        records.put(JSONObject()
+            .put("event", "nearby_operation_failed")
+            .put("operation", operation.lowercase(Locale.ROOT))
+            .put("status_code", statusCode ?: JSONObject.NULL)
+            .put("status_name", statusName ?: JSONObject.NULL)
+            .put("exception_type", failure.exceptionType)
+            .put("observed_at", Instant.now().toString()))
+        status(failure.userMessage())
+        refreshLog()
     }
 
     private fun appendLog(message: String) {
