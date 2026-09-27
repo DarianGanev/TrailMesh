@@ -18,6 +18,8 @@ The paired native probe is under [`experiments/foreground_exchange`](../../exper
 
 The probe starts in the foreground on both phones. Choose **Find and send** on one and **Advertise and receive** on the other, then start a session on both. The sender automatically sends a batch of 20 framed payloads and waits for a receiver checksum acknowledgement after each one. Run the first direction with the iPhone sending, then stop both sessions and repeat with Android sending. The probe can also run batches of 256-byte and 8-KiB payloads; the 2-KiB batch is the stated acceptance gate.
 
+If Android advertising or discovery fails to start, the status and redacted test log show the Google Play Services status code and name when available, plus the exception type. Share the test log so the failure can be diagnosed; it omits raw exception messages and test payload bytes.
+
 Connection requests and Nearby's verification callback are automatically accepted only after the user starts this test session. This deliberately avoids a per-encounter tap in the probe. Google warns that automatically accepting the short verification token does not authenticate the peer, so the probe must carry generated test bytes only. This is not the production security policy.
 
 ### Build and install
