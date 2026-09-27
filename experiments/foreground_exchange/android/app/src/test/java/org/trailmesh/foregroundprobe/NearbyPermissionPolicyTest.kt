@@ -28,4 +28,33 @@ class NearbyPermissionPolicyTest {
             NearbyPermissionPolicy.requiredPermissions(29).toSet(),
         )
     }
+
+    @Test
+    fun android12RetriesFineLocationTogetherWithCoarseWhenApproximateWasGranted() {
+        val fineLocation = "android.permission.ACCESS_FINE_LOCATION"
+        val granted = NearbyPermissionPolicy.requiredPermissions(31)
+            .filterNot { it == fineLocation }
+            .toSet()
+
+        assertEquals(
+            setOf(
+                "android.permission.ACCESS_COARSE_LOCATION",
+                fineLocation,
+            ),
+            NearbyPermissionPolicy.permissionsToRequest(31, granted).toSet(),
+        )
+    }
+
+    @Test
+    fun android13StillRequestsOnlyPermissionsThatAreMissing() {
+        val nearbyWifiDevices = "android.permission.NEARBY_WIFI_DEVICES"
+        val granted = NearbyPermissionPolicy.requiredPermissions(33)
+            .filterNot { it == nearbyWifiDevices }
+            .toSet()
+
+        assertEquals(
+            listOf(nearbyWifiDevices),
+            NearbyPermissionPolicy.permissionsToRequest(33, granted),
+        )
+    }
 }

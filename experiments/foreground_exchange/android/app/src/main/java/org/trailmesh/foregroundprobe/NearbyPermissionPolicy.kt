@@ -18,4 +18,16 @@ internal object NearbyPermissionPolicy {
             add(Manifest.permission.NEARBY_WIFI_DEVICES)
         }
     }
+
+    fun permissionsToRequest(sdkInt: Int, grantedPermissions: Set<String>): List<String> {
+        val missing = requiredPermissions(sdkInt).filterNot(grantedPermissions::contains)
+        val fineLocation = Manifest.permission.ACCESS_FINE_LOCATION
+        if (sdkInt != Build.VERSION_CODES.S || fineLocation !in missing) return missing
+
+        val locationPermissions = listOf(
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            fineLocation,
+        )
+        return locationPermissions + missing.filterNot(locationPermissions::contains)
+    }
 }

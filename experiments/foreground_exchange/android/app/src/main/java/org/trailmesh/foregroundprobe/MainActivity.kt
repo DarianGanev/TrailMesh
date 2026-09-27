@@ -139,8 +139,11 @@ class MainActivity : Activity() {
     }
 
     private fun requestStart() {
-        val missing = NearbyPermissionPolicy.requiredPermissions(Build.VERSION.SDK_INT)
-            .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        val sdkInt = Build.VERSION.SDK_INT
+        val granted = NearbyPermissionPolicy.requiredPermissions(sdkInt)
+            .filter { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+            .toSet()
+        val missing = NearbyPermissionPolicy.permissionsToRequest(sdkInt, granted)
         if (missing.isNotEmpty()) {
             requestPermissions(missing.toTypedArray(), REQUEST_PERMISSIONS)
             status("Allow the requested Nearby and Location permissions to start the foreground test.")
