@@ -1,6 +1,5 @@
 package org.trailmesh.foregroundprobe
 
-import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -92,6 +91,11 @@ class MainActivity : Activity() {
             textSize = 14f
             setPadding(0, 12, 0, 16)
         })
+        content.addView(TextView(this).apply {
+            text = "Compatibility note: some Google Nearby installs also require Android's approximate Location permission for discovery. This probe does not read or log your coordinates; Android or Google Play services may still require that permission check."
+            textSize = 14f
+            setPadding(0, 0, 0, 16)
+        })
         rolePicker = Spinner(this).apply {
             adapter = ArrayAdapter(
                 this@MainActivity,
@@ -135,29 +139,14 @@ class MainActivity : Activity() {
     }
 
     private fun requestStart() {
-        val missing = requiredPermissions().filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        val missing = NearbyPermissionPolicy.requiredPermissions(Build.VERSION.SDK_INT)
+            .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
         if (missing.isNotEmpty()) {
             requestPermissions(missing.toTypedArray(), REQUEST_PERMISSIONS)
-            status("Allow nearby-device permissions to start the foreground test.")
+            status("Allow the requested Nearby and Location permissions to start the foreground test.")
             return
         }
         startSession(if (rolePicker.selectedItemPosition == 0) Role.SENDER else Role.RECEIVER)
-    }
-
-    private fun requiredPermissions(): List<String> = buildList {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            add(Manifest.permission.BLUETOOTH_ADVERTISE)
-            add(Manifest.permission.BLUETOOTH_CONNECT)
-            add(Manifest.permission.BLUETOOTH_SCAN)
-        }
-        if (Build.VERSION.SDK_INT in Build.VERSION_CODES.Q..Build.VERSION_CODES.S) {
-            add(Manifest.permission.ACCESS_FINE_LOCATION)
-        } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            add(Manifest.permission.ACCESS_COARSE_LOCATION)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            add(Manifest.permission.NEARBY_WIFI_DEVICES)
-        }
     }
 
     @Deprecated("The probe uses the platform permission callback to keep its setup minimal.")
@@ -171,7 +160,7 @@ class MainActivity : Activity() {
         if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
             startSession(if (rolePicker.selectedItemPosition == 0) Role.SENDER else Role.RECEIVER)
         } else {
-            status("A required nearby-device permission was denied.")
+            status("A required Nearby or Location permission was denied.")
             appendLog("permission_denied")
         }
     }
