@@ -199,17 +199,27 @@ class MainActivity : Activity() {
     }
 
     private fun startAdvertising() {
+        val callbackGeneration = sessionGeneration
         val options = AdvertisingOptions.Builder().setStrategy(Strategy.P2P_POINT_TO_POINT).build()
         client.startAdvertising("TrailMesh probe", SERVICE_ID, lifecycleCallback, options)
             .addOnSuccessListener { status("Ready to receive; foreground session active.") }
-            .addOnFailureListener { recordNearbyFailure("Advertising", it) }
+            .addOnFailureListener {
+                if (SessionCallbackGuard.isCurrent(sessionActive, sessionGeneration, callbackGeneration)) {
+                    recordNearbyFailure("Advertising", it)
+                }
+            }
     }
 
     private fun startDiscovery() {
+        val callbackGeneration = sessionGeneration
         val options = DiscoveryOptions.Builder().setStrategy(Strategy.P2P_POINT_TO_POINT).build()
         client.startDiscovery(SERVICE_ID, discoveryCallback, options)
             .addOnSuccessListener { status("Searching for the receiver; foreground session active.") }
-            .addOnFailureListener { recordNearbyFailure("Discovery", it) }
+            .addOnFailureListener {
+                if (SessionCallbackGuard.isCurrent(sessionActive, sessionGeneration, callbackGeneration)) {
+                    recordNearbyFailure("Discovery", it)
+                }
+            }
     }
 
     private val discoveryCallback = object : EndpointDiscoveryCallback() {
