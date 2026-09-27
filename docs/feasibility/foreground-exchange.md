@@ -20,6 +20,8 @@ The probe starts in the foreground on both phones. Choose **Find and send** on o
 
 If Android advertising or discovery fails to start, the status and redacted test log show the Google Play Services status code and name when available, plus the exception type. Share the test log so the failure can be diagnosed; it omits raw exception messages and test payload bytes.
 
+Compatibility observation: on Android 13, this probe received Google Nearby status `8034` (`MISSING_PERMISSION_ACCESS_COARSE_LOCATION`) immediately at discovery start even though Nearby devices permission was enabled. The probe therefore declares and requests approximate Location as a compatibility permission alongside the Android Nearby permissions. This is an observed SDK/device behavior, not a claim that all Android 13 devices require Location for Nearby Connections. The probe itself does not read or log coordinates. See Google's [status code reference](https://developers.google.com/android/reference/com/google/android/gms/nearby/connection/ConnectionsStatusCodes) for the meaning of status 8034.
+
 Connection requests and Nearby's verification callback are automatically accepted only after the user starts this test session. This deliberately avoids a per-encounter tap in the probe. Google warns that automatically accepting the short verification token does not authenticate the peer, so the probe must carry generated test bytes only. This is not the production security policy.
 
 ### Build and install
