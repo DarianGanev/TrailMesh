@@ -1,5 +1,6 @@
 package org.trailmesh.foregroundprobe
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -48,6 +49,7 @@ class MainActivity : Activity() {
     private lateinit var rolePicker: Spinner
     private lateinit var sizePicker: Spinner
     private var role: Role? = null
+    private var permissionRetryRole: Role? = null
     private var sessionActive = false
     private var sessionGeneration = 0L
     private var endpointId: String? = null
@@ -92,7 +94,7 @@ class MainActivity : Activity() {
             setPadding(0, 12, 0, 16)
         })
         content.addView(TextView(this).apply {
-            text = "Compatibility note: some Google Nearby installs also require Android's approximate Location permission for discovery. This probe does not read or log your coordinates; Android or Google Play services may still require that permission check."
+            text = "Compatibility note: on Android 13+, Location is requested only if discovery reports that this device requires it; older versions may need it at session start. The probe does not read or log coordinates."
             textSize = 14f
             setPadding(0, 0, 0, 16)
         })
@@ -149,7 +151,7 @@ class MainActivity : Activity() {
             status("Allow the requested Nearby and Location permissions to start the foreground test.")
             return
         }
-        startSession(if (rolePicker.selectedItemPosition == 0) Role.SENDER else Role.RECEIVER)
+        startSession(selectedRole())
     }
 
     @Deprecated("The probe uses the platform permission callback to keep its setup minimal.")
@@ -160,13 +162,21 @@ class MainActivity : Activity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQUEST_PERMISSIONS) return
+        val retryRole = permissionRetryRole
+        permissionRetryRole = null
         if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-            startSession(if (rolePicker.selectedItemPosition == 0) Role.SENDER else Role.RECEIVER)
+            startSession(retryRole ?: selectedRole())
+        } else if (retryRole != null) {
+            status("Location permission was not granted. Check TrailMesh Probe permissions in Android Settings, then tap Start to retry.")
+            appendLog("permission_denied")
         } else {
             status("A required Nearby or Location permission was denied.")
             appendLog("permission_denied")
         }
     }
+
+    private fun selectedRole(): Role =
+        if (rolePicker.selectedItemPosition == 0) Role.SENDER else Role.RECEIVER
 
     private fun startSession(selectedRole: Role) {
         stopSession("Restarting the probe session.", record = false)
@@ -434,6 +444,29 @@ class MainActivity : Activity() {
             .put("observed_at", Instant.now().toString()))
         status(failure.userMessage())
         refreshLog()
+        val grantedLocationPermissions = listOf(
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+        ).filter { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }.toSet()
+        val compatibilityPermissions = NearbyPermissionPolicy.permissionsForCompatibilityFailure(
+            sdkInt = Build.VERSION.SDK_INT,
+            operation = operation,
+            statusCode = statusCode,
+            grantedPermissions = grantedLocationPermissions,
+        )
+        if (compatibilityPermissions.isNotEmpty()) {
+            val retryRole = role ?: return
+            runOnUiThread {
+                permissionRetryRole = retryRole
+                val permissionMessage = when (statusCode) {
+                    NearbyPermissionPolicy.STATUS_MISSING_FINE_LOCATION -> "Nearby says this device needs precise Location for discovery. Choose Precise to retry; this probe does not read coordinates."
+                    NearbyPermissionPolicy.STATUS_MISSING_COARSE_LOCATION -> "Nearby says this device needs Location access for discovery. Allow it to retry; this probe does not read coordinates."
+                    else -> "Nearby needs Location permission for discovery on this device. Allow it to retry; this probe does not read coordinates."
+                }
+                status(permissionMessage)
+                requestPermissions(compatibilityPermissions.toTypedArray(), REQUEST_PERMISSIONS)
+            }
+        }
     }
 
     private fun appendLog(message: String) {
