@@ -11,7 +11,7 @@ internal object NearbyPermissionPolicy {
             add(Manifest.permission.BLUETOOTH_SCAN)
         }
         add(Manifest.permission.ACCESS_COARSE_LOCATION)
-        if (sdkInt in Build.VERSION_CODES.Q..Build.VERSION_CODES.S) {
+        if (sdkInt >= Build.VERSION_CODES.Q) {
             add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
         if (sdkInt >= Build.VERSION_CODES.TIRAMISU) {
@@ -22,7 +22,7 @@ internal object NearbyPermissionPolicy {
     fun permissionsToRequest(sdkInt: Int, grantedPermissions: Set<String>): List<String> {
         val missing = requiredPermissions(sdkInt).filterNot(grantedPermissions::contains)
         val fineLocation = Manifest.permission.ACCESS_FINE_LOCATION
-        if (sdkInt != Build.VERSION_CODES.S || fineLocation !in missing) return missing
+        if (sdkInt < Build.VERSION_CODES.S || fineLocation !in missing) return missing
 
         val locationPermissions = listOf(
             Manifest.permission.ACCESS_COARSE_LOCATION,

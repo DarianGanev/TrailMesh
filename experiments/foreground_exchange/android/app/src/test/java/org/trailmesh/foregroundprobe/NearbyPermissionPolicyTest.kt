@@ -5,7 +5,7 @@ import org.junit.Test
 
 class NearbyPermissionPolicyTest {
     @Test
-    fun android13RequestsCoarseLocationAlongsideNearbyAndBluetoothPermissions() {
+    fun android13RequestsCoarseAndFineLocationAlongsideNearbyAndBluetoothPermissions() {
         assertEquals(
             setOf(
                 "android.permission.BLUETOOTH_ADVERTISE",
@@ -13,8 +13,23 @@ class NearbyPermissionPolicyTest {
                 "android.permission.BLUETOOTH_SCAN",
                 "android.permission.NEARBY_WIFI_DEVICES",
                 "android.permission.ACCESS_COARSE_LOCATION",
+                "android.permission.ACCESS_FINE_LOCATION",
             ),
             NearbyPermissionPolicy.requiredPermissions(33).toSet(),
+        )
+    }
+
+    @Test
+    fun android13RequestsCoarseAndFineTogetherWhenApproximateLocationWasGranted() {
+        val coarseLocation = "android.permission.ACCESS_COARSE_LOCATION"
+        val fineLocation = "android.permission.ACCESS_FINE_LOCATION"
+        val granted = NearbyPermissionPolicy.requiredPermissions(33)
+            .filterNot { it == fineLocation }
+            .toSet()
+
+        assertEquals(
+            listOf(coarseLocation, fineLocation),
+            NearbyPermissionPolicy.permissionsToRequest(33, granted),
         )
     }
 

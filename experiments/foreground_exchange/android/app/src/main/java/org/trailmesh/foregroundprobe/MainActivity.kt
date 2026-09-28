@@ -92,7 +92,7 @@ class MainActivity : Activity() {
             setPadding(0, 12, 0, 16)
         })
         content.addView(TextView(this).apply {
-            text = "Compatibility note: some Google Nearby installs also require Android's approximate Location permission for discovery. This probe does not read or log your coordinates; Android or Google Play services may still require that permission check."
+            text = "Compatibility note: Google Nearby may require precise Location permission for discovery on some Android versions. This probe does not read or log your coordinates; Google Play services may still require the permission for radio discovery."
             textSize = 14f
             setPadding(0, 0, 0, 16)
         })
