@@ -130,6 +130,48 @@ jobs:
           ARCHS=arm64
           CODE_SIGNING_ALLOWED=NO
 
+  ios-device-package:
+    name: Unsigned iPhone probe package
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: experiments/foreground_exchange/ios
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build for a physical iPhone without repository signing secrets
+        shell: bash
+        run: |
+          xcodebuild build \
+            -project TrailMeshTransportProbe.xcodeproj \
+            -scheme TrailMeshTransportProbe \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/TrailMeshDeviceDerivedData" \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Package and validate the unsigned IPA
+        shell: bash
+        run: |
+          app="$RUNNER_TEMP/TrailMeshDeviceDerivedData/Build/Products/Debug-iphoneos/TrailMeshTransportProbe.app"
+          test -d "$app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")" = 'org.trailmesh.foregroundprobe.ios'
+          xcrun lipo -archs "$app/TrailMeshTransportProbe" | grep -qw arm64
+
+          package_dir="$RUNNER_TEMP/TrailMeshDevicePackage"
+          output_dir="$RUNNER_TEMP/TrailMeshDeviceOutput"
+          mkdir -p "$package_dir/Payload" "$output_dir"
+          ditto "$app" "$package_dir/Payload/TrailMeshTransportProbe.app"
+          (cd "$package_dir" && ditto -c -k --sequesterRsrc --keepParent Payload "$output_dir/TrailMeshTransportProbe-unsigned.ipa")
+          unzip -t "$output_dir/TrailMeshTransportProbe-unsigned.ipa"
+          (cd "$output_dir" && shasum -a 256 TrailMeshTransportProbe-unsigned.ipa > SHA256SUMS.txt)
+      - name: Upload iPhone package for AltStore signing
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: TrailMeshTransportProbe-unsigned-iphoneos
+          path: ${{ runner.temp }}/TrailMeshDeviceOutput/
+          if-no-files-found: error
+          retention-days: 7
+
   dependency-review:
     name: Dependency review
     if: github.event_name == 'pull_request'

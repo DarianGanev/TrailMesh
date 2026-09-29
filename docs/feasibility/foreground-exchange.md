@@ -35,6 +35,17 @@ cd experiments/foreground_exchange/android
 
 For iOS, open `experiments/foreground_exchange/ios/TrailMeshTransportProbe.xcodeproj` in Xcode, select the `TrailMeshTransportProbe` scheme and the iPhone, then build and run it. Allow Bluetooth and Local Network access when iOS asks. The iOS frame tests run in CI on an iPhone simulator.
 
+#### Windows and AltStore Classic test path
+
+The Quality workflow also builds an **unsigned iPhone-device IPA** and uploads it as the `TrailMeshTransportProbe-unsigned-iphoneos` Actions artifact. This is a test package, not an app release or proof that sideloading works on the target iPhone. Its `SHA256SUMS.txt` file identifies the exact package to test. A simulator `.app` cannot be substituted for this package.
+
+1. Install [iTunes and iCloud directly from Apple](https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows), then install [AltServer for Windows](https://altstore.io/). Use **AltStore Classic** for IPA files; AltStore PAL does not import arbitrary IPA files.
+2. Connect and unlock the iPhone, trust the computer when prompted, and use AltServer to install AltStore Classic. Complete Apple ID sign-in on your own device and PC. Enable Wi-Fi sync if using wireless refresh. Complete the iPhone's trust and Developer Mode steps in the [AltStore Windows guide](https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows).
+3. Download and extract the artifact from the successful GitHub Actions run. Verify the IPA's SHA-256 against `SHA256SUMS.txt`. Import the IPA into AltStore Classic on the iPhone, or use AltServer's **Shift-click → Sideload .ipa** option on Windows. AltStore/AltServer signs it for the test phone; never commit Apple credentials or signing material to this repository.
+4. Open the probe and allow the Bluetooth and Local Network prompts. If the install or first launch fails, record the exact error and iOS version. The first successful install and iPhone-to-Android transfer are still required evidence for Issue #2.
+
+With a free Apple ID, sideloaded apps expire after seven days. Keep AltServer reachable from the iPhone and refresh in AltStore Classic before expiry; a USB connection also works. AltStore attempts background refresh, but it is not guaranteed. [AltStore refresh instructions](https://faq.altstore.io/altstore-classic/your-altstore), [AltServer connection instructions](https://faq.altstore.io/altstore-classic/altserver).
+
 ### Run the physical gate
 
 1. Install the debug probe on the target iPhone and Android phone. Keep both apps open and unlocked.
