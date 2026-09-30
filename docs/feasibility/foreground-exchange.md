@@ -16,7 +16,9 @@ Each physical attempt must record the direction, payload size, adapter and strat
 
 The paired native probe is under [`experiments/foreground_exchange`](../../experiments/foreground_exchange/). It is a disposable feasibility client, not the TrailMesh app. The iOS target uses Swift; the Android target uses Kotlin and Google Nearby Connections 19.5.0. The iOS package is pinned to a source revision in the Xcode project. Both targets use the point-to-point strategy and the same service ID.
 
-The probe starts in the foreground on both phones. Choose **Find and send** on one and **Advertise and receive** on the other, then start a session on both. The sender automatically sends a batch of 20 framed payloads and waits for a receiver checksum acknowledgement after each one. Run the first direction with the iPhone sending, then stop both sessions and repeat with Android sending. The probe can also run batches of 256-byte and 8-KiB payloads; the 2-KiB batch is the stated acceptance gate.
+The probe starts in the foreground on both phones. Each phone selects a payload role and the same pairing mode. **Role-based** mode preserves the original behavior: the sender discovers and the receiver advertises. **Cross-platform** mode uses the radio direction that worked in the no-network iPhone-to-Android test: Android advertises and iPhone discovers, regardless of which phone is the payload sender. Once connected, either phone can send the generated test bytes. This mode tests whether reversing the discovery direction also fixes Android-to-iPhone payload delivery; it does not change the production architecture decision by itself.
+
+The selected sender automatically sends a batch of 20 framed payloads and waits for a receiver checksum acknowledgement after each one. In cross-platform mode, turn Wi-Fi off in Settings, disable mobile data, keep Bluetooth on, and turn off hotspots to isolate the radio path. The probe can also run batches of 256-byte and 8-KiB payloads; the 2-KiB batch is the stated acceptance gate.
 
 If Android advertising or discovery fails to start, the status and redacted test log show the Google Play Services status code and name when available, plus the exception type. Share the test log so the failure can be diagnosed; it omits raw exception messages and test payload bytes.
 
@@ -49,9 +51,9 @@ With a free Apple ID, sideloaded apps expire after seven days. Keep AltServer re
 ### Run the physical gate
 
 1. Install the debug probe on the target iPhone and Android phone. Keep both apps open and unlocked.
-2. Disable mobile data and disconnect each device from internet-connected Wi-Fi. Leave Bluetooth and Wi-Fi enabled. Record the exact method in the evidence file.
-3. On the iPhone choose **Find and send**; on Android choose **Advertise and receive**. Run one 20-transfer batch at each size (256 bytes, 2 KiB, and 8 KiB), starting the same size on both phones. Export both redacted logs after each batch; starting a new iOS session clears its previous log. Stop both sessions before changing size.
-4. Stop both apps' sessions, switch the roles, and repeat all three payload sizes so Android sends to iPhone. Save both device logs after every batch.
+2. For the role-based runs, disable mobile data and disconnect each device from internet-connected Wi-Fi. Leave Bluetooth and Wi-Fi enabled. Record the exact method in the evidence file.
+3. With **Role-based** pairing mode selected on both phones, run one 20-transfer batch at each size (256 bytes, 2 KiB, and 8 KiB) in both payload directions. Export both redacted logs after each batch; starting a new iOS session clears its previous log. Stop both sessions before changing size.
+4. Select **Cross-platform** pairing mode on both phones and repeat the 2-KiB batch in both payload directions. Disable Wi-Fi in Settings, disable mobile data, keep Bluetooth on, and turn off hotspots. Save both device logs after every batch. This isolates the Android-advertiser/iPhone-discoverer path from the failing Android-discoverer/iPhone-advertiser path.
 5. Enter the exact device models, OS versions, builds, permission state, radio state, consent/authentication behavior, and all attempts in `evidence-template-v1.json`. The apps cannot verify that internet access was disabled, so record that manually. Do not add payload bytes or authentication tokens.
 6. Issue #2's gate passes only if the 2-KiB batch has at least 18 matching SHA-256 results out of 20 in each direction and the receiver logs corroborate those results. The 256-byte and 8-KiB batches characterize the transport. Foreground results do not establish lock-screen or background behavior.
 
