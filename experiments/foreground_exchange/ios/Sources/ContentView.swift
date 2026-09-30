@@ -4,6 +4,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = ProbeModel()
     @State private var role: ProbeRole = .sender
+    @State private var pairingMode: ProbePairingMode = .roleBased
     @State private var payloadSize = 2048
 
     private let payloadSizes = [256, 2048, 8192]
@@ -24,6 +25,14 @@ struct ContentView: View {
                             Text(option.title).tag(option)
                         }
                     }
+                    Picker("Pairing mode", selection: $pairingMode) {
+                        ForEach(ProbePairingMode.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                    Text("Choose the same pairing mode on both phones. In cross-platform mode, this iPhone discovers while Android advertises; the selected sender still controls which phone sends test bytes.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                     Picker("Payload size", selection: $payloadSize) {
                         ForEach(payloadSizes, id: \.self) { size in
                             Text(size == 256 ? "256 bytes" : size == 2048 ? "2 KiB (required gate)" : "8 KiB")
@@ -31,7 +40,7 @@ struct ContentView: View {
                         }
                     }
                     Button("Start test session") {
-                        model.start(role: role, payloadSize: payloadSize)
+                        model.start(role: role, payloadSize: payloadSize, pairingMode: pairingMode)
                     }
                     .disabled(model.sessionActive)
                     Button("Stop session", role: .destructive) {

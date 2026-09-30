@@ -40,6 +40,7 @@ private const val ACK_TIMEOUT_MS = 15_000L
 
 class MainActivity : Activity() {
     private enum class Role { SENDER, RECEIVER }
+    private enum class PairingMode { ROLE_BASED, CROSS_PLATFORM }
 
     private val client by lazy { Nearby.getConnectionsClient(this) }
     private val handler = Handler(Looper.getMainLooper())
@@ -47,8 +48,11 @@ class MainActivity : Activity() {
     private lateinit var statusView: TextView
     private lateinit var logView: TextView
     private lateinit var rolePicker: Spinner
+    private lateinit var pairingModePicker: Spinner
     private lateinit var sizePicker: Spinner
     private var role: Role? = null
+    private var pairingMode = PairingMode.ROLE_BASED
+    private var transportRole = "discoverer"
     private var permissionRetryRole: Role? = null
     private var sessionActive = false
     private var sessionGeneration = 0L
@@ -102,10 +106,26 @@ class MainActivity : Activity() {
             adapter = ArrayAdapter(
                 this@MainActivity,
                 android.R.layout.simple_spinner_dropdown_item,
-                listOf("Send from this phone", "Receive on this phone"),
+                listOf("Send test bytes", "Receive test bytes"),
             )
         }
         content.addView(rolePicker)
+        pairingModePicker = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                listOf(
+                    "Role-based: sender finds receiver",
+                    "Cross-platform: iPhone discovers",
+                ),
+            )
+        }
+        content.addView(pairingModePicker)
+        content.addView(TextView(this).apply {
+            text = "Choose the same pairing mode on both phones. In cross-platform mode, Android advertises and iPhone discovers; the selected sender still controls which phone sends test bytes."
+            textSize = 14f
+            setPadding(0, 8, 0, 16)
+        })
         sizePicker = Spinner(this).apply {
             adapter = ArrayAdapter(
                 this@MainActivity,
@@ -178,10 +198,16 @@ class MainActivity : Activity() {
     private fun selectedRole(): Role =
         if (rolePicker.selectedItemPosition == 0) Role.SENDER else Role.RECEIVER
 
+    private fun selectedPairingMode(): PairingMode =
+        if (pairingModePicker.selectedItemPosition == 1) PairingMode.CROSS_PLATFORM
+        else PairingMode.ROLE_BASED
+
     private fun startSession(selectedRole: Role) {
         stopSession("Restarting the probe session.", record = false)
         sessionGeneration++
         role = selectedRole
+        pairingMode = selectedPairingMode()
+        transportRole = if (usesAdvertising()) "advertiser" else "discoverer"
         sessionActive = true
         attemptIndex = 0
         attemptSize = when (sizePicker.selectedItemPosition) {
@@ -194,11 +220,16 @@ class MainActivity : Activity() {
         records.put(JSONObject()
             .put("event", "session_started")
             .put("role", selectedRole.name.lowercase(Locale.ROOT))
+            .put("pairing_mode", pairingMode.name.lowercase(Locale.ROOT))
+            .put("transport_role", transportRole)
             .put("payload_size_bytes", attemptSize)
             .put("observed_at", Instant.now().toString()))
 
-        if (selectedRole == Role.RECEIVER) startAdvertising() else startDiscovery()
+        if (usesAdvertising()) startAdvertising() else startDiscovery()
     }
+
+    private fun usesAdvertising(): Boolean =
+        pairingMode == PairingMode.CROSS_PLATFORM || role == Role.RECEIVER
 
     private fun startAdvertising() {
         val callbackGeneration = sessionGeneration
@@ -206,7 +237,11 @@ class MainActivity : Activity() {
         client.startAdvertising("TrailMesh probe", SERVICE_ID, lifecycleCallback, options)
             .addOnSuccessListener {
                 if (SessionCallbackGuard.isCurrent(sessionActive, sessionGeneration, callbackGeneration)) {
-                    status("Ready to receive; foreground session active.")
+                    status(if (role == Role.SENDER) {
+                        "Advertising for the iPhone to find; foreground session active."
+                    } else {
+                        "Ready to receive; foreground session active."
+                    })
                 }
             }
             .addOnFailureListener {
@@ -222,7 +257,11 @@ class MainActivity : Activity() {
         client.startDiscovery(SERVICE_ID, discoveryCallback, options)
             .addOnSuccessListener {
                 if (SessionCallbackGuard.isCurrent(sessionActive, sessionGeneration, callbackGeneration)) {
-                    status("Searching for the receiver; foreground session active.")
+                    status(if (role == Role.SENDER) {
+                        "Searching for a nearby probe; foreground session active."
+                    } else {
+                        "Searching for the Android sender; foreground session active."
+                    })
                 }
             }
             .addOnFailureListener {
@@ -234,7 +273,7 @@ class MainActivity : Activity() {
 
     private val discoveryCallback = object : EndpointDiscoveryCallback() {
         override fun onEndpointFound(foundEndpointId: String, info: DiscoveredEndpointInfo) {
-            if (!sessionActive || role != Role.SENDER || requestedEndpointId != null) return
+            if (!sessionActive || requestedEndpointId != null) return
             requestedEndpointId = foundEndpointId
             status("Found a TrailMesh probe; connecting automatically.")
             appendLog("peer_discovered")
@@ -500,6 +539,8 @@ class MainActivity : Activity() {
             .put("device", device)
             .put("transport", "Google Nearby Connections")
             .put("strategy", "P2P_POINT_TO_POINT")
+            .put("pairing_mode", pairingMode.name.lowercase(Locale.ROOT))
+            .put("transport_role", transportRole)
             .put("underlying_medium", "SDK selected; not exposed by the probe")
             .put("automatic_test_acceptance", true)
             .put("internet_disabled", JSONObject.NULL)

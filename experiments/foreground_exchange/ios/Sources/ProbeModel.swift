@@ -8,7 +8,19 @@ enum ProbeRole: String, CaseIterable, Identifiable {
     case receiver
 
     var id: String { rawValue }
-    var title: String { self == .sender ? "Find and send" : "Advertise and receive" }
+    var title: String { self == .sender ? "Send test bytes" : "Receive test bytes" }
+}
+
+enum ProbePairingMode: String, CaseIterable, Identifiable {
+    case roleBased = "role_based"
+    case crossPlatform = "cross_platform"
+
+    var id: String { rawValue }
+    var title: String {
+        self == .roleBased
+            ? "Role-based: sender finds receiver"
+            : "Cross-platform: iPhone discovers"
+    }
 }
 
 final class ProbeModel: ObservableObject {
@@ -19,6 +31,8 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var logs: [String] = []
 
     private var role: ProbeRole?
+    private var pairingMode: ProbePairingMode = .roleBased
+    private var transportRole = "discoverer"
     private var payloadSize = 2048
     private var attemptIndex = 0
     private var pendingDigest: Data?
@@ -44,6 +58,8 @@ final class ProbeModel: ObservableObject {
                        "app_version": appVersion, "build": build],
             "transport": "Google Nearby Connections",
             "strategy": "pointToPoint",
+            "pairing_mode": pairingMode.rawValue,
+            "transport_role": transportRole,
             "underlying_medium": "SDK selected; not exposed by the probe",
             "automatic_test_acceptance": true,
             "internet_disabled": NSNull(),
@@ -57,10 +73,12 @@ final class ProbeModel: ObservableObject {
         return text
     }
 
-    func start(role: ProbeRole, payloadSize: Int) {
+    func start(role: ProbeRole, payloadSize: Int, pairingMode: ProbePairingMode) {
         stop(reason: "Restarting test session.", writeStatus: false)
         sessionGeneration &+= 1
         self.role = role
+        self.pairingMode = pairingMode
+        transportRole = usesAdvertising ? "advertiser" : "discoverer"
         self.payloadSize = payloadSize
         attemptIndex = 0
         pendingDigest = nil
@@ -70,15 +88,19 @@ final class ProbeModel: ObservableObject {
         logs.removeAll()
         records.removeAll()
         sessionActive = true
-        status = role == .sender ? "Searching for the receiving phone…" : "Ready to receive from the sending phone…"
+        status = usesAdvertising
+            ? (role == .sender ? "Advertising for a peer…" : "Ready to receive…")
+            : (role == .sender ? "Searching for a peer…" : "Searching for the sending phone…")
         record(["event": "session_started", "role": role.rawValue,
+                "pairing_mode": pairingMode.rawValue,
+                "transport_role": transportRole,
                 "payload_size_bytes": payloadSize, "foreground_only": true])
 
         let manager = ConnectionManager(serviceID: serviceID, strategy: .pointToPoint)
         manager.delegate = self
         connectionManager = manager
 
-        if role == .receiver {
+        if usesAdvertising {
             let newAdvertiser = Advertiser(connectionManager: manager)
             newAdvertiser.delegate = self
             advertiser = newAdvertiser
@@ -88,7 +110,9 @@ final class ProbeModel: ObservableObject {
                     self.status = "Advertising failed. Check Bluetooth and Local Network permissions."
                     self.record(["event": "advertising_failed"])
                 } else {
-                    self.status = "Ready to receive; foreground session active."
+                    self.status = role == .sender
+                        ? "Advertising for the Android phone to find; foreground session active."
+                        : "Ready to receive; foreground session active."
                     self.record(["event": "advertising_started"])
                 }
             }
@@ -102,11 +126,17 @@ final class ProbeModel: ObservableObject {
                     self.status = "Discovery failed. Check Bluetooth and Local Network permissions."
                     self.record(["event": "discovery_failed"])
                 } else {
-                    self.status = "Searching for a receiver; foreground session active."
+                    self.status = role == .sender
+                        ? "Searching for a nearby probe; foreground session active."
+                        : "Searching for the Android sender; foreground session active."
                     self.record(["event": "discovery_started"])
                 }
             }
         }
+    }
+
+    private var usesAdvertising: Bool {
+        pairingMode == .crossPlatform ? false : role == .receiver
     }
 
     func stop(reason: String, writeStatus: Bool = true) {
@@ -244,9 +274,9 @@ extension ProbeModel: AdvertiserDelegate, DiscovererDelegate, ConnectionManagerD
     }
 
     func discoverer(_ discoverer: Discoverer, didFind endpointID: EndpointID, with context: Data) {
-        guard sessionActive, role == .sender, self.endpointID == nil else { return }
+        guard sessionActive, self.endpointID == nil else { return }
         self.endpointID = endpointID
-        status = "Found a receiver; connecting automatically."
+        status = "Found a nearby probe; connecting automatically."
         record(["event": "peer_discovered"])
         discoverer.stopDiscovery()
         discoverer.requestConnection(to: endpointID, using: Data("TrailMesh probe v1".utf8)) { [weak self] error in
