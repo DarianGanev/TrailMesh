@@ -91,6 +91,10 @@ struct ProbeSessionState: Codable {
 
     func peer(_ id: String) -> ProbePeerProgress? { peers.first { $0.sessionID == id } }
 
+    var shouldPauseForFullJournal: Bool {
+        peers.count == 8 && peers.allSatisfy { $0.completedAt != nil }
+    }
+
     mutating func prepareLink(to id: String) throws {
         guard let index = peers.firstIndex(where: { $0.sessionID == id }) else { throw ProbeSessionError.unknownPeer }
         // FINISH acknowledgement delivery belongs to the current link; durable DATA progress does not reset.

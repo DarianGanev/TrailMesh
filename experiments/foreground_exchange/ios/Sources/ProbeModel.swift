@@ -60,8 +60,14 @@ final class ProbeModel: ObservableObject {
             state = try store.load()
             awaitingResume = state?.intendedActive == true
             refreshPublishedState()
-            if awaitingResume { status = "Interrupted session saved. Tap Resume to continue." }
-        } catch { status = "Saved checkpoint could not be read. Start a new session." }
+            if awaitingResume {
+                endActivity()
+                status = "Interrupted session saved. Tap Resume to continue."
+            }
+        } catch {
+            endActivity()
+            status = "Saved checkpoint could not be read. Start a new session."
+        }
     }
 
     var selectedPayloadSize: Int { state?.payloadSize ?? 2048 }
@@ -545,12 +551,14 @@ final class ProbeModel: ObservableObject {
         backgroundTaskGeneration &+= 1
         let assertion = backgroundTaskGeneration
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Finish TrailMesh test exchange") { [weak self] in
-            DispatchQueue.main.async {
-                guard let self, self.sessionGeneration == generation, self.linkGeneration == link,
-                      self.backgroundTaskGeneration == assertion, self.backgroundTask != .invalid else { return }
-                _ = self.record("background_time_expired")
-                self.pauseTransport(reason: "Background time ended. Pending attempt saved for automatic foreground recovery.")
-            }
+            // UIKit invokes expiration synchronously on main. A stale assertion was already ended;
+            // it must never release a newer task. End this assertion before checkpoint cleanup.
+            guard let self, self.backgroundTaskGeneration == assertion, self.backgroundTask != .invalid else { return }
+            let currentOwner = self.sessionGeneration == generation && self.linkGeneration == link
+            self.endBackgroundTask()
+            guard currentOwner else { return }
+            _ = self.record("background_time_expired")
+            self.pauseTransport(reason: "Background time ended. Pending attempt saved for automatic foreground recovery.")
         }
     }
 
@@ -665,9 +673,18 @@ extension ProbeModel: DiscovererDelegate, ConnectionManagerDelegate {
         }
         var next = state
         do { try next.bindPeer(remote.sessionID); try next.prepareLink(to: remote.sessionID) }
+        catch ProbeSessionError.journalFull {
+            if state.shouldPauseForFullJournal {
+                awaitingResume = true
+                pauseTransport(reason: "Eight-peer journal is full. Export the log and start a new session.")
+            } else {
+                _ = record("unknown_peer_skipped_journal_full")
+            }
+            return
+        }
         catch {
             awaitingResume = true
-            pauseTransport(reason: "Eight-peer journal is full. Export the log and start a new session.")
+            pauseTransport(reason: "Saved peer state is invalid. Export the log and start a new session.")
             return
         }
         guard commit(next), let manager = connectionManager else { return }

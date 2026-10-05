@@ -178,4 +178,22 @@ final class ProbeSessionStateTests: XCTestCase {
         try Data(repeating: 32, count: 256 * 1024 + 1).write(to: url)
         XCTAssertThrowsError(try ProbeCheckpointStore(url: url).load())
     }
+
+    func testUnknownNinthPeerDoesNotStopEightUnfinishedPeers() throws {
+        var state = ProbeSessionState(sessionID: local, payloadSize: 2048)
+        let ids = (2...9).map { String(format: "%032x", $0) }
+        for id in ids { try state.bindPeer(id) }
+        XCTAssertThrowsError(try state.bindPeer(String(repeating: "a", count: 32)))
+        XCTAssertFalse(state.shouldPauseForFullJournal)
+        for id in ids {
+            for attempt in 0..<20 {
+                _ = try state.beginTransmission(to: id)
+                _ = try state.finishAttempt(to: id, attempt: attempt, success: true)
+            }
+            try state.recordRemoteFinish(from: id, successful: 20, failed: 0)
+            try state.recordLocalFinishAcknowledgement(from: id, successful: 20, failed: 0)
+            try state.recordRemoteFinishAcknowledgementDelivered(to: id)
+        }
+        XCTAssertTrue(state.shouldPauseForFullJournal)
+    }
 }
