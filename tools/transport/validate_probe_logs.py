@@ -21,6 +21,7 @@ def _header(log: dict) -> None:
             or not isinstance(log.get("session_id"), str)
             or not SESSION_PATTERN.fullmatch(log["session_id"])
             or not isinstance(log.get("attempts"), list)
+            or type(log.get("evicted_records", 0)) is not int or log.get("evicted_records", 0) < 0
             or len(log["attempts"]) > MAX_RECORDS
             or any(not isinstance(r, dict) for r in log["attempts"])):
         raise ExchangeError("Invalid or oversized v2 device export")
@@ -67,6 +68,9 @@ def validate_pair(first: dict, second: dict, *, payload_size: int = 2048,
         successes = 0
         for index, record in outgoing.items():
             if not record["success"]:
+                reason = record.get("failure_reason")
+                if not isinstance(reason, str) or not reason.strip():
+                    raise ExchangeError("A failed result lacks a failure reason")
                 continue
             receipt = incoming.get(index)
             digest = sha256_hex(make_test_payload(payload_size, attempt_index=index))

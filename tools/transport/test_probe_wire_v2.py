@@ -66,7 +66,7 @@ class ProbeWireV2Tests(unittest.TestCase):
             invalid.append(frame)
         ack[24] = 2
         invalid.append(ack)
-        data[24:28] = struct.pack("!I", 0)
+        data[24:28] = struct.pack("!I", 0)  # Embedded payload length, not attempt index.
         invalid.append(data)
         hello[36:40] = struct.pack("!I", 1234)
         invalid.append(hello)
@@ -76,6 +76,12 @@ class ProbeWireV2Tests(unittest.TestCase):
             with self.subTest(wire=frame[:4]):
                 with self.assertRaises(ExchangeError):
                     decode_message(bytes(frame))
+
+    def test_data_rejects_out_of_range_attempt_with_unchanged_payload_and_checksum(self):
+        data = bytearray.fromhex(VECTORS["data"])
+        data[20:24] = struct.pack("!I", 20)
+        with self.assertRaises(ExchangeError):
+            decode_message(bytes(data))
 
     def test_checksum_corruption_and_unknown_version_are_rejected(self):
         damaged = bytearray.fromhex(VECTORS["data"])

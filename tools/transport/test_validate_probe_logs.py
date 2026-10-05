@@ -54,11 +54,31 @@ class ProbeLogValidationTests(unittest.TestCase):
             for record in log["attempts"]:
                 if record["event"] == "attempt_result" and record["attempt_index"] < 2:
                     record["success"] = False
+                    record["failure_reason"] = "acknowledgement_timeout"
         self.assertEqual(validate_pair(first, second), {"ios-to-android": 18, "android-to-ios": 18})
         damaged = copy.deepcopy(first)
         next(r for r in damaged["attempts"] if r["event"] == "attempt_result" and r["attempt_index"] == 2)["success"] = False
         with self.assertRaises(ExchangeError):
             validate_pair(damaged, second)
+
+    def test_failed_result_requires_a_nonblank_string_reason(self):
+        for reason in (None, 1, "", "   "):
+            first, second = self.pair()
+            result = next(r for r in first["attempts"] if r["event"] == "attempt_result")
+            result["success"] = False
+            if reason is not None:
+                result["failure_reason"] = reason
+            with self.subTest(reason=reason), self.assertRaises(ExchangeError):
+                validate_pair(first, second)
+
+    def test_bounded_diagnostic_loss_does_not_replace_delivery_evidence(self):
+        first, second = self.pair()
+        first["evicted_records"] = 809
+        self.assertEqual(validate_pair(first, second)["ios-to-android"], 20)
+        for counter in (-1, True, "809"):
+            first["evicted_records"] = counter
+            with self.subTest(counter=counter), self.assertRaises(ExchangeError):
+                validate_pair(first, second)
 
     def test_replayed_or_conflicting_log_results_are_rejected(self):
         first, second = self.pair()
