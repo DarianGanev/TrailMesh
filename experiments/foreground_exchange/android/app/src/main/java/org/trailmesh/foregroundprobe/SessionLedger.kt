@@ -13,6 +13,7 @@ internal data class PeerJournal(
 internal data class SessionCheckpoint(
     val sessionID: String, val payloadSize: Int, val open: Boolean = true,
     val peers: List<PeerJournal> = emptyList(), val events: List<ProbeEvent> = emptyList(),
+    val evictedRecords: Long = 0,
 )
 internal data class IncomingDecision(val accepted: Boolean, val duplicate: Boolean)
 
@@ -29,10 +30,22 @@ internal class SessionLedger(initial: SessionCheckpoint, private val persist: (S
         checkpoint = next
     }
 
-    private fun replace(next: PeerJournal, evidence: ProbeEvent? = null) = commit(checkpoint.copy(
-        peers = checkpoint.peers.map { if (it.sessionID == next.sessionID) next else it },
-        events = evidence?.let { (checkpoint.events + it).takeLast(MAX_EVENTS) } ?: checkpoint.events,
-    ))
+    private fun replace(next: PeerJournal, evidence: ProbeEvent? = null) {
+        val updated = checkpoint.copy(peers = checkpoint.peers.map { if (it.sessionID == next.sessionID) next else it })
+        commit(if (evidence == null) updated else appendEvent(updated, evidence))
+    }
+
+    private fun appendEvent(state: SessionCheckpoint, event: ProbeEvent): SessionCheckpoint {
+        val events = (state.events + event).toMutableList()
+        var evicted = state.evictedRecords
+        while (events.size > MAX_EVENTS) {
+            val index = events.indexOfFirst { it.name !in EVIDENCE_EVENTS }
+            require(index >= 0) { "evidence exceeds session bounds" }
+            events.removeAt(index)
+            if (evicted < Long.MAX_VALUE) evicted++
+        }
+        return state.copy(events = events, evictedRecords = evicted)
+    }
 
     fun selectPeer(sessionID: String, platform: String): PeerJournal? {
         require(checkpoint.open)
@@ -117,7 +130,7 @@ internal class SessionLedger(initial: SessionCheckpoint, private val persist: (S
         commit(checkpoint.copy(peers = checkpoint.peers.map { it.copy(recoveries = 0, exhausted = false) }))
     }
 
-    fun record(event: ProbeEvent) = commit(checkpoint.copy(events = (checkpoint.events + event).takeLast(MAX_EVENTS)))
+    fun record(event: ProbeEvent) = commit(appendEvent(checkpoint, event))
     fun close() = commit(checkpoint.copy(open = false))
 
     companion object {
@@ -126,6 +139,7 @@ internal class SessionLedger(initial: SessionCheckpoint, private val persist: (S
         const val MAX_RECOVERIES = 5
         const val MAX_PEERS = 8
         const val MAX_EVENTS = 512
+        private val EVIDENCE_EVENTS = setOf("session_started", "session_stopped", "attempt_result", "payload_received")
         fun validID(value: String) = value.matches(Regex("[0-9a-f]{32}"))
         fun validate(value: SessionCheckpoint) {
             require(validID(value.sessionID) && value.payloadSize in listOf(256, 2048, 8192))
@@ -143,7 +157,7 @@ internal class SessionLedger(initial: SessionCheckpoint, private val persist: (S
                 require(!peer.complete || peer.nextOutgoing == ATTEMPTS && peer.remoteSuccesses != null)
                 require(peer.completionRequests in 0..3 && peer.completedAt >= 0 && (!peer.completionReconciled || peer.complete))
             }
-            require(value.events.size <= MAX_EVENTS)
+            require(value.events.size <= MAX_EVENTS && value.evictedRecords >= 0)
             for (event in value.events) {
                 require(event.name.length in 1..64 && event.time.length <= 64 && event.fields.size <= 12)
                 require(event.fields.all { it.key.length in 1..64 && it.value.length <= 160 })

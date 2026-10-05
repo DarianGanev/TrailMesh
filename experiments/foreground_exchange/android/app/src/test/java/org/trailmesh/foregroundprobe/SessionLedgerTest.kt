@@ -7,6 +7,17 @@ class SessionLedgerTest {
     private val local = "0".repeat(32)
     private val remote = "1".repeat(32)
 
+    @Test fun noiseCannotEvictSessionBoundaryOrFinalAttemptEvidence() {
+        val ledger = SessionLedger(SessionCheckpoint(local, 2048)) {}
+        ledger.record(ProbeEvent("session_started", "time"))
+        repeat(320) { ledger.record(ProbeEvent("attempt_result", "time")) }
+        repeat(1000) { ledger.record(ProbeEvent("invalid_probe_frame", "time")) }
+        assertEquals(512, ledger.checkpoint.events.size)
+        assertEquals("session_started", ledger.checkpoint.events.first().name)
+        assertEquals(320, ledger.checkpoint.events.count { it.name == "attempt_result" })
+        assertEquals(809L, ledger.checkpoint.evictedRecords)
+    }
+
     @Test fun receiverPersistsBeforeReturningPositiveAcknowledgement() {
         val saved = mutableListOf<SessionCheckpoint>()
         val ledger = SessionLedger(SessionCheckpoint(local, 2048)) { saved.add(it) }

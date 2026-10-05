@@ -116,8 +116,8 @@ class ProbeSessionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> start(false, intent.getIntExtra(EXTRA_SIZE, 2048))
-            ACTION_RESUME -> start(true, 2048)
+            ACTION_START -> { promote(); start(false, intent.getIntExtra(EXTRA_SIZE, 2048)) }
+            ACTION_RESUME -> { promote(); start(true, 2048) }
             ACTION_STOP -> stopByUser()
             else -> if (!active) stopSelf()
         }
@@ -195,7 +195,6 @@ class ProbeSessionService : Service() {
             radioFailures = 0
             permissionTicket++
             permissionsNeeded = emptyList()
-            promote()
             registerMonitoring()
             event(if (resume) "session_resumed" else "session_started", "payload_size_bytes" to "${initial.payloadSize}")
             startRadio()
@@ -336,6 +335,9 @@ class ProbeSessionService : Service() {
                 recover("connection_failed")
                 return@onMain
             }
+            // A healthy link ends the consecutive radio-failure streak. Resetting on
+            // just one start callback could retry forever when the other operation fails.
+            radioFailures = 0
             if (connected) return@onMain
             connected = true
             cancel("connection")
@@ -735,6 +737,7 @@ class ProbeSessionService : Service() {
             .put("pairing_mode", "automatic").put("connection_policy", "non_disruptive")
             .put("underlying_medium", "SDK selected; quality is not a medium identifier")
             .put("automatic_test_acceptance", true).put("internet_disabled", JSONObject.NULL)
+            .put("evicted_records", state.checkpoint?.evictedRecords ?: 0)
             .put("active", state.active).put("status", state.status).put("attempts", events).toString(2)
     }
 

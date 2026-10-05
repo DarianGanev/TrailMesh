@@ -47,6 +47,7 @@ internal class SessionJournal(private val file: File) {
                 data.writeInt(event.fields.size)
                 for ((key, value) in event.fields) { data.writeUTF(key); data.writeUTF(value) }
             }
+            data.writeLong(checkpoint.evictedRecords)
             data.flush()
         }
         if (bytes.size() > MAX_JOURNAL_BYTES) throw IOException("checkpoint exceeds limit")
@@ -81,8 +82,16 @@ internal class SessionJournal(private val file: File) {
                     val fields = data.readInt().also { require(it in 0..12) }
                     ProbeEvent(name, time, buildMap { repeat(fields) { put(data.readUTF(), data.readUTF()) } })
                 }
+                // Older v2 journals end here; newer ones append a diagnostic-loss counter.
+                val first = data.read()
+                val evicted = if (first == -1) 0L else {
+                    val tail = ByteArray(8)
+                    tail[0] = first.toByte()
+                    data.readFully(tail, 1, 7)
+                    DataInputStream(tail.inputStream()).readLong()
+                }
                 require(data.read() == -1)
-                SessionCheckpoint(id, size, open, peers, events).also(SessionLedger::validate)
+                SessionCheckpoint(id, size, open, peers, events, evicted).also(SessionLedger::validate)
             }
         } catch (exception: IllegalArgumentException) {
             throw IOException("invalid checkpoint", exception)

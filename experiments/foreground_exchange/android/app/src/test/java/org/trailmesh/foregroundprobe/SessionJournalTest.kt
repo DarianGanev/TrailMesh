@@ -5,6 +5,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SessionJournalTest {
+    @Test fun diagnosticLossCounterRoundTripsAndOlderV2JournalStillLoads() {
+        val folder = java.nio.file.Files.createTempDirectory("trailmesh-journal").toFile()
+        try {
+            val file = File(folder, "session.bin")
+            val journal = SessionJournal(file)
+            val current = SessionCheckpoint("0".repeat(32), 2048, evictedRecords = 809)
+            journal.save(current)
+            assertEquals(current, journal.load())
+            val bytes = file.readBytes()
+            file.writeBytes(bytes.copyOf(bytes.size - 8))
+            assertEquals(current.copy(evictedRecords = 0), journal.load())
+        } finally { folder.deleteRecursively() }
+    }
+
     @Test fun checkpointRoundTripsUnacknowledgedProgressAndUniqueReceipts() {
         val folder = java.nio.file.Files.createTempDirectory("trailmesh-journal").toFile()
         try {
