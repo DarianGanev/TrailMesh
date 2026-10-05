@@ -52,6 +52,9 @@ struct ProbeSessionState: Codable {
     var intendedActive: Bool
     var peers: [ProbePeerProgress]
     var records: [ProbeLogEntry]
+    // Optional fields keep previously saved v2 checkpoints readable.
+    var evictedRecords: Int?
+    var skippedPeerSessionIDs: [String]?
 
     init(sessionID: String, payloadSize: Int) {
         version = 2
@@ -69,6 +72,9 @@ struct ProbeSessionState: Codable {
     var isValid: Bool {
         guard version == 2, Self.validSessionID(sessionID), [256, 2048, 8192].contains(payloadSize),
               peers.count <= 8, records.count <= 512, Set(peers.map(\.sessionID)).count == peers.count else { return false }
+        guard (evictedRecords ?? 0) >= 0, (skippedPeerSessionIDs ?? []).count <= 64,
+              (skippedPeerSessionIDs ?? []).allSatisfy(Self.validSessionID),
+              Set(skippedPeerSessionIDs ?? []).count == (skippedPeerSessionIDs ?? []).count else { return false }
         guard records.allSatisfy({ entry in
             entry.event.count <= 64 && entry.observedAt.count <= 40 && entry.fields.count <= 12
             && entry.fields.allSatisfy { $0.key.count <= 64 && $0.value.count <= 256 }
@@ -90,6 +96,37 @@ struct ProbeSessionState: Codable {
     }
 
     func peer(_ id: String) -> ProbePeerProgress? { peers.first { $0.sessionID == id } }
+
+    private static let evidenceEvents: Set<String> = [
+        "session_started", "session_stopped", "attempt_result", "payload_received"
+    ]
+
+    mutating func appendRecord(_ entry: ProbeLogEntry) {
+        if entry.event == "unknown_peer_skipped_journal_full",
+           let peerID = entry.fields["peer_session_id"] {
+            if (skippedPeerSessionIDs ?? []).contains(peerID) { return }
+            // Bound the deduplication set too. After 64 unknown peers, count rather
+            // than record further skips; never repeatedly record an untracked ID.
+            if (skippedPeerSessionIDs ?? []).count == 64 {
+                countEviction()
+                return
+            }
+            skippedPeerSessionIDs = (skippedPeerSessionIDs ?? []) + [peerID]
+        }
+        records.append(entry)
+        while records.count > 512,
+              let index = records.firstIndex(where: { !Self.evidenceEvents.contains($0.event) }) {
+            records.remove(at: index)
+            countEviction()
+        }
+        // If corrupt callers exceed the maximum possible 320 final/receipt records,
+        // checkpoint validation fails instead of silently discarding evidence.
+    }
+
+    private mutating func countEviction() {
+        let count = evictedRecords ?? 0
+        evictedRecords = count < Int.max ? count + 1 : count
+    }
 
     var shouldPauseForFullJournal: Bool {
         peers.count == 8 && peers.allSatisfy { $0.complete }

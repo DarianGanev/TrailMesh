@@ -87,6 +87,7 @@ final class ProbeModel: ObservableObject {
             "session_intended_active": state?.intendedActive ?? false, "background_policy": backgroundPolicy,
             "completed_peers": completedPeers, "sent_successful": successfulAttempts, "sent_failed": failedAttempts,
             "received_unique": receivedAttempts, "received_duplicates": duplicateAttempts,
+            "evicted_records": state?.evictedRecords ?? 0,
             "attempts": state?.records.map(\.exported) ?? []
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys]),
@@ -627,8 +628,7 @@ final class ProbeModel: ObservableObject {
     }
 
     private func append(_ event: String, fields: [String: String], to next: inout ProbeSessionState) {
-        next.records.append(ProbeLogEntry(event: event, observedAt: ISO8601DateFormatter().string(from: Date()), fields: fields))
-        if next.records.count > 512 { next.records.removeFirst(next.records.count - 512) }
+        next.appendRecord(ProbeLogEntry(event: event, observedAt: ISO8601DateFormatter().string(from: Date()), fields: fields))
     }
 
     @discardableResult
@@ -678,7 +678,7 @@ extension ProbeModel: DiscovererDelegate, ConnectionManagerDelegate {
                 awaitingResume = true
                 pauseTransport(reason: "Eight-peer journal is full. Export the log and start a new session.")
             } else {
-                _ = record("unknown_peer_skipped_journal_full")
+                _ = record("unknown_peer_skipped_journal_full", fields: ["peer_session_id": remote.sessionID])
             }
             return
         }

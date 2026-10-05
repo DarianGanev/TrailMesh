@@ -5,6 +5,52 @@ final class ProbeSessionStateTests: XCTestCase {
     private let local = String(repeating: "1", count: 32)
     private let remote = String(repeating: "2", count: 32)
 
+    func testNoiseCannotEvictFinalEvidenceAndTruncationSurvivesCheckpoint() throws {
+        var state = ProbeSessionState(sessionID: local, payloadSize: 2048)
+        let timestamp = "2026-10-05T00:00:00Z"
+        state.appendRecord(ProbeLogEntry(event: "session_started", observedAt: timestamp, fields: [:]))
+        for _ in 0..<320 {
+            state.appendRecord(ProbeLogEntry(event: "attempt_result", observedAt: timestamp, fields: [:]))
+        }
+        for _ in 0..<1000 {
+            state.appendRecord(ProbeLogEntry(event: "invalid_probe_frame", observedAt: timestamp, fields: [:]))
+        }
+        XCTAssertEqual(state.records.count, 512)
+        XCTAssertEqual(state.records.filter { $0.event == "attempt_result" }.count, 320)
+        XCTAssertEqual(state.records.first?.event, "session_started")
+        XCTAssertEqual(state.evictedRecords, 809)
+        let restored = try JSONDecoder().decode(ProbeSessionState.self, from: JSONEncoder().encode(state))
+        XCTAssertEqual(restored.evictedRecords, 809)
+        XCTAssertTrue(restored.isValid)
+    }
+
+    func testUnknownPeerSkipIsDeduplicatedAndDeduplicationIsBounded() throws {
+        var state = ProbeSessionState(sessionID: local, payloadSize: 2048)
+        for _ in 0..<1000 {
+            state.appendRecord(ProbeLogEntry(event: "unknown_peer_skipped_journal_full", observedAt: "now",
+                                             fields: ["peer_session_id": remote]))
+        }
+        XCTAssertEqual(state.records.count, 1)
+        for value in 3...100 {
+            state.appendRecord(ProbeLogEntry(event: "unknown_peer_skipped_journal_full", observedAt: "now",
+                                             fields: ["peer_session_id": String(format: "%032x", value)]))
+        }
+        XCTAssertEqual(state.records.count, 64)
+        XCTAssertEqual(state.skippedPeerSessionIDs?.count, 64)
+        XCTAssertEqual(state.evictedRecords, 35)
+        XCTAssertTrue(state.isValid)
+    }
+
+    func testOlderV2CheckpointWithoutDiagnosticCountersStillLoads() throws {
+        let state = ProbeSessionState(sessionID: local, payloadSize: 2048)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(state)) as? [String: Any])
+        json.removeValue(forKey: "evictedRecords")
+        json.removeValue(forKey: "skippedPeerSessionIDs")
+        let restored = try JSONDecoder().decode(ProbeSessionState.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertNil(restored.evictedRecords)
+        XCTAssertTrue(restored.isValid)
+    }
+
     func testCheckpointKeepsUnacknowledgedAttemptIdentityAndTransmissionBudget() throws {
         var state = ProbeSessionState(sessionID: local, payloadSize: 2048)
         try state.bindPeer(remote)
