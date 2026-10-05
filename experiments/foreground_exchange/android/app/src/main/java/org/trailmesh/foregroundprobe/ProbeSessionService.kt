@@ -374,7 +374,11 @@ class ProbeSessionService : Service() {
                 schedule("recovery", 1_500) { startRadio() }
                 return@onMain
             }
-            val bytes = payload.asBytes() ?: run { event("invalid_frame", "reason" to "non_bytes"); return@onMain }
+            val bytes = payload.asBytes() ?: run {
+                client.cancelPayload(payload.id)
+                event("invalid_frame", "reason" to "non_bytes_cancelled")
+                return@onMain
+            }
             try {
                 when {
                     ForegroundFrame.isHelloMessage(bytes) -> hello(ForegroundFrame.decodeHelloMessage(bytes))
