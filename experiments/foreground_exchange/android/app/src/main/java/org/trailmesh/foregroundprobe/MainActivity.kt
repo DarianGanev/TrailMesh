@@ -2,553 +2,247 @@ package org.trailmesh.foregroundprobe
 
 import android.Manifest
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
+import android.os.IBinder
+import android.provider.Settings
 import android.view.ViewGroup
-import android.widget.ArrayAdapter
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.Spinner
-import android.widget.TextView
-import com.google.android.gms.common.api.ApiException
-import com.google.android.gms.nearby.Nearby
-import com.google.android.gms.nearby.connection.AdvertisingOptions
-import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback
-import com.google.android.gms.nearby.connection.ConnectionResolution
-import com.google.android.gms.nearby.connection.ConnectionsStatusCodes
-import com.google.android.gms.nearby.connection.DiscoveredEndpointInfo
-import com.google.android.gms.nearby.connection.DiscoveryOptions
-import com.google.android.gms.nearby.connection.EndpointDiscoveryCallback
-import com.google.android.gms.nearby.connection.Payload
-import com.google.android.gms.nearby.connection.PayloadCallback
-import com.google.android.gms.nearby.connection.PayloadTransferUpdate
-import com.google.android.gms.nearby.connection.Strategy
-import org.json.JSONArray
-import org.json.JSONObject
-import java.time.Instant
-import java.util.Locale
+import android.widget.*
 
-private const val SERVICE_ID = "org.trailmesh.foregroundprobe"
-private const val REQUEST_PERMISSIONS = 41
-private const val ATTEMPTS_PER_BATCH = 20
-private const val ACK_TIMEOUT_MS = 15_000L
-
+/** UI observes a service-owned session; leaving this Activity does not stop that session. */
 class MainActivity : Activity() {
-    private enum class Role { SENDER, RECEIVER }
-    private enum class PairingMode { ROLE_BASED, CROSS_PLATFORM }
-
-    private val client by lazy { Nearby.getConnectionsClient(this) }
-    private val handler = Handler(Looper.getMainLooper())
-    private val records = JSONArray()
     private lateinit var statusView: TextView
+    private lateinit var progressView: TextView
     private lateinit var logView: TextView
-    private lateinit var rolePicker: Spinner
-    private lateinit var pairingModePicker: Spinner
     private lateinit var sizePicker: Spinner
-    private var role: Role? = null
-    private var pairingMode = PairingMode.ROLE_BASED
-    private var transportRole = "discoverer"
-    private var permissionRetryRole: Role? = null
-    private var sessionActive = false
-    private var sessionGeneration = 0L
-    private var endpointId: String? = null
-    private var requestedEndpointId: String? = null
-    private var attemptIndex = 0
-    private var attemptSize = 2048
-    private var pendingDigest: ByteArray? = null
-    private var timeout: Runnable? = null
-    private var successfulAttempts = 0
-    private var failedAttempts = 0
+    private lateinit var startButton: Button
+    private lateinit var resumeButton: Button
+    private lateinit var stopButton: Button
+    private var service: ProbeSessionService? = null
+    private var bound = false
+    private var resumed = false
+    private var pendingAction: String? = null
+    private var pendingSize = 2048
+    private var permissionInFlight = false
+    private var compatibilityTicket = -1L
+    private var notificationAsked = false
+    private var pendingPermissionResult: Pair<Long, Boolean>? = null
+    private var latest: ProbeSnapshot? = null
+    private val observer: (ProbeSnapshot) -> Unit = { render(it) }
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            service = (binder as ProbeSessionService.LocalBinder).session
+            pendingPermissionResult?.let { (ticket, granted) ->
+                pendingPermissionResult = null
+                service!!.permissionResult(ticket, granted)
+            }
+            service!!.observe(observer)
+        }
+        override fun onServiceDisconnected(name: ComponentName?) {
+            service = null
+            statusView.text = "Session process ended. Open this screen again to Resume saved progress."
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingAction = savedInstanceState?.getString("pending_action")
+        pendingSize = savedInstanceState?.getInt("pending_size", 2048) ?: 2048
+        permissionInFlight = savedInstanceState?.getBoolean("permission_in_flight") ?: false
+        compatibilityTicket = savedInstanceState?.getLong("permission_ticket", -1L) ?: -1L
+        notificationAsked = savedInstanceState?.getBoolean("notification_asked") ?: false
+        savedInstanceState?.getLong("result_ticket", -1L)?.takeIf { it >= 0 }?.let {
+            pendingPermissionResult = it to savedInstanceState.getBoolean("result_granted")
+        }
         buildScreen()
-        appendLog("Probe ready; generated test bytes only.")
     }
 
+    override fun onStart() {
+        super.onStart()
+        bound = bindService(Intent(this, ProbeSessionService::class.java), connection, BIND_AUTO_CREATE)
+    }
+    override fun onResume() {
+        super.onResume()
+        resumed = true
+        executePendingAction()
+        latest?.let(::render)
+    }
+    override fun onPause() { resumed = false; super.onPause() }
     override fun onStop() {
-        stopSession("Session stopped because the app left the foreground.")
+        service?.removeObserver(observer)
+        if (bound) unbindService(connection)
+        bound = false
+        service = null
         super.onStop()
+    }
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("pending_action", pendingAction)
+        outState.putInt("pending_size", pendingSize)
+        outState.putBoolean("permission_in_flight", permissionInFlight)
+        outState.putLong("permission_ticket", compatibilityTicket)
+        outState.putBoolean("notification_asked", notificationAsked)
+        pendingPermissionResult?.let { (ticket, granted) ->
+            outState.putLong("result_ticket", ticket)
+            outState.putBoolean("result_granted", granted)
+        }
+        super.onSaveInstanceState(outState)
     }
 
     private fun buildScreen() {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(24, 24, 24, 24)
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            )
+            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         }
-        val scroll = ScrollView(this).apply { addView(content) }
-        setContentView(scroll)
-
+        setContentView(ScrollView(this).apply { addView(content) })
+        content.addView(TextView(this).apply { text = "TrailMesh transport test"; textSize = 22f })
         content.addView(TextView(this).apply {
-            text = "TrailMesh foreground transport probe"
-            textSize = 22f
+            text = "Generated test bytes only. A started session automatically accepts compatible probes without verifying Nearby's code. Do not send reports, messages, or private data."
+            setPadding(0, 12, 0, 12)
         })
         content.addView(TextView(this).apply {
-            text = "Test-only: connections are automatically accepted after session start. The SDK verification code is automatically accepted for generated bytes only. Do not send reports, messages, or private data."
-            textSize = 14f
-            setPadding(0, 12, 0, 16)
-        })
-        content.addView(TextView(this).apply {
-            text = "Compatibility note: on Android 13+, Location is requested only if discovery reports that this device requires it; older versions may need it at session start. The probe does not read or log coordinates."
-            textSize = 14f
-            setPadding(0, 0, 0, 16)
-        })
-        rolePicker = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                listOf("Send test bytes", "Receive test bytes"),
-            )
-        }
-        content.addView(rolePicker)
-        pairingModePicker = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                listOf(
-                    "Role-based: sender finds receiver",
-                    "Cross-platform: iPhone discovers",
-                ),
-            )
-        }
-        content.addView(pairingModePicker)
-        content.addView(TextView(this).apply {
-            text = "Choose the same pairing mode on both phones. In cross-platform mode, Android advertises and iPhone discovers; the selected sender still controls which phone sends test bytes."
-            textSize = 14f
-            setPadding(0, 8, 0, 16)
+            text = "Start on both phones with the same size. Each pair sends 20 payloads in both directions. Android can exchange with Android or iPhone; iPhone pairs with Android. Internet access is not required. Keep Bluetooth enabled; Nearby selects the underlying link."
+            setPadding(0, 0, 0, 12)
         })
         sizePicker = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                listOf("256 bytes", "2 KiB (required gate)", "8 KiB"),
-            )
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                listOf("256 bytes", "2 KiB (required gate)", "8 KiB"))
             setSelection(1)
         }
         content.addView(sizePicker)
+        startButton = Button(this).apply {
+            text = "Start new test session"
+            setOnClickListener { requestSession(ProbeSessionService.ACTION_START) }
+        }
+        content.addView(startButton)
+        resumeButton = Button(this).apply {
+            text = "Resume saved session"; isEnabled = false
+            setOnClickListener { requestSession(ProbeSessionService.ACTION_RESUME) }
+        }
+        content.addView(resumeButton)
+        stopButton = Button(this).apply {
+            text = "Stop session"
+            setOnClickListener { pendingAction = null; service?.stopByUser() }
+        }
+        content.addView(stopButton)
         content.addView(Button(this).apply {
-            text = "Start test session"
-            setOnClickListener { requestStart() }
+            text = "Bluetooth settings"
+            setOnClickListener { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
         })
         content.addView(Button(this).apply {
-            text = "Stop session"
-            setOnClickListener { stopSession("Session stopped by user.") }
+            text = "App permissions and battery settings"
+            setOnClickListener { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                android.net.Uri.parse("package:$packageName"))) }
         })
         content.addView(Button(this).apply {
             text = "Share redacted test log"
-            setOnClickListener { shareLog() }
+            setOnClickListener {
+                val text = service?.exportedLog() ?: return@setOnClickListener
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"; putExtra(Intent.EXTRA_TEXT, text)
+                }, "Share transport test log"))
+            }
         })
-        statusView = TextView(this).apply {
-            text = "Not running"
-            textSize = 18f
-            setPadding(0, 16, 0, 8)
-        }
-        content.addView(statusView)
-        logView = TextView(this).apply {
-            textSize = 13f
-            setTextIsSelectable(true)
-        }
-        content.addView(logView)
+        content.addView(TextView(this).apply {
+            text = "The active session has a Stop notification and continues when you switch apps. Screen-off behavior depends on the phone and must be measured. After process termination, return here and choose Resume. If Nearby asks for Location, this probe does not read coordinates."
+            setPadding(0, 12, 0, 12)
+        })
+        statusView = TextView(this).apply { text = "Loading saved session…"; textSize = 18f }
+        progressView = TextView(this).apply { setPadding(0, 12, 0, 12) }
+        logView = TextView(this).apply { textSize = 12f; setTextIsSelectable(true) }
+        content.addView(statusView); content.addView(progressView); content.addView(logView)
     }
 
-    private fun requestStart() {
-        val sdkInt = Build.VERSION.SDK_INT
-        val granted = NearbyPermissionPolicy.requiredPermissions(sdkInt)
-            .filter { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
-            .toSet()
-        val missing = NearbyPermissionPolicy.permissionsToRequest(sdkInt, granted)
+    private fun requestSession(action: String) {
+        if (permissionInFlight) return
+        pendingAction = action
+        pendingSize = when (sizePicker.selectedItemPosition) { 0 -> 256; 2 -> 8192; else -> 2048 }
+        val granted = NearbyPermissionPolicy.requiredPermissions(Build.VERSION.SDK_INT).filter {
+            checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+        }.toSet()
+        val missing = NearbyPermissionPolicy.permissionsToRequest(Build.VERSION.SDK_INT, granted)
         if (missing.isNotEmpty()) {
-            requestPermissions(missing.toTypedArray(), REQUEST_PERMISSIONS)
-            status("Allow the requested Nearby and Location permissions to start the foreground test.")
-            return
-        }
-        startSession(selectedRole())
+            permissionInFlight = true
+            requestPermissions(missing.toTypedArray(), REQUEST_NEARBY)
+            statusView.text = "Allow Nearby device permissions to start the test."
+        } else executePendingAction()
     }
 
-    @Deprecated("The probe uses the platform permission callback to keep its setup minimal.")
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray,
-    ) {
+    private fun executePendingAction() {
+        if (!resumed || permissionInFlight) return
+        val action = pendingAction ?: return
+        pendingAction = null
+        try {
+            startForegroundService(Intent(this, ProbeSessionService::class.java).setAction(action)
+                .putExtra(ProbeSessionService.EXTRA_SIZE, pendingSize))
+            if (Build.VERSION.SDK_INT >= 33 && !notificationAsked &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                notificationAsked = true
+                permissionInFlight = true
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATION)
+            }
+        } catch (_: Exception) {
+            statusView.text = "Session could not start. Check permissions, then try while this screen is open."
+        }
+    }
+
+    private fun render(snapshot: ProbeSnapshot) {
+        latest = snapshot
+        statusView.text = snapshot.status
+        startButton.isEnabled = !snapshot.active && !permissionInFlight
+        resumeButton.isEnabled = snapshot.canResume && !permissionInFlight
+        stopButton.isEnabled = snapshot.active || snapshot.canResume || pendingAction != null
+        sizePicker.isEnabled = !snapshot.active
+        progressView.text = snapshot.checkpoint?.let { checkpoint ->
+            "${checkpoint.payloadSize} bytes; ${checkpoint.peers.size}/8 peers recorded\n" +
+                checkpoint.peers.mapIndexed { index, peer ->
+                    "Peer ${index + 1} (${peer.platform}): sent ${peer.successfulOutgoing} matched, ${peer.failedOutgoing} failed; " +
+                        "received ${peer.receivedAccepted} unique matches" +
+                        when { peer.complete -> "; both directions finished"; peer.exhausted -> "; recovery exhausted"; else -> "" }
+                }.joinToString("\n")
+        } ?: "No saved session"
+        logView.text = snapshot.checkpoint?.events?.takeLast(40)?.joinToString("\n") {
+            "${it.time} ${it.name} ${it.fields.entries.joinToString(" ") { field -> "${field.key}=${field.value}" }}"
+        }.orEmpty()
+        if (resumed && !permissionInFlight && snapshot.active && snapshot.permissionsNeeded.isNotEmpty()) {
+            compatibilityTicket = snapshot.permissionTicket
+            permissionInFlight = true
+            requestPermissions(snapshot.permissionsNeeded.toTypedArray(), REQUEST_COMPATIBILITY)
+        }
+    }
+
+    @Deprecated("Platform permission callback retained for the small probe UI.")
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != REQUEST_PERMISSIONS) return
-        val retryRole = permissionRetryRole
-        permissionRetryRole = null
-        if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-            startSession(retryRole ?: selectedRole())
-        } else if (retryRole != null) {
-            status("Location permission was not granted. Check TrailMesh Probe permissions in Android Settings, then tap Start to retry.")
-            appendLog("permission_denied")
-        } else {
-            status("A required Nearby or Location permission was denied.")
-            appendLog("permission_denied")
-        }
-    }
-
-    private fun selectedRole(): Role =
-        if (rolePicker.selectedItemPosition == 0) Role.SENDER else Role.RECEIVER
-
-    private fun selectedPairingMode(): PairingMode =
-        if (pairingModePicker.selectedItemPosition == 1) PairingMode.CROSS_PLATFORM
-        else PairingMode.ROLE_BASED
-
-    private fun startSession(selectedRole: Role) {
-        stopSession("Restarting the probe session.", record = false)
-        sessionGeneration++
-        role = selectedRole
-        pairingMode = selectedPairingMode()
-        transportRole = if (usesAdvertising()) "advertiser" else "discoverer"
-        sessionActive = true
-        attemptIndex = 0
-        attemptSize = when (sizePicker.selectedItemPosition) {
-            0 -> 256
-            2 -> 8192
-            else -> 2048
-        }
-        successfulAttempts = 0
-        failedAttempts = 0
-        records.put(JSONObject()
-            .put("event", "session_started")
-            .put("role", selectedRole.name.lowercase(Locale.ROOT))
-            .put("pairing_mode", pairingMode.name.lowercase(Locale.ROOT))
-            .put("transport_role", transportRole)
-            .put("payload_size_bytes", attemptSize)
-            .put("observed_at", Instant.now().toString()))
-
-        if (usesAdvertising()) startAdvertising() else startDiscovery()
-    }
-
-    private fun usesAdvertising(): Boolean =
-        pairingMode == PairingMode.CROSS_PLATFORM || role == Role.RECEIVER
-
-    private fun startAdvertising() {
-        val callbackGeneration = sessionGeneration
-        val options = AdvertisingOptions.Builder().setStrategy(Strategy.P2P_POINT_TO_POINT).build()
-        client.startAdvertising("TrailMesh probe", SERVICE_ID, lifecycleCallback, options)
-            .addOnSuccessListener {
-                if (SessionCallbackGuard.isCurrent(sessionActive, sessionGeneration, callbackGeneration)) {
-                    status(if (role == Role.SENDER) {
-                        "Advertising for the iPhone to find; foreground session active."
-                    } else {
-                        "Ready to receive; foreground session active."
-                    })
+        when (requestCode) {
+            REQUEST_NEARBY -> {
+                permissionInFlight = false
+                val granted = NearbyPermissionPolicy.requiredPermissions(Build.VERSION.SDK_INT).all {
+                    checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
                 }
+                if (granted) executePendingAction()
+                else { pendingAction = null; statusView.text = "Required device permission denied. Allow it in App settings and retry." }
             }
-            .addOnFailureListener {
-                if (SessionCallbackGuard.isCurrent(sessionActive, sessionGeneration, callbackGeneration)) {
-                    recordNearbyFailure("Advertising", it)
-                }
+            REQUEST_COMPATIBILITY -> {
+                permissionInFlight = false
+                val ticket = compatibilityTicket
+                compatibilityTicket = -1L
+                val granted = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+                if (service != null) service!!.permissionResult(ticket, granted)
+                else pendingPermissionResult = ticket to granted
             }
-    }
-
-    private fun startDiscovery() {
-        val callbackGeneration = sessionGeneration
-        val options = DiscoveryOptions.Builder().setStrategy(Strategy.P2P_POINT_TO_POINT).build()
-        client.startDiscovery(SERVICE_ID, discoveryCallback, options)
-            .addOnSuccessListener {
-                if (SessionCallbackGuard.isCurrent(sessionActive, sessionGeneration, callbackGeneration)) {
-                    status(if (role == Role.SENDER) {
-                        "Searching for a nearby probe; foreground session active."
-                    } else {
-                        "Searching for the Android sender; foreground session active."
-                    })
-                }
-            }
-            .addOnFailureListener {
-                if (SessionCallbackGuard.isCurrent(sessionActive, sessionGeneration, callbackGeneration)) {
-                    recordNearbyFailure("Discovery", it)
-                }
-            }
-    }
-
-    private val discoveryCallback = object : EndpointDiscoveryCallback() {
-        override fun onEndpointFound(foundEndpointId: String, info: DiscoveredEndpointInfo) {
-            if (!sessionActive || requestedEndpointId != null) return
-            requestedEndpointId = foundEndpointId
-            status("Found a TrailMesh probe; connecting automatically.")
-            appendLog("peer_discovered")
-            client.requestConnection("TrailMesh probe", foundEndpointId, lifecycleCallback)
-                .addOnFailureListener {
-                    requestedEndpointId = null
-                    status("Connection request failed.")
-                    appendLog("connection_request_failed")
-                }
-        }
-
-        override fun onEndpointLost(lostEndpointId: String) {
-            if (requestedEndpointId == lostEndpointId && endpointId == null) {
-                requestedEndpointId = null
-                status("Receiver left radio range; still searching.")
-            }
+            REQUEST_NOTIFICATION -> { permissionInFlight = false; latest?.let(::render) }
         }
     }
 
-    private val lifecycleCallback = object : ConnectionLifecycleCallback() {
-        override fun onConnectionInitiated(remoteEndpointId: String, info: com.google.android.gms.nearby.connection.ConnectionInfo) {
-            if (!sessionActive) {
-                client.rejectConnection(remoteEndpointId)
-                return
-            }
-            appendLog("connection_accepted_automatically; sdk_authentication_code_accepted_in_test_mode")
-            client.acceptConnection(remoteEndpointId, payloadCallback)
-        }
-
-        override fun onConnectionResult(remoteEndpointId: String, result: ConnectionResolution) {
-            if (result.status.statusCode == ConnectionsStatusCodes.STATUS_OK && sessionActive) {
-                endpointId = remoteEndpointId
-                status("Connected. ${if (role == Role.SENDER) "Sending" else "Receiving"} generated test payloads.")
-                appendLog("connected_foreground")
-                if (role == Role.SENDER) sendNextAttempt()
-            } else {
-                endpointId = null
-                status("Connection did not complete. Check the test log.")
-                appendLog("connection_failed_${result.status.statusCode}")
-            }
-        }
-
-        override fun onDisconnected(remoteEndpointId: String) {
-            if (endpointId == remoteEndpointId) endpointId = null
-            clearAttemptTimeout()
-            status("Peer disconnected. Stop and restart the session to retry.")
-            appendLog("disconnected_foreground")
-        }
-    }
-
-    private val payloadCallback = object : PayloadCallback() {
-        override fun onPayloadReceived(remoteEndpointId: String, payload: Payload) {
-            val bytes = payload.asBytes() ?: run {
-                appendLog("non_byte_payload_rejected")
-                return
-            }
-            try {
-                if (ForegroundFrame.isAckMessage(bytes)) {
-                    handleAcknowledgement(ForegroundFrame.decodeAckMessage(bytes))
-                } else {
-                    handleDataMessage(remoteEndpointId, ForegroundFrame.decodeDataMessage(bytes))
-                }
-            } catch (_: IllegalArgumentException) {
-                appendLog("invalid_probe_frame")
-            }
-        }
-
-        override fun onPayloadTransferUpdate(remoteEndpointId: String, update: PayloadTransferUpdate) = Unit
-    }
-
-    private fun handleDataMessage(remoteEndpointId: String, message: ForegroundFrame.DataMessage) {
-        val expected = ForegroundFrame.makeTestPayload(message.frame.payload.size, message.attemptIndex)
-        val accepted = expected.contentEquals(message.frame.payload)
-        val receivedDigest = ForegroundFrame.sha256(message.frame.payload)
-        records.put(JSONObject()
-            .put("event", "payload_received")
-            .put("attempt_index", message.attemptIndex)
-            .put("payload_size_bytes", message.frame.payload.size)
-            .put("expected_sha256", ForegroundFrame.sha256Hex(expected))
-            .put("received_sha256", ForegroundFrame.sha256Hex(message.frame.payload))
-            .put("success", accepted)
-            .put("observed_at", Instant.now().toString()))
-        if (accepted) successfulAttempts++ else failedAttempts++
-        status("Received ${message.frame.payload.size} bytes: ${if (accepted) "checksum matches" else "payload mismatch"} ($successfulAttempts/$ATTEMPTS_PER_BATCH matched).")
-        client.sendPayload(
-            remoteEndpointId,
-            Payload.fromBytes(ForegroundFrame.encodeAckMessage(message.attemptIndex, accepted, receivedDigest)),
-        ).addOnFailureListener { appendLog("acknowledgement_send_failed_${message.attemptIndex}") }
-        refreshLog()
-    }
-
-    private fun handleAcknowledgement(message: ForegroundFrame.AckMessage) {
-        if (role != Role.SENDER || message.attemptIndex != attemptIndex) {
-            appendLog("unexpected_acknowledgement")
-            return
-        }
-        clearAttemptTimeout()
-        val expected = pendingDigest
-        val accepted = message.accepted && expected != null && expected.contentEquals(message.digest)
-        completeAttempt(accepted, if (accepted) null else "acknowledgement_or_checksum_mismatch", message.digest)
-    }
-
-    private fun sendNextAttempt() {
-        if (!sessionActive || role != Role.SENDER) return
-        if (attemptIndex >= ATTEMPTS_PER_BATCH) {
-            status("Batch complete: $successfulAttempts succeeded, $failedAttempts failed out of $ATTEMPTS_PER_BATCH.")
-            appendLog("batch_complete")
-            return
-        }
-        val peer = endpointId ?: return
-        val payload = ForegroundFrame.makeTestPayload(attemptSize, attemptIndex)
-        val digest = ForegroundFrame.sha256(payload)
-        val timedAttempt = attemptIndex
-        val timedSessionGeneration = sessionGeneration
-        pendingDigest = digest
-        records.put(JSONObject()
-            .put("event", "payload_sent")
-            .put("attempt_index", attemptIndex)
-            .put("payload_size_bytes", attemptSize)
-            .put("expected_sha256", ForegroundFrame.sha256Hex(payload))
-            .put("observed_at", Instant.now().toString()))
-        client.sendPayload(peer, Payload.fromBytes(ForegroundFrame.encodeDataMessage(attemptIndex, payload)))
-            .addOnFailureListener {
-                if (sessionActive &&
-                    sessionGeneration == timedSessionGeneration &&
-                    attemptIndex == timedAttempt &&
-                    pendingDigest != null
-                ) {
-                    completeAttempt(false, "payload_send_failed", null)
-                }
-            }
-        timeout = Runnable {
-            if (attemptIndex == timedAttempt && pendingDigest != null) {
-                completeAttempt(false, "acknowledgement_timeout", null)
-            }
-        }.also { handler.postDelayed(it, ACK_TIMEOUT_MS) }
-        refreshLog()
-    }
-
-    private fun completeAttempt(success: Boolean, reason: String?, receivedDigest: ByteArray?) {
-        clearAttemptTimeout()
-        val expected = pendingDigest
-        records.put(JSONObject()
-            .put("event", "attempt_result")
-            .put("attempt_index", attemptIndex)
-            .put("payload_size_bytes", attemptSize)
-            .put("direction", if (role == Role.SENDER) "android-to-iphone" else "iphone-to-android")
-            .put("expected_sha256", expected?.let(ForegroundFrame::hex))
-            .put("received_sha256", receivedDigest?.let(ForegroundFrame::hex))
-            .put("success", success)
-            .put("failure_reason", reason)
-            .put("observed_at", Instant.now().toString()))
-        if (success) successfulAttempts++ else failedAttempts++
-        pendingDigest = null
-        attemptIndex++
-        status("$successfulAttempts succeeded, $failedAttempts failed out of $ATTEMPTS_PER_BATCH.")
-        if (attemptIndex < ATTEMPTS_PER_BATCH) {
-            handler.postDelayed({ sendNextAttempt() }, 100)
-        } else {
-            status("Batch complete: $successfulAttempts succeeded, $failedAttempts failed out of $ATTEMPTS_PER_BATCH.")
-            appendLog("batch_complete")
-        }
-        refreshLog()
-    }
-
-    private fun stopSession(message: String, record: Boolean = true) {
-        clearAttemptTimeout()
-        if (sessionActive) {
-            client.stopAdvertising()
-            client.stopDiscovery()
-            client.stopAllEndpoints()
-            if (record) appendLog("session_stopped")
-        }
-        sessionActive = false
-        role = null
-        endpointId = null
-        requestedEndpointId = null
-        pendingDigest = null
-        status(message)
-    }
-
-    private fun clearAttemptTimeout() {
-        timeout?.let(handler::removeCallbacks)
-        timeout = null
-    }
-
-    private fun status(message: String) {
-        if (::statusView.isInitialized) statusView.text = message
-        appendLog(message)
-    }
-
-    private fun recordNearbyFailure(operation: String, exception: Exception) {
-        val statusCode = (exception as? ApiException)?.statusCode
-        val statusName = statusCode?.let(ConnectionsStatusCodes::getStatusCodeString)
-        val failure = NearbyOperationFailure(
-            operation = operation,
-            statusCode = statusCode,
-            statusName = statusName,
-            exceptionType = exception.javaClass.simpleName,
-        )
-        records.put(JSONObject()
-            .put("event", "nearby_operation_failed")
-            .put("operation", operation.lowercase(Locale.ROOT))
-            .put("status_code", statusCode ?: JSONObject.NULL)
-            .put("status_name", statusName ?: JSONObject.NULL)
-            .put("exception_type", failure.exceptionType)
-            .put("observed_at", Instant.now().toString()))
-        status(failure.userMessage())
-        refreshLog()
-        val grantedLocationPermissions = listOf(
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-        ).filter { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }.toSet()
-        val compatibilityPermissions = NearbyPermissionPolicy.permissionsForCompatibilityFailure(
-            sdkInt = Build.VERSION.SDK_INT,
-            operation = operation,
-            statusCode = statusCode,
-            grantedPermissions = grantedLocationPermissions,
-        )
-        if (compatibilityPermissions.isNotEmpty()) {
-            val retryRole = role ?: return
-            runOnUiThread {
-                permissionRetryRole = retryRole
-                val permissionMessage = when (statusCode) {
-                    NearbyPermissionPolicy.STATUS_MISSING_FINE_LOCATION -> "Nearby says this device needs precise Location for discovery. Choose Precise to retry; this probe does not read coordinates."
-                    NearbyPermissionPolicy.STATUS_MISSING_COARSE_LOCATION -> "Nearby says this device needs Location access for discovery. Allow it to retry; this probe does not read coordinates."
-                    else -> "Nearby needs Location permission for discovery on this device. Allow it to retry; this probe does not read coordinates."
-                }
-                status(permissionMessage)
-                requestPermissions(compatibilityPermissions.toTypedArray(), REQUEST_PERMISSIONS)
-            }
-        }
-    }
-
-    private fun appendLog(message: String) {
-        if (::logView.isInitialized) {
-            logView.text = (logView.text.toString() + "\n" + message).trim()
-        }
-    }
-
-    private fun refreshLog() {
-        if (::logView.isInitialized) logView.text = records.toString(2)
-    }
-
-    private fun shareLog() {
-        val device = JSONObject()
-            .put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
-            .put("os_version", Build.VERSION.RELEASE)
-            .put("sdk_int", Build.VERSION.SDK_INT)
-        val packageInfo = packageManager.getPackageInfo(packageName, 0)
-        val appBuild = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            packageInfo.longVersionCode
-        } else {
-            @Suppress("DEPRECATION")
-            packageInfo.versionCode.toLong()
-        }
-        device.put("app_version", packageInfo.versionName)
-            .put("app_build", appBuild)
-        val content = JSONObject()
-            .put("schema", "trailmesh.foreground-probe-log")
-            .put("version", 1)
-            .put("platform", "android")
-            .put("device", device)
-            .put("transport", "Google Nearby Connections")
-            .put("strategy", "P2P_POINT_TO_POINT")
-            .put("pairing_mode", pairingMode.name.lowercase(Locale.ROOT))
-            .put("transport_role", transportRole)
-            .put("underlying_medium", "SDK selected; not exposed by the probe")
-            .put("automatic_test_acceptance", true)
-            .put("internet_disabled", JSONObject.NULL)
-            .put("attempts", records)
-            .toString(2)
-        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, content)
-        }, "Share redacted transport log"))
+    companion object {
+        private const val REQUEST_NEARBY = 41
+        private const val REQUEST_COMPATIBILITY = 42
+        private const val REQUEST_NOTIFICATION = 43
     }
 }

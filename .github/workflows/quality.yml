@@ -93,6 +93,7 @@ jobs:
   android-probe:
     name: Android transport probe
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: experiments/foreground_exchange/android
@@ -105,10 +106,18 @@ jobs:
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
       - name: Run Android unit tests and build the probe
         run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+      - name: Upload Android test APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: TrailMeshTransportProbe-android-debug
+          path: experiments/foreground_exchange/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
 
   ios-probe:
     name: iOS transport probe
     runs-on: macos-15
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: experiments/foreground_exchange/ios
@@ -120,7 +129,7 @@ jobs:
         run: |
           simulator_id="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(device["udid"] for runtime in devices.values() for device in runtime if "iPhone" in device["name"]))')"
           echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
-      - name: Run iOS frame tests
+      - name: Run iOS frame and session tests
         run: >-
           xcodebuild test
           -project TrailMeshTransportProbe.xcodeproj
@@ -133,6 +142,7 @@ jobs:
   ios-device-package:
     name: Unsigned iPhone probe package
     runs-on: macos-15
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: experiments/foreground_exchange/ios
@@ -156,6 +166,12 @@ jobs:
           test -d "$app"
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")" = 'org.trailmesh.foregroundprobe.ios'
           xcrun lipo -archs "$app/TrailMeshTransportProbe" | grep -qw arm64
+
+          widget="$app/PlugIns/TrailMeshSessionWidget.appex"
+          test -d "$widget"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$widget/Info.plist")" = 'org.trailmesh.foregroundprobe.ios.sessionwidget'
+          test "$(/usr/libexec/PlistBuddy -c 'Print NSExtension:NSExtensionPointIdentifier' "$widget/Info.plist")" = 'com.apple.widgetkit-extension'
+          xcrun lipo -archs "$widget/TrailMeshSessionWidget" | grep -qw arm64
 
           package_dir="$RUNNER_TEMP/TrailMeshDevicePackage"
           output_dir="$RUNNER_TEMP/TrailMeshDeviceOutput"

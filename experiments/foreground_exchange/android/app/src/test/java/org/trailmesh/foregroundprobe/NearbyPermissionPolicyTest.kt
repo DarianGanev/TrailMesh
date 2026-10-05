@@ -124,15 +124,25 @@ class NearbyPermissionPolicyTest {
     }
 
     @Test
-    fun android13DoesNotRequestCompatibilityLocationForAdvertisingFailures() {
+    fun android13RequestsCompatibilityLocationForAdvertisingFailuresToo() {
         assertEquals(
-            emptyList<String>(),
+            listOf("android.permission.ACCESS_COARSE_LOCATION", "android.permission.ACCESS_FINE_LOCATION"),
             NearbyPermissionPolicy.permissionsForCompatibilityFailure(
                 sdkInt = 33,
                 operation = "advertising",
                 statusCode = NearbyPermissionPolicy.STATUS_MISSING_FINE_LOCATION,
                 grantedPermissions = emptySet(),
             ),
+        )
+    }
+
+    @Test
+    fun android12LStillRequestsLocationBeforeNearbyWifiPermissionExists() {
+        assertEquals(
+            setOf("android.permission.BLUETOOTH_ADVERTISE", "android.permission.BLUETOOTH_CONNECT",
+                "android.permission.BLUETOOTH_SCAN", "android.permission.ACCESS_COARSE_LOCATION",
+                "android.permission.ACCESS_FINE_LOCATION"),
+            NearbyPermissionPolicy.requiredPermissions(32).toSet(),
         )
     }
 }

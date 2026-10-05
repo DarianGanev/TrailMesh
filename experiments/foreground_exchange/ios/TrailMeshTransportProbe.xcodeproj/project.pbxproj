@@ -4,6 +4,47 @@
 	classes = {};
 	objectVersion = 56;
 	objects = {
+
+        B00000000000000000000010 = {isa = PBXBuildFile; fileRef = F00000000000000000000010; };
+        B00000000000000000000011 = {isa = PBXBuildFile; fileRef = F00000000000000000000011; };
+        B00000000000000000000012 = {isa = PBXBuildFile; fileRef = F00000000000000000000012; };
+        B00000000000000000000013 = {isa = PBXBuildFile; fileRef = F00000000000000000000013; };
+        B00000000000000000000014 = {isa = PBXBuildFile; fileRef = F00000000000000000000014; };
+        B00000000000000000000015 = {isa = PBXBuildFile; fileRef = F00000000000000000000015; };
+        B00000000000000000000016 = {isa = PBXBuildFile; fileRef = F00000000000000000000016; };
+        B00000000000000000000017 = {isa = PBXBuildFile; fileRef = F00000000000000000000012; };
+        B00000000000000000000018 = {isa = PBXBuildFile; fileRef = F00000000000000000000018; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+        F00000000000000000000010 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbeSessionState.swift; sourceTree = "<group>"; };
+        F00000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbePeerContext.swift; sourceTree = "<group>"; };
+        F00000000000000000000012 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbeActivityAttributes.swift; sourceTree = "<group>"; };
+        F00000000000000000000013 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbeLiveActivity.swift; sourceTree = "<group>"; };
+        F00000000000000000000014 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbeSessionStateTests.swift; sourceTree = "<group>"; };
+        F00000000000000000000015 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbePeerContextTests.swift; sourceTree = "<group>"; };
+        F00000000000000000000016 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrailMeshSessionWidget.swift; sourceTree = "<group>"; };
+        F00000000000000000000017 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+        F00000000000000000000018 = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TrailMeshSessionWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+        E00000000000000000000001 = {isa = PBXGroup; children = (F00000000000000000000016, F00000000000000000000017, ); path = Widget; sourceTree = "<group>"; };
+        E00000000000000000000010 = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = C00000000000000000000004;
+            buildPhases = (E00000000000000000000011, E00000000000000000000012, E00000000000000000000013, );
+            buildRules = ();
+            dependencies = ();
+            name = TrailMeshSessionWidget;
+            productName = TrailMeshSessionWidget;
+            productReference = F00000000000000000000018;
+            productType = "com.apple.product-type.app-extension";
+        };
+        E00000000000000000000011 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000016, B00000000000000000000017, ); runOnlyForDeploymentPostprocessing = 0; };
+        E00000000000000000000012 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        E00000000000000000000013 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        E00000000000000000000014 = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (B00000000000000000000018, ); name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0; };
+        E00000000000000000000015 = {isa = PBXContainerItemProxy; containerPortal = fa649056e2d80b6b7173d561; proxyType = 1; remoteGlobalIDString = E00000000000000000000010; remoteInfo = TrailMeshSessionWidget; };
+        E00000000000000000000016 = {isa = PBXTargetDependency; target = E00000000000000000000010; targetProxy = E00000000000000000000015; };
+        C00000000000000000000004 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000007, A00000000000000000000008, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        A00000000000000000000007 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 2; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Widget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.1; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"; MARKETING_VERSION = 0.2.0; PRODUCT_BUNDLE_IDENTIFIER = org.trailmesh.foregroundprobe.ios.sessionwidget; PRODUCT_NAME = TrailMeshSessionWidget; SKIP_INSTALL = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
+        A00000000000000000000008 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 2; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Widget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.1; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"; MARKETING_VERSION = 0.2.0; PRODUCT_BUNDLE_IDENTIFIER = org.trailmesh.foregroundprobe.ios.sessionwidget; PRODUCT_NAME = TrailMeshSessionWidget; SKIP_INSTALL = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
+
 		B00000000000000000000001 = {isa = PBXBuildFile; fileRef = F00000000000000000000001; };
 		B00000000000000000000002 = {isa = PBXBuildFile; fileRef = F00000000000000000000002; };
 		B00000000000000000000003 = {isa = PBXBuildFile; fileRef = F00000000000000000000003; };
@@ -22,10 +63,10 @@
 		F00000000000000000000008 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrailMeshTransportProbeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F00000000000000000000009 = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 
-		eeb2bfa69ef74c17646df682 = {isa = PBXGroup; children = (5db25555e01f75d30dbab63b, 6dade0b2b734e4e7d5c32bbd, F00000000000000000000006, 653157048931e853b03f4e56, ed9485fe02d09be9de2a463a, ); sourceTree = "<group>"; };
-		5db25555e01f75d30dbab63b = {isa = PBXGroup; children = (F00000000000000000000001, F00000000000000000000002, F00000000000000000000003, F00000000000000000000004, ); path = Sources; sourceTree = "<group>"; };
-		6dade0b2b734e4e7d5c32bbd = {isa = PBXGroup; children = (F00000000000000000000005, ); path = Tests; sourceTree = "<group>"; };
-		653157048931e853b03f4e56 = {isa = PBXGroup; children = (F00000000000000000000007, F00000000000000000000008, ); name = Products; sourceTree = "<group>"; };
+		eeb2bfa69ef74c17646df682 = {isa = PBXGroup; children = (E00000000000000000000001, 5db25555e01f75d30dbab63b, 6dade0b2b734e4e7d5c32bbd, F00000000000000000000006, 653157048931e853b03f4e56, ed9485fe02d09be9de2a463a, ); sourceTree = "<group>"; };
+		5db25555e01f75d30dbab63b = {isa = PBXGroup; children = (F00000000000000000000001, F00000000000000000000002, F00000000000000000000003, F00000000000000000000004, F00000000000000000000010, F00000000000000000000011, F00000000000000000000012, F00000000000000000000013, ); path = Sources; sourceTree = "<group>"; };
+		6dade0b2b734e4e7d5c32bbd = {isa = PBXGroup; children = (F00000000000000000000005, F00000000000000000000014, F00000000000000000000015, ); path = Tests; sourceTree = "<group>"; };
+		653157048931e853b03f4e56 = {isa = PBXGroup; children = (F00000000000000000000007, F00000000000000000000008, F00000000000000000000018, ); name = Products; sourceTree = "<group>"; };
 		ed9485fe02d09be9de2a463a = {isa = PBXGroup; children = (F00000000000000000000009, ); name = Frameworks; sourceTree = "<group>"; };
 
 		8936a81b184c243e4bc02a94 = {isa = XCSwiftPackageProductDependency; package = 056488e8f6d0a5a57a9f6fce; productName = NearbyConnections; };
@@ -34,9 +75,9 @@
 		4e9273c4785e5a953e1128b6 = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = C00000000000000000000002;
-			buildPhases = (0f154163ea9833f23c016a4d, d48508947dee549be76bae84, 48c4dcc0270f546c7439f750, );
+			buildPhases = (0f154163ea9833f23c016a4d, d48508947dee549be76bae84, 48c4dcc0270f546c7439f750, E00000000000000000000014, );
 			buildRules = ();
-			dependencies = ();
+			dependencies = (E00000000000000000000016, );
 			name = TrailMeshTransportProbe;
 			packageProductDependencies = (8936a81b184c243e4bc02a94, );
 			productName = TrailMeshTransportProbe;
@@ -55,10 +96,10 @@
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
 
-		fa649056e2d80b6b7173d561 = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {4e9273c4785e5a953e1128b6 = {CreatedOnToolsVersion = 16.0; }; 258e133cd8427f805cc8a881 = {CreatedOnToolsVersion = 16.0; TestTargetID = 4e9273c4785e5a953e1128b6; }; }; }; buildConfigurationList = C00000000000000000000001; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base, ); mainGroup = eeb2bfa69ef74c17646df682; packageReferences = (056488e8f6d0a5a57a9f6fce, ); productRefGroup = 653157048931e853b03f4e56; projectDirPath = ""; projectRoot = ""; targets = (4e9273c4785e5a953e1128b6, 258e133cd8427f805cc8a881, ); };
+		fa649056e2d80b6b7173d561 = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {4e9273c4785e5a953e1128b6 = {CreatedOnToolsVersion = 16.0; }; 258e133cd8427f805cc8a881 = {CreatedOnToolsVersion = 16.0; TestTargetID = 4e9273c4785e5a953e1128b6; }; }; }; buildConfigurationList = C00000000000000000000001; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base, ); mainGroup = eeb2bfa69ef74c17646df682; packageReferences = (056488e8f6d0a5a57a9f6fce, ); productRefGroup = 653157048931e853b03f4e56; projectDirPath = ""; projectRoot = ""; targets = (4e9273c4785e5a953e1128b6, 258e133cd8427f805cc8a881, E00000000000000000000010, ); };
 
-		0f154163ea9833f23c016a4d = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000001, B00000000000000000000002, B00000000000000000000003, B00000000000000000000004, ); runOnlyForDeploymentPostprocessing = 0; };
-		2b1d663c3327d783428e1b2e = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000005, ); runOnlyForDeploymentPostprocessing = 0; };
+		0f154163ea9833f23c016a4d = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000001, B00000000000000000000002, B00000000000000000000003, B00000000000000000000004, B00000000000000000000010, B00000000000000000000011, B00000000000000000000012, B00000000000000000000013, ); runOnlyForDeploymentPostprocessing = 0; };
+		2b1d663c3327d783428e1b2e = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000005, B00000000000000000000014, B00000000000000000000015, ); runOnlyForDeploymentPostprocessing = 0; };
 		d48508947dee549be76bae84 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000006, ); runOnlyForDeploymentPostprocessing = 0; };
 		003d87044fad63a545bafc7d = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000007, ); runOnlyForDeploymentPostprocessing = 0; };
 		48c4dcc0270f546c7439f750 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
@@ -73,8 +114,8 @@
 
 		A00000000000000000000001 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; }; name = Debug; };
 		A00000000000000000000002 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; }; name = Release; };
-		A00000000000000000000003 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEFINES_MODULE = YES; ENABLE_PREVIEWS = YES; ENABLE_TESTABILITY = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.0; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = org.trailmesh.foregroundprobe.ios; PRODUCT_NAME = TrailMeshTransportProbe; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
-		A00000000000000000000004 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.0; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = org.trailmesh.foregroundprobe.ios; PRODUCT_NAME = TrailMeshTransportProbe; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
+		A00000000000000000000003 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 2; DEFINES_MODULE = YES; ENABLE_PREVIEWS = YES; ENABLE_TESTABILITY = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.0; MARKETING_VERSION = 0.2.0; PRODUCT_BUNDLE_IDENTIFIER = org.trailmesh.foregroundprobe.ios; PRODUCT_NAME = TrailMeshTransportProbe; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
+		A00000000000000000000004 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 2; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.0; MARKETING_VERSION = 0.2.0; PRODUCT_BUNDLE_IDENTIFIER = org.trailmesh.foregroundprobe.ios; PRODUCT_NAME = TrailMeshTransportProbe; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
 		A00000000000000000000005 = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = org.trailmesh.foregroundprobe.ios.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TrailMeshTransportProbe.app/TrailMeshTransportProbe"; }; name = Debug; };
 		A00000000000000000000006 = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = org.trailmesh.foregroundprobe.ios.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TrailMeshTransportProbe.app/TrailMeshTransportProbe"; }; name = Release; };
 	};

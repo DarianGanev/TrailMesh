@@ -13,10 +13,10 @@ internal object NearbyPermissionPolicy {
             add(Manifest.permission.BLUETOOTH_CONNECT)
             add(Manifest.permission.BLUETOOTH_SCAN)
         }
-        if (sdkInt <= Build.VERSION_CODES.S) {
+        if (sdkInt <= Build.VERSION_CODES.S_V2) {
             add(Manifest.permission.ACCESS_COARSE_LOCATION)
         }
-        if (sdkInt in Build.VERSION_CODES.Q..Build.VERSION_CODES.S) {
+        if (sdkInt in Build.VERSION_CODES.Q..Build.VERSION_CODES.S_V2) {
             add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
         if (sdkInt >= Build.VERSION_CODES.TIRAMISU) {
@@ -42,7 +42,8 @@ internal object NearbyPermissionPolicy {
         statusCode: Int?,
         grantedPermissions: Set<String>,
     ): List<String> {
-        if (sdkInt < Build.VERSION_CODES.TIRAMISU || !operation.equals("discovery", ignoreCase = true)) {
+        if (sdkInt < Build.VERSION_CODES.TIRAMISU ||
+            operation.lowercase() !in setOf("discovery", "advertising", "connection")) {
             return emptyList()
         }
 
