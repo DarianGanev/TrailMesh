@@ -4,13 +4,13 @@ This plan keeps the diploma work tied to reviewable issues and evidence. The pro
 
 ## Current gate
 
-The repository has a frozen protocol v1 fixture and a bounded exchange contract. PR #24 added a local loopback harness and an evidence template; it did not prove physical iPhone-to-Android radio interoperability. Issue #2 remains open until the physical foreground test is recorded. Issue #25 captures the updated field UI contract and planning alignment.
+The repository has a frozen signed-bundle protocol v1 fixture and a bounded exchange contract. Issue #36 hardens the native generated-byte probes with automatic bidirectional pairing, a separate probe-v2 wire contract, saved session progress and platform lifecycle support. The user has reported successful Android pairs and an Android-advertiser/iPhone-discoverer connection in both payload directions. Complete build/device/radio/attempt records are still required: Issue #2 remains open until the physical foreground evidence is recorded. Issue #27 owns the actual signed-public-report session and its lifecycle acceptance. Neither a Live Activity nor successful CI establishes screen-off discovery.
 
 ## Milestones and issue sequence
 
 | Milestone | Outcome | Current issues |
 |---|---|---|
-| M1 Foundation | Protocol baseline, device/build inventory, the field UI/UX brief, and measured foreground transport feasibility. | #2 physical transport gate; #25 design and planning documents. |
+| M1 Foundation | Protocol baseline, device/build inventory, the field UI/UX brief, and measured foreground transport feasibility. | #2 physical transport gate; #25 design and planning documents; #36 probe session hardening. |
 | M2 Durable exchange | Persistent signed reports, deduplication, expiry, multi-hop relay, and the map/report/public-session vertical slice. | #3, #4, #26, #27. |
 | M3 Private messaging | Verified contacts, encrypted one-to-one messages, opaque relaying, receipts, and distinct message screens. | #5, #28. |
 | M4 Research simulator | Deterministic traces and comparable flooding, Spray-and-Wait, and PRoPHET-style baselines. | #6. |

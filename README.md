@@ -14,7 +14,7 @@ The current map-first screen hierarchy, accessibility direction, and trail-sessi
 
 ## Current phase
 
-The repository is in foundation implementation. The protocol v1 canonical fixture and a bounded local exchange contract are frozen and tested; the next technical gate is physical iPhone-to-Android validation with internet disabled. The local loopback harness is not physical radio evidence. The updated product direction keeps the Explore map as home and targets a single user-started public-report trail session, with no approval at each encounter; background and transport behavior remain subject to device validation.
+The repository is in foundation implementation. The signed-bundle protocol v1 fixture is frozen. The native generated-byte probes now use an automatic bidirectional pairing flow with correlated probe-v2 messages, saved progress and bounded recovery. Android owns its session in a foreground service; iOS integrates a local Live Activity and a saved pause/resume fallback. See [the transport gate and physical test matrix](docs/feasibility/foreground-exchange.md). Reported phone successes still need complete recorded evidence; simulator and CI results do not prove background radio behavior. The product keeps the Explore map as home and targets a user-started public-report trail session with no approval at each encounter.
 
 ## Repository layout
 
