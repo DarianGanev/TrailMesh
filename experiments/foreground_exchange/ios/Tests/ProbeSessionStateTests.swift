@@ -195,5 +195,8 @@ final class ProbeSessionStateTests: XCTestCase {
             try state.recordRemoteFinishAcknowledgementDelivered(to: id)
         }
         XCTAssertTrue(state.shouldPauseForFullJournal)
+        try state.prepareLink(to: ids[0])
+        XCTAssertNotNil(state.peer(ids[0])?.completedAt)
+        XCTAssertFalse(state.shouldPauseForFullJournal)
     }
 }

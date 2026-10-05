@@ -92,7 +92,7 @@ struct ProbeSessionState: Codable {
     func peer(_ id: String) -> ProbePeerProgress? { peers.first { $0.sessionID == id } }
 
     var shouldPauseForFullJournal: Bool {
-        peers.count == 8 && peers.allSatisfy { $0.completedAt != nil }
+        peers.count == 8 && peers.allSatisfy { $0.complete }
     }
 
     mutating func prepareLink(to id: String) throws {
