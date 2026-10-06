@@ -2,15 +2,45 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    target-branch: develop
     schedule:
       interval: weekly
     labels:
       - infrastructure
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    groups:
+      all-actions:
+        patterns:
+          - '*'
+
   - package-ecosystem: pip
     directory: /tools/protocol
+    target-branch: develop
     schedule:
       interval: weekly
     labels:
       - infrastructure
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    groups:
+      python-minor-and-patch:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: gradle
+    directory: /experiments/foreground_exchange/android
+    target-branch: develop
+    schedule:
+      interval: weekly
+    labels:
+      - infrastructure
+    open-pull-requests-limit: 3
+    groups:
+      android-minor-and-patch:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
