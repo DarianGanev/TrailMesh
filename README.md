@@ -10,16 +10,16 @@ Phones store signed reports and encrypted messages, carry them while people move
 
 Read [TrailMesh.md](TrailMesh.md) for the complete product, protocol, security, testing, evaluation, and nine-month delivery plan.
 
-The current map-first screen hierarchy, accessibility direction, and trail-session interaction are in [docs/UI_UX.md](docs/UI_UX.md). The milestone and GitHub project workflow is in [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md).
+The current map-first screen hierarchy, accessibility direction, and trail-session interaction are in [docs/UI_UX.md](docs/UI_UX.md). Project milestones and work tracking are maintained in GitHub.
 
 ## Current phase
 
-The repository is in foundation implementation. The signed-bundle protocol v1 fixture is frozen. The native generated-byte probes now use an automatic bidirectional pairing flow with correlated probe-v2 messages, saved progress and bounded recovery. Android owns its session in a foreground service; iOS integrates a local Live Activity and a saved pause/resume fallback. See [the transport gate and physical test matrix](docs/feasibility/foreground-exchange.md). Reported phone successes still need complete recorded evidence; simulator and CI results do not prove background radio behavior. The product keeps the Explore map as home and targets a user-started public-report trail session with no approval at each encounter.
+The repository is in foundation implementation. The signed-bundle protocol v1 fixture is frozen. The native generated-byte probes use an automatic bidirectional pairing flow with correlated probe-v2 messages, saved progress and bounded recovery. Android owns its session in a foreground service; iOS integrates a local Live Activity and a saved pause/resume fallback. Recorded M1 physical tests show 20/20 generated-byte exchanges in both directions on an iPhone 17 and Android 13 with Wi-Fi and mobile data disabled; a separate background/screen-off observation is one test, not a general reliability claim. See [the transport gate and physical test matrix](docs/feasibility/foreground-exchange.md) and [the physical evidence](experiments/foreground_exchange/evidence-physical-v1.json). The product keeps the Explore map as home and targets a user-started public-report trail session with no approval at each encounter.
 
 ## Repository layout
 
 ```text
-docs/       Project plan, UI/UX brief, and feasibility notes
+docs/       UI/UX brief and feasibility notes
 protocol/   Versioned wire-format and cross-platform fixtures
 tools/      Python protocol reference and local transport contract tests
 experiments/ Device evidence templates and native foreground transport probes
