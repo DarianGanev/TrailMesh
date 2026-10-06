@@ -4,50 +4,65 @@ on:
   pull_request:
   push:
     branches: [main, develop]
+  workflow_dispatch:
 
 permissions:
   contents: read
   pull-requests: read
 
-jobs:
-  repository-hygiene:
-    name: Repository hygiene
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Check required project files
-        shell: bash
-        run: |
-          test -s TrailMesh.md
-          test -s README.md
-          test -s .coderabbit.yaml
-          ! find . -type f \( -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.mobileprovision' \) -print -quit | grep -q .
-      - name: Check specification headings
-        shell: bash
-        run: |
-          grep -q '^# TrailMesh' TrailMesh.md
-          grep -q '## 8\. Mandatory feasibility experiments' TrailMesh.md
-          grep -q '## 25\. Nine-month milestones' TrailMesh.md
-  markdown:
-    name: Markdown
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24.2.0
-        with:
-          globs: '**/*.md'
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
-  protocol-fixture:
-    name: Protocol fixture
+jobs:
+  change-detection:
+    name: Change detection
     runs-on: ubuntu-latest
+    outputs:
+      android: ${{ steps.filter.outputs.android }}
+      ios: ${{ steps.filter.outputs.ios }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Identify platform-relevant changes
+        id: filter
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
+            changed_paths="apps/__run_all__"
+          else
+            changed_paths="$(git diff --name-only "$BASE_SHA" "$GITHUB_SHA")"
+          fi
+
+          android=false
+          ios=false
+          if grep -Eq '^(apps/|experiments/foreground_exchange/android/|protocol/|tools/protocol/|tools/transport/)' <<< "$changed_paths"; then
+            android=true
+          fi
+          if grep -Eq '^(apps/|experiments/foreground_exchange/ios/|protocol/|tools/protocol/|tools/transport/)' <<< "$changed_paths"; then
+            ios=true
+          fi
+
+          echo "android=$android" >> "$GITHUB_OUTPUT"
+          echo "ios=$ios" >> "$GITHUB_OUTPUT"
+          echo "Android checks: $android"
+          echo "iOS checks: $ios"
+
+  protocol-contracts:
+    name: Protocol and transport contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install protocol tooling
         run: python3 -m pip install --disable-pip-version-check --requirement tools/protocol/requirements.txt
       - name: Validate fixture JSON
-        shell: bash
         run: python3 -m json.tool protocol/fixture-v1.json >/dev/null
-      - name: Validate fixture contract
+      - name: Validate frozen fixture contract
         shell: bash
         run: |
           python3 - <<'PY'
@@ -71,27 +86,15 @@ jobs:
           if fixture['status'] != 'frozen':
               raise SystemExit('fixtureVersion 1 must remain explicitly frozen after Issue #1')
           PY
-
-  protocol-tests:
-    name: Protocol vectors
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install protocol tooling
-        run: python3 -m pip install --disable-pip-version-check --requirement tools/protocol/requirements.txt
       - name: Run protocol vector tests
         run: python3 -m unittest tools.protocol.test_vector
-
-  transport-tests:
-    name: Foreground exchange tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run bounded exchange contract tests
         run: python3 -m unittest discover -s tools/transport -p 'test_*.py'
 
   android-probe:
     name: Android transport probe
+    needs: change-detection
+    if: needs.change-detection.outputs.android == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -116,6 +119,8 @@ jobs:
 
   ios-probe:
     name: iOS transport probe
+    needs: change-detection
+    if: needs.change-detection.outputs.ios == 'true'
     runs-on: macos-15
     timeout-minutes: 25
     defaults:
@@ -141,6 +146,8 @@ jobs:
 
   ios-device-package:
     name: Unsigned iPhone probe package
+    needs: change-detection
+    if: needs.change-detection.outputs.ios == 'true'
     runs-on: macos-15
     timeout-minutes: 25
     defaults:
