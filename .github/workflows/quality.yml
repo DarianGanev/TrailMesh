@@ -11,7 +11,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -40,10 +40,10 @@ jobs:
 
           android=false
           ios=false
-          if grep -Eq '^(apps/|experiments/foreground_exchange/android/|protocol/|tools/protocol/|tools/transport/)' <<< "$changed_paths"; then
+          if grep -Eq '^(\.github/workflows/quality\.yml|apps/|experiments/foreground_exchange/android/|protocol/|tools/protocol/|tools/transport/)' <<< "$changed_paths"; then
             android=true
           fi
-          if grep -Eq '^(apps/|experiments/foreground_exchange/ios/|protocol/|tools/protocol/|tools/transport/)' <<< "$changed_paths"; then
+          if grep -Eq '^(\.github/workflows/quality\.yml|apps/|experiments/foreground_exchange/ios/|protocol/|tools/protocol/|tools/transport/)' <<< "$changed_paths"; then
             ios=true
           fi
 
