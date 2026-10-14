@@ -4,6 +4,10 @@ All notable changes to TrailMesh are documented here.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-14
+
+M1 transport foundation: native test probes, shared protocol validation, and recorded physical exchange evidence.
+
 ### Protocol fixture
 
 - Frozen protocol v1 RFC 8785 canonicalization, SHA-256 bundle ID, and Ed25519 verification vector.
