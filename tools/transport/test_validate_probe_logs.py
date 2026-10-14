@@ -57,8 +57,10 @@ class ProbeLogValidationTests(unittest.TestCase):
                     record["failure_reason"] = "acknowledgement_timeout"
         self.assertEqual(validate_pair(first, second), {"ios-to-android": 18, "android-to-ios": 18})
         damaged = copy.deepcopy(first)
-        next(r for r in damaged["attempts"] if r["event"] == "attempt_result" and r["attempt_index"] == 2)["success"] = False
-        with self.assertRaises(ExchangeError):
+        third_failure = next(r for r in damaged["attempts"]
+                             if r["event"] == "attempt_result" and r["attempt_index"] == 2)
+        third_failure.update(success=False, failure_reason="acknowledgement_timeout")
+        with self.assertRaisesRegex(ExchangeError, "below the acceptance gate"):
             validate_pair(damaged, second)
 
     def test_failed_result_requires_a_nonblank_string_reason(self):
