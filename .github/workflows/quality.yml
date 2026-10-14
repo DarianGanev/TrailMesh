@@ -4,66 +4,206 @@ on:
   pull_request:
   push:
     branches: [main, develop]
+  workflow_dispatch:
 
 permissions:
   contents: read
   pull-requests: read
 
-jobs:
-  repository-hygiene:
-    name: Repository hygiene
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Check required project files
-        shell: bash
-        run: |
-          test -s TrailMesh.md
-          test -s README.md
-          test -s .coderabbit.yaml
-          ! find . -type f \( -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.mobileprovision' \) -print -quit | grep -q .
-      - name: Check specification headings
-        shell: bash
-        run: |
-          grep -q '^# TrailMesh' TrailMesh.md
-          grep -q '## 8\. Mandatory feasibility experiments' TrailMesh.md
-          grep -q '## 25\. Nine-month milestones' TrailMesh.md
-  markdown:
-    name: Markdown
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24.2.0
-        with:
-          globs: '**/*.md'
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
-  protocol-fixture:
-    name: Protocol fixture
+jobs:
+  change-detection:
+    name: Change detection
     runs-on: ubuntu-latest
+    outputs:
+      android: ${{ steps.filter.outputs.android }}
+      ios: ${{ steps.filter.outputs.ios }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Validate fixture JSON
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Identify platform-relevant changes
+        id: filter
         shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]] \
+             || ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            changed_paths="apps/__run_all__"
+          else
+            changed_paths="$(git diff --name-only "$BASE_SHA" "$GITHUB_SHA")"
+          fi
+
+          android=false
+          ios=false
+          if grep -Eq '^(\.github/workflows/quality\.yml|apps/|experiments/foreground_exchange/android/|protocol/|tools/protocol/|tools/transport/)' <<< "$changed_paths"; then
+            android=true
+          fi
+          if grep -Eq '^(\.github/workflows/quality\.yml|apps/|experiments/foreground_exchange/ios/|protocol/|tools/protocol/|tools/transport/)' <<< "$changed_paths"; then
+            ios=true
+          fi
+
+          echo "android=$android" >> "$GITHUB_OUTPUT"
+          echo "ios=$ios" >> "$GITHUB_OUTPUT"
+          echo "Android checks: $android"
+          echo "iOS checks: $ios"
+
+  protocol-contracts:
+    name: Protocol and transport contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install protocol tooling
+        run: python3 -m pip install --disable-pip-version-check --requirement tools/protocol/requirements.txt
+      - name: Validate fixture JSON
         run: python3 -m json.tool protocol/fixture-v1.json >/dev/null
-      - name: Validate fixture contract
+      - name: Validate frozen fixture contract
         shell: bash
         run: |
           python3 - <<'PY'
-          import json
           from pathlib import Path
+          import sys
 
-          fixture = json.loads(Path('protocol/fixture-v1.json').read_text(encoding='utf-8'))
-          required = {'fixtureVersion', 'status', 'purpose', 'nextSteps'}
+          sys.path.insert(0, '.')
+          from tools.protocol.vector import parse_json_strict
+
+          fixture = parse_json_strict(Path('protocol/fixture-v1.json').read_text(encoding='utf-8'))
+          required = {
+              'fixtureVersion', 'status', 'purpose', 'coreDomain', 'idDomain',
+              'core', 'canonicalCore', 'canonicalCoreSha256', 'bundleId',
+              'publicKey', 'signature',
+          }
           missing = required.difference(fixture)
           if missing:
               raise SystemExit(f'missing fixture fields: {sorted(missing)}')
           if fixture['fixtureVersion'] != 1:
               raise SystemExit('fixtureVersion must be 1')
-          if fixture['status'] != 'scaffold':
-              raise SystemExit('the scaffold fixture must remain explicitly marked scaffold until Issue #1 is complete')
-          if not isinstance(fixture['nextSteps'], list) or not fixture['nextSteps']:
-              raise SystemExit('nextSteps must be a non-empty list')
+          if fixture['status'] != 'frozen':
+              raise SystemExit('fixtureVersion 1 must remain explicitly frozen after Issue #1')
           PY
+      - name: Run protocol vector tests
+        run: python3 -m unittest tools.protocol.test_vector
+      - name: Run bounded exchange contract tests
+        run: python3 -m unittest discover -s tools/transport -p 'test_*.py'
+
+  android-probe:
+    name: Android transport probe
+    needs: change-detection
+    if: needs.change-detection.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: experiments/foreground_exchange/android
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Run Android unit tests and build the probe
+        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+      - name: Upload Android test APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: TrailMeshTransportProbe-android-debug
+          path: experiments/foreground_exchange/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  ios-probe:
+    name: iOS transport probe
+    needs: change-detection
+    if: needs.change-detection.outputs.ios == 'true'
+    runs-on: macos-15
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: experiments/foreground_exchange/ios
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select an available iPhone simulator
+        id: simulator
+        shell: bash
+        run: |
+          simulator_id="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(device["udid"] for runtime in devices.values() for device in runtime if "iPhone" in device["name"]))')"
+          echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
+      - name: Run iOS frame and session tests
+        run: >-
+          xcodebuild test
+          -project TrailMeshTransportProbe.xcodeproj
+          -scheme TrailMeshTransportProbe
+          -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}"
+          -derivedDataPath "$RUNNER_TEMP/TrailMeshDerivedData"
+          ARCHS=arm64
+          CODE_SIGNING_ALLOWED=NO
+
+  ios-device-package:
+    name: Unsigned iPhone probe package
+    needs: change-detection
+    if: needs.change-detection.outputs.ios == 'true'
+    runs-on: macos-15
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: experiments/foreground_exchange/ios
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build for a physical iPhone without repository signing secrets
+        shell: bash
+        run: |
+          xcodebuild build \
+            -project TrailMeshTransportProbe.xcodeproj \
+            -scheme TrailMeshTransportProbe \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/TrailMeshDeviceDerivedData" \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Package and validate the unsigned IPA
+        shell: bash
+        run: |
+          app="$RUNNER_TEMP/TrailMeshDeviceDerivedData/Build/Products/Debug-iphoneos/TrailMeshTransportProbe.app"
+          test -d "$app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")" = 'org.trailmesh.foregroundprobe.ios'
+          xcrun lipo -archs "$app/TrailMeshTransportProbe" | grep -qw arm64
+
+          widget="$app/PlugIns/TrailMeshSessionWidget.appex"
+          test -d "$widget"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$widget/Info.plist")" = 'org.trailmesh.foregroundprobe.ios.sessionwidget'
+          test "$(/usr/libexec/PlistBuddy -c 'Print NSExtension:NSExtensionPointIdentifier' "$widget/Info.plist")" = 'com.apple.widgetkit-extension'
+          xcrun lipo -archs "$widget/TrailMeshSessionWidget" | grep -qw arm64
+
+          package_dir="$RUNNER_TEMP/TrailMeshDevicePackage"
+          output_dir="$RUNNER_TEMP/TrailMeshDeviceOutput"
+          mkdir -p "$package_dir/Payload" "$output_dir"
+          ditto "$app" "$package_dir/Payload/TrailMeshTransportProbe.app"
+          (cd "$package_dir" && ditto -c -k --sequesterRsrc --keepParent Payload "$output_dir/TrailMeshTransportProbe-unsigned.ipa")
+          unzip -t "$output_dir/TrailMeshTransportProbe-unsigned.ipa"
+          (cd "$output_dir" && shasum -a 256 TrailMeshTransportProbe-unsigned.ipa > SHA256SUMS.txt)
+      - name: Upload iPhone package for AltStore signing
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: TrailMeshTransportProbe-unsigned-iphoneos
+          path: ${{ runner.temp }}/TrailMeshDeviceOutput/
+          if-no-files-found: error
+          retention-days: 7
 
   dependency-review:
     name: Dependency review

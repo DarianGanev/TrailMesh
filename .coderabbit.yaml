@@ -28,6 +28,14 @@ reviews:
       instructions: |
         Check platform lifecycle behavior, permissions, cancellation, durable ACK
         semantics, diagnostics redaction, and cross-platform parity.
+    - path: "experiments/foreground_exchange/**"
+      instructions: |
+        Check session/link callback generations, foreground service ownership,
+        ActivityKit availability and finite background fallback, retry bounds,
+        atomic checkpoint/evidence writes, duplicate-safe bidirectional progress,
+        and Kotlin/Swift probe-v2 parity. Keep physical radio claims unverified
+        unless supported by recorded device evidence; automatic SDK acceptance
+        authenticates no peer and carries generated test bytes only.
     - path: "simulator/**"
       instructions: |
         Check determinism, fair comparisons, seed/config capture, and separation

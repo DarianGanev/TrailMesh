@@ -3,6 +3,9 @@
 Thumbs.db
 .idea/
 .vscode/
+local.properties
+__pycache__/
+*.py[cod]
 *.swp
 
 # Secrets and signing material
@@ -21,6 +24,7 @@ build/
 dist/
 DerivedData/
 .gradle/
+.kotlin/
 Pods/
 xcuserdata/
 *.xcuserstate

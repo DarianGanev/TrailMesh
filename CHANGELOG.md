@@ -2,6 +2,37 @@
 
 All notable changes to TrailMesh are documented here.
 
+## [Unreleased]
+
+## [0.2.0] - 2026-10-14
+
+M1 transport foundation: native test probes, shared protocol validation, and recorded physical exchange evidence.
+
+### Protocol fixture
+
+- Frozen protocol v1 RFC 8785 canonicalization, SHA-256 bundle ID, and Ed25519 verification vector.
+- Reference Python tooling and tests for strict Base64URL, duplicate-key rejection, and signature verification.
+
+### Transport foundation
+
+- Native iPhone and Android probes with one-start, bidirectional generated-byte exchange over Nearby Connections.
+- Probe-v2 wire vectors, duplicate-safe progress, bounded retries, session checkpoints, and redacted log validation.
+- Android foreground-service ownership and iPhone Live Activity integration with saved pause/resume behavior.
+- Recorded M1 physical evidence: 20/20 exchanges in each direction for 256-byte, 2-KiB, and 8-KiB payloads with Wi-Fi and mobile data disabled; a separate 2-KiB background run also completed in both directions.
+
+### Development workflow
+
+- CI for shared protocol contracts, Android tests/builds, iPhone simulator tests, and unsigned device IPA packaging.
+- Change-scoped native CI jobs and grouped dependency updates targeting `develop`.
+- Updated README and specification for the completed M1 foundation and M2 implementation backlog.
+- Removed unused Android callback/error helpers and their obsolete tests; aligned editor line endings with Git's LF policy and excluded local Kotlin compiler caches.
+
+### Release hardening
+
+- Sync the Android checkpoint's parent directory after atomic replacement and reject accepted progress if syncing fails.
+- Reject overflowing JSON numbers in the signed-bundle reference parser.
+- Correct acceptance-threshold regression coverage and publish probe version 0.2.0 build 3 on both platforms.
+
 ## [0.1.0] - 2026-09-18
 
 ### Added

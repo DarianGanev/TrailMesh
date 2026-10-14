@@ -1,15 +1,14 @@
 # TrailMesh — Comprehensive Diploma Project Specification
 
-**Version:** 1.3 — public solo project foundation  
-**Prepared:** 17 September 2026  
-**Planning horizon:** nine months from project start  
-**Primary platform:** iPhone  
-**Secondary platform:** Android, with a smaller but interoperable application  
+**Version:** 1.4 — M1 complete; M2 implementation baseline\
+**Prepared:** 17 September 2026\
+**Updated:** 14 October 2026\
+**Planning horizon:** nine months from project start\
+**Primary platform:** iPhone\
+**Secondary platform:** Android, with a smaller but interoperable application\
 **Document purpose:** product specification, technical design, research plan, and handoff to an AI coding agent.
 
 > TrailMesh lets useful information travel with people. A hiker records a dry spring, a blocked trail, or a message for a friend. Their phone stores it. When compatible phones meet, they can exchange selected information without internet. Other hikers carry those copies onward.
-
-> **Fundamental boundary:** TrailMesh is a delay-tolerant information system, not guaranteed emergency communication. The diploma must succeed with explicit foreground exchanges. Reliable unattended iPhone discovery with the screen off is an experimental question, not a product promise.
 
 ## Contents
 
@@ -43,12 +42,21 @@
 28. [Diploma structure and evaluation plan](#28-diploma-structure-and-evaluation-plan)
 29. [Presentation and demonstration](#29-presentation-and-demonstration)
 30. [Instructions for the AI coding agent](#30-instructions-for-the-ai-coding-agent)
-31. [Mentor profile and meeting brief](#31-mentor-profile-and-meeting-brief)
-32. [References and evidence boundaries](#32-references-and-evidence-boundaries)
+31. [References and evidence boundaries](#31-references-and-evidence-boundaries)
 
 ## 1. How to use this specification
 
-This is a proposed design for a student project, not a claim that the application or its performance has already been demonstrated. All numerical limits, scores, performance thresholds, schedules, and interface contracts below are **initial engineering choices** unless explicitly attributed to a source. Measure and revise them through documented decisions.
+This specification combines the implemented M1 foundation with the design for subsequent milestones. The implementation status below identifies what exists today. Numerical limits, scores, performance thresholds, schedules, and interface contracts elsewhere are **initial engineering choices** unless explicitly recorded as implemented or measured. Measure and revise them through documented decisions.
+
+### Current implementation status
+
+M1 transport feasibility is complete. The repository contains native SwiftUI and Kotlin generated-byte probes, an immutable signed-bundle v1 fixture with Python reference validation, probe-v2 wire vectors, session checkpointing and recovery, Android foreground-service ownership, and an iPhone Live Activity.
+
+The [M1 physical evidence](experiments/foreground_exchange/evidence-physical-v1.json), recorded on 6 October 2026, documents an iPhone 17 and Redmi Note 11 Pro 5G running Android 13. Each direction achieved 20/20 matching exchanges for 256-byte, 2-KiB, and 8-KiB payloads with Wi-Fi and mobile data disabled and Bluetooth enabled. A separate 2-KiB run achieved 20/20 in both directions after backgrounding; the owner reported both screens were off. The record distinguishes these observed results from lifecycle states and device combinations still to test.
+
+Both probes start a bidirectional session with one control. iPhone discovers Android advertisers using the selected BLE path; Android pairs elect an initiator. Encounters are sequential point-to-point links. The probe automatically accepts connections for synthetic test bytes; production public-report validation and private-message authentication are separate work.
+
+**Next milestone: M2 Durable exchange.** Implement persistent signed-report ingest, deduplication and expiry, durable acknowledgements, physical A → B → C relaying, the map/report interface, and integration with the one-start public-report session. Report persistence, report routing, offline maps, and encrypted private messaging are not implemented by the generated-byte probe. The [UI/UX brief](docs/UI_UX.md), [transport notes](docs/feasibility/foreground-exchange.md), and GitHub issues provide the detailed implementation context.
 
 Use these terms consistently:
 
@@ -62,7 +70,7 @@ Use these terms consistently:
 | Diploma completion | MVP plus routing research, evaluation, documentation, and a repeatable demonstration. |
 | Stretch | Work attempted only after the diploma completion criteria are secure. |
 
-The first coding agent must inspect the development environment, record actual phone models and OS versions, and execute the feasibility gates. It must not start by building all screens or by assuming background networking works.
+The coding agent must inspect the current repository, device evidence, and open milestone issues before making changes. Preserve the completed M1 baseline and extend it with bounded vertical slices; repeat device gates when transport, platform support, or lifecycle behavior changes.
 
 The user has committed to the TrailMesh concept and to an iPhone-primary presentation. Preserve these priorities. The exact SDK, persistence wrapper, and optional gateway framework are replaceable implementation choices.
 
@@ -149,14 +157,14 @@ Novelty is not “inventing mesh networking,” “inventing encryption,” or p
 ### 3.2 Non-goals
 
 - Guaranteed rescue, SOS delivery, emergency dispatch, or replacement for emergency equipment.
-- Silent unlimited background communication on iOS.
+- Silent, unlimited background communication on iOS.
 - Real-time tracking of strangers or live worldwide chat.
 - Voice, video, large attachments, or sharing entire map packs through encounters.
 - A new cryptographic primitive or an unsupported radio/background workaround.
-- Automatic phone pairing without required platform consent.
+- Per-encounter approval for public-report relaying is not part of the intended user flow. The user opts into one trail session; any transport-required peer confirmation remains an unresolved feasibility constraint until proven avoidable.
 - Building a full navigation engine, social network, commercial moderation service, or global reputation authority.
 - Full feature parity between the first iPhone and Android interfaces.
-- Claims that “offline” means Bluetooth and Wi-Fi are switched off.
+- Claims that offline use means Bluetooth and Wi-Fi are switched off.
 
 An account, payment, or cloud login MUST NOT be required to use a downloaded map, create a local report, or exchange bundles with another prepared device.
 
@@ -173,7 +181,7 @@ An account, payment, or cloud login MUST NOT be required to use a downloaded map
 
 ### 4.1 Prepare for a hike
 
-The user downloads one region and its style assets, imports or selects a GPX route, optionally exchanges contact cards with friends, and checks permissions. The app verifies that the map pack is complete. It explains what will be public and what remains private.
+The user downloads one permitted map region, optionally selects a route, reviews what public reports can be shared, checks the required permissions, and starts a trail session before setting off. TrailMesh verifies that the map pack is complete and explains that public reports may be exchanged during the active session while private messages remain addressed to chosen contacts.
 
 ### 4.2 Create an observation offline
 
@@ -181,7 +189,7 @@ The user places a pin or uses their current location, chooses a category, select
 
 ### 4.3 Exchange with another hiker
 
-Both users tap “Exchange nearby.” The app discovers a compatible peer, follows the transport's consent/authentication flow, exchanges bounded inventories, and requests useful bundles. The interface reports “Received 4 reports; shared 2” only after durable acknowledgements.
+The user starts a clearly visible trail session once before the hike. While it is active, TrailMesh is intended to discover nearby compatible devices and exchange eligible public reports without asking either hiker to approve each encounter. Selection uses freshness and configured proximity or route relevance; it does not require sharing a precise route with peers. The app reports receipt and durable storage only after verification and commit. If the chosen transport requires per-encounter approval, that is a documented product limitation and an open transport decision, not behavior to disguise with UI wording.
 
 ### 4.4 Carry information onward
 
@@ -203,16 +211,18 @@ If gateway sync is enabled, the phone uploads eligible public bundles and fetche
 
 ### 5.1 Main screens
 
-1. **Map:** downloaded coverage, route, current location when available, and reports.
-2. **Report details:** category, observation time, receipt time, approximate location accuracy, supporting/conflicting evidence, expiry, and source status.
-3. **Add report:** a short, offline-safe form with explicit public visibility.
-4. **Nearby exchange:** availability, discover/connect/exchange progress, cancellation, and useful error recovery.
-5. **Messages:** contacts, compose, inbox, outbox, and precise delivery states.
-6. **Offline regions:** download estimate, progress, verification, storage, and removal.
-7. **Settings:** permissions, relay consent, route sharing, storage and battery limits, gateway sync, and data deletion.
-8. **Research diagnostics:** hidden behind an explicit developer setting; export redacted encounter statistics.
+1. **Explore map (home):** a real, permitted topographic map; downloaded coverage; optional route and current location; restrained report markers; and a compact report preview. The map remains the app's home screen.
+2. **Reports:** a readable list and detail view showing category, observation and receipt times, location accuracy, supporting or conflicting reports, expiry, and provenance.
+3. **New report:** a short, offline-safe form with a clear public-visibility explanation and a local saved confirmation.
+4. **Nearby session:** one start/stop control for public-report exchange, a plain-language active state, current capability, and recovery for Bluetooth, location, or lifecycle limits. The target UX does not ask for approval on each public-report encounter.
+5. **Private messages:** verified contacts, inbox, conversation, compose, and exact delivery states. This flow is separate from automatic public-report relaying.
+6. **Offline maps:** available regions, download progress, verification, storage use, and removal.
+7. **Settings:** sharing and route-privacy choices, permissions, storage and battery limits, gateway sync, and data deletion.
+8. **Research diagnostics:** separate from ordinary hiking screens; available through a deliberate developer entry and exports redacted encounter statistics.
 
-The iPhone interface is the presentation priority. Android initially needs a simpler map/list, report form, nearby exchange, message inbox/outbox, and diagnostics.
+The iPhone interface is the presentation priority. Android initially needs a simpler map/list, report form, nearby session, message inbox/outbox, and diagnostics.
+
+The interaction and visual direction are specified in [docs/UI_UX.md](docs/UI_UX.md). Use actual licensed cartographic data in the product and preserve its required attribution. A design prototype or generated map image is not proof of a permitted or operational map source.
 
 ### 5.2 Requirement identifiers
 
@@ -221,7 +231,7 @@ The iPhone interface is the presentation priority. Android initially needs a sim
 | FR-01 | Prepared map works without internet after restart | Device walkthrough with all required resources cached. |
 | FR-02 | Report creation persists without a peer | Restart and verify original signed bytes. |
 | FR-03 | iPhone and Android exchange both directions | Physical transfer log and matching bundle hashes. |
-| FR-04 | Relay survives disconnection | A→B, restart B, B→C, with A absent. |
+| FR-04 | Relay survives disconnection | A -> B, restart B, B -> C, with A absent. |
 | FR-05 | Duplicate transfers create one logical object | Repeated and concurrent ingest test. |
 | FR-06 | Expired data is not forwarded as current | Controlled-clock expiry test. |
 | FR-07 | Private relays cannot decrypt message content | Three-device test and cryptographic negative tests. |
@@ -230,14 +240,16 @@ The iPhone interface is the presentation priority. Android initially needs a sim
 | FR-10 | Interrupted transfers recover safely | Disconnect/crash tests at protocol boundaries. |
 | FR-11 | Route privacy is configurable | Captured application frames contain only allowed fields. |
 | FR-12 | Simulator results are reproducible | Same configuration and seed produce the same event digest. |
+| FR-13 | A user-started trail session exchanges relevant public reports without per-encounter approval in the intended flow | Three-device encounter test demonstrates exchange without either hiker handling the phone; report selection matches the configured relevance rule. |
+| FR-14 | UI states reflect measured transport and lifecycle capability | Permission denial, disabled radio, foreground-only, background-limited, interrupted, and active states are distinguishable; unvalidated background behavior is never promised. |
 
 ### 5.3 User-facing state language
 
-Use “Saved on this phone,” “Shared with a relay,” “Delivered to recipient,” “Expired without delivery confirmation,” and “Delivery unknown.” Never infer recipient delivery from an SDK send callback or gateway upload.
+Use plain states such as "Trail session active", "Exchange paused", "Open TrailMesh to continue", and "Bluetooth is off" based on measured capability. Explain that public reports can exchange during the active session and that no per-encounter approval is expected in the target flow. Until background behavior is verified for the exact adapter and device state, state clearly when the app must remain open. Do not display "Connected" when no active peer is known.
 
-Use “Exchange active,” “Limited in background,” “Open the app to exchange,” and “Bluetooth unavailable” based on actual capability. Do not display “Mesh connected” when there is no known active peer.
+Use "Saved on this phone", "Shared with a relay", "Delivered to recipient", "Expired without delivery confirmation", and "Delivery unknown." Never infer recipient delivery from an SDK send callback or gateway upload.
 
-Report information should say “Observed 47 minutes ago; received 3 minutes ago,” “One unverified source,” or “Conflicting observations.” Do not use a green check mark that implies safety merely because a signature verified.
+Report information should say "Observed 47 minutes ago; received 3 minutes ago", "One unverified source", or "Conflicting observations." Do not use a green check mark that implies safety merely because a signature verified.
 
 ### 5.4 Initial nonfunctional targets
 
@@ -255,78 +267,64 @@ These are hypotheses to measure, not guarantees:
 
 ### 6.1 Recommended approach
 
-Use **native Swift/SwiftUI for iOS** and **Kotlin/Jetpack Compose for Android**. Share a written protocol, test vectors, fixtures, simulator scenarios, and behavioral contracts. Keep the first routing core small enough to implement in both languages and compare against a reference simulator.
+Use **native Swift/SwiftUI for iOS** and **Kotlin/Jetpack Compose for the Android product UI**. The current Android probe uses platform views; Compose is planned for the product screens. Share written protocols, test vectors, fixtures, simulator scenarios, and behavioral contracts. Keep routing logic small enough to implement in both languages and compare against a reference simulator.
 
-Why: the main uncertainty is platform networking and lifecycle behavior. Native applications make those issues easier to inspect. Android is a real protocol participant, not a web page or mock screen.
+Native adapters provide direct access to radio and lifecycle APIs. Android remains a full protocol participant with a smaller initial interface. Reconsider a shared domain core only if duplicated logic becomes a measured maintenance problem.
 
-Alternatives:
+### 6.2 Device and tooling inventory
 
-| Approach | Advantage | Cost and decision |
-|---|---|---|
-| Native apps with shared contracts | Direct access to radio/lifecycle APIs; clear debugging | Some duplicated logic; recommended. |
-| Kotlin Multiplatform domain core with native adapters | Shared validation and routing | Additional iOS integration/tooling risk; reconsider after basic interoperability. |
-| Flutter or React Native UI with native transport modules | Shared UI | Native work remains; package availability must not be assumed; not the default for this project. |
+Maintain the following alongside physical test evidence:
 
-A shared Rust core is also possible but adds FFI and build complexity. Do not introduce it solely to avoid a few hundred lines of duplicate deterministic logic.
+- Phone model, OS version, app version/build, and required permissions.
+- Android SDK, JDK, Google Play services, and Nearby SDK versions.
+- Xcode/runner version used by the iPhone CI build.
+- Signing and installation method, plus the matching artifact and source commit.
+- Third device used for multi-hop tests.
+- Permitted map source and demonstration region.
 
-### 6.2 Hardware and tooling gate
+The established workflow uses Windows for local development, GitHub Actions for iPhone builds and simulator tests, and AltStore/AltServer for signing and installing the unsigned device package. Android builds run locally or in CI. Radio tests run on physical phones.
 
-Before implementation, record:
+### 6.3 iPhone build and device validation
 
-- iPhone model, installed iOS version, free space, and developer-device availability.
-- Android model, OS/API level, Google Play services availability, and BLE advertising support.
-- A supported macOS/Xcode build environment for building, signing, automated tests, and uploading iPhone builds.
-- Signing approach, test-device provisioning, and intended beta distribution.
-- Third physical device for multi-hop tests.
-- A permitted map source and a small demonstration region.
-
-Windows supports editing, documentation, Android development, backend work, simulation, and analysis. Use a supported Apple build environment for iPhone compilation, signing, device installation, and TestFlight delivery. Physical radio tests run on the selected devices after installation.
-
-### 6.3 Apple build and device validation
-
-The iPhone deliverable requires the supported Apple build and signing toolchain. Validate the complete cycle early, record the exact toolchain and device versions, and keep the result as reproducible project evidence.
+The Quality workflow builds the iPhone app and Live Activity extension for the physical-device SDK, validates the package, and publishes the unsigned IPA with a SHA-256 checksum. The install/update/log-export cycle was exercised during M1. Keep the artifact, commit, and installed build identifiable when repeating it.
 
 ### 6.4 Build, install, and test cycle
 
-1. Edit and commit source; synchronize it with the Apple build environment through the repository.
-2. Build and run automated checks with a pinned Xcode/toolchain version.
-3. Sign and upload a uniquely numbered build to App Store Connect.
-4. Use **TestFlight internal testing** for the student's iPhone, with an eligible App Store Connect account/user and Apple Developer Program membership. Allow for upload and build-processing delays. External testers follow the applicable beta review process; internal testing is not an unrestricted public installation link. [TestFlight](https://developer.apple.com/testflight/), [Internal tester setup](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers)
-5. Install the processed build on the actual iPhone while internet is available. Install the compatible Android build locally from Windows.
-6. Disable internet for the experiment while keeping the required local radios enabled; test the phones beside each other.
-7. Export redacted diagnostics, retrieve them on Windows, fix problems, and repeat.
+1. Edit and commit source, then push the change for automated checks.
+2. Download the matching successful CI artifacts: `TrailMeshTransportProbe-unsigned-iphoneos` and, when needed, `TrailMeshTransportProbe-android-debug`.
+3. Extract the iPhone artifact and verify its IPA against the included `SHA256SUMS.txt`.
+4. Install the IPA through AltStore Classic or AltServer. Complete account sign-in, trust, and device prompts locally; keep credentials and signing material outside Git. Follow the [installation guide](docs/feasibility/foreground-exchange.md#build-and-install).
+5. Install the compatible Android APK. Both phones must use the same supported probe protocol version.
+6. Disable internet for the experiment, retain the required local radio and permission settings, and record those settings with the test.
+7. Export both redacted logs, validate them, record the outcome, and repeat after relevant fixes.
 
-### 6.5 Debugging limitations and required diagnostics
+TestFlight can be introduced for later beta distribution; it is not the current probe installation path.
 
-The build environment does not automatically attach a local iPhone to a debugger or bridge Bluetooth radios. Validate the chosen device-debugging path separately.
+### 6.5 Diagnostics and device tests
 
-Expect slower iterations than a locally attached device. Implement an in-app diagnostics screen and user-initiated redacted log export during the first networking spike. Include build/commit ID, protocol version, phone OS, permission state, transport stages, errors, timestamps, and byte counts. Exclude private content and keys. Preserve diagnostic records across ordinary app restarts and verify a practical share/export route for retrieving them on Windows after offline tests.
+The probes already provide bounded, redacted log export. Preserve this during product integration and include build/commit ID where available, protocol version, phone OS, permission state, transport stages, errors, timestamps, and byte counts. Exclude private content and keys. Preserve useful diagnostics across ordinary app restarts and retain a practical export route after offline tests.
 
-Simulator tests can verify supported UI and domain behavior, but cannot prove Bluetooth interoperability. Perform radio tests on the physical devices. Document the actual energy and profiling method.
+Simulator tests verify supported UI and domain behavior. Bluetooth interoperability, lifecycle behavior, and energy use require physical-device measurements. Record the exact configuration and distinguish transfer on an existing connection from discovery of a new peer.
 
-### 6.6 Mandatory build-and-device gate
+### 6.6 Build-and-device regression gate
 
-Before a long rental commitment or substantial iPhone feature work, prove:
+M1 established the following workflow; repeat affected checks after build, signing, or transport changes:
 
-- Source edit → Apple build/sign → TestFlight or supported device installation on the iPhone.
-- A small checksummed foreground exchange with the local Android, without internet carrying the payload.
-- Log export from both phones, a small code change, and installation of an updated iPhone build.
+- Source edit → CI device build → local signing/install → updated app on the iPhone.
+- Checksummed exchange with Android, without internet carrying the payload.
+- Log export from both phones and validation in the development workspace.
 
-Record turnaround times, errors, and account requirements. This is an end-to-end workflow test, not evidence that background networking works.
-
-Continue work on protocol fixtures, simulation, Android, and documentation while the device build gate is being validated. Keep iOS transport feasibility unresolved until tested on the phone. Cross-platform UI frameworks do not remove Apple build/signing requirements.
-
-Select minimum supported OS versions after the first device inventory and SDK compatibility check. Gate iOS 26-specific experiments at runtime; do not equate that experiment with the minimum version required for all foreground functionality.
+The recorded M1 pass supports proceeding to M2. New adapters and additional device combinations require their own evidence. Gate iOS 26-specific behavior at runtime; keep minimum supported OS versions explicit in the app targets.
 
 ## 7. Transport options and verified caveats
 
-This section summarizes documentation checked on 17 September 2026. Recheck relevant sources when selecting exact dependency versions.
+The installed-device workflow and Gate A baseline have been demonstrated in M1. Use the recorded configuration as the starting point; evaluate alternatives when a concrete requirement or measured failure justifies the work.
 
 ### 7.1 Transport decision table
 
 | Option | Role in TrailMesh | Main limitation | Decision |
 |---|---|---|---|
-| Google Nearby Connections | First foreground iPhone↔Android candidate | Actual device interoperability, consent, SDK behavior, and lifecycle need testing | Prototype first. |
+| Google Nearby Connections | Implemented M1 iPhone↔Android adapter | Extend device evidence; define production trust and report exchange | Integrate in M2. |
 | Custom BLE GATT | Alternative for compact cross-platform bundles | More fragmentation, reliability, and security work; iOS advertising asymmetry | Time-boxed fallback spike. |
 | Local Wi-Fi with authenticated application protocol | Controlled no-internet exchange on a shared LAN | Requires a LAN/hotspot; does not prove spontaneous trail discovery | Diagnostic/fallback transport, clearly labeled. |
 | Apple Wi-Fi Aware and Android Wi-Fi Aware | Potential higher-throughput direct transport | Hardware, pairing, entitlement, and cross-platform interoperability gates | Stretch experiment. |
@@ -335,7 +333,10 @@ This section summarizes documentation checked on 17 September 2026. Recheck rele
 
 ### 7.2 Nearby Connections
 
-Google documents offline nearby discovery, connection, and encrypted data exchange, including Android/iOS support. This makes Nearby a reasonable first candidate, not proof of performance on the student's phones. Its connection flow includes acceptance and authentication; use the documented verification flow for the first prototype. Do not treat link encryption as end-to-end message encryption. [Nearby overview](https://developers.google.com/nearby/connections/overview), [Swift connection management](https://developers.google.com/nearby/connections/swift/manage-connections)
+**Implemented adapter:** the M1 probes use Nearby point-to-point encounters, Android advertising, and BLE-requested iPhone discovery. Both directions exchange generated bytes in one session. Automatic SDK acceptance is restricted to this synthetic-data probe. M2 must define signed public-report acceptance and metadata exposure before carrying real reports; private messages use the separate verified-contact encryption profile.
+
+
+Google documents offline nearby discovery, connection, and encrypted data exchange, including Android/iOS support. Its connection flow includes acceptance and authentication; keep SDK link acceptance separate from application-level trust. Do not treat link encryption as end-to-end message encryption. [Nearby overview](https://developers.google.com/nearby/connections/overview), [Swift connection management](https://developers.google.com/nearby/connections/swift/manage-connections)
 
 Select a strategy supported by both selected SDK versions. Begin with one active peer and a point-to-point exchange. Measure discovery time, payload completion, permissions, and restart behavior. Record SDK analytics/privacy behavior in the dependency review. Never assume an underlying radio or connection mode solely from the API name.
 
@@ -344,6 +345,8 @@ Google announced that automatic enabling of Bluetooth/Wi-Fi by Nearby will be re
 Do not depend on tiny connectionless advertisements carrying application reports. Any such SDK feature requires separate documentation and interoperability evidence.
 
 ### 7.3 Core Bluetooth and the iPhone background boundary
+
+Implementation note (Issue #36): the generated-byte probe uses automatic iPhone discovery of Android advertisers, BLE-only requests, an app-owned saved session and a local Live Activity with `bluetooth-central`. On iOS 26 this is a supported integration to evaluate; a finite finishing-and-pause fallback preserves progress when the activity is unavailable. Apple explicitly qualifies the Live Activity privilege when the locked screen turns fully off: scanning restrictions change again and there is no supported workaround for that broader privilege. Keep screen-off discovery as a separate measured gate; never equate a displayed activity, saved session or foreground success with continuous mesh operation. [Apple engineer qualification](https://developer.apple.com/forums/thread/815189)
 
 Apple documents changed scan and advertisement behavior in the background, including service UUID overflow behavior and omitted local names. This is a particular concern for Android discovering a backgrounded iPhone. Test iPhone-as-central and iPhone-as-peripheral separately. [Apple background guide](https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/CoreBluetoothBackgroundProcessingForIOSApps/PerformingTasksWhileYourAppIsInTheBackground.html)
 
@@ -1118,7 +1121,7 @@ Simulator telemetry is richer but must be labeled synthetic. Avoid a live map of
 |---|---|---|
 | iOS UI/application | Swift + SwiftUI + structured concurrency | Supported Xcode and actual phone deployment. |
 | Android UI/application | Kotlin + Jetpack Compose + coroutines | Actual Android permissions and SDK compatibility. |
-| Foreground transport | Nearby Connections | Gate A before product integration. |
+| Transport | Nearby Connections; M1 point-to-point probe implemented | Signed-report integration and production trust policy in M2. |
 | Alternative transport | Native BLE GATT | Only if needed; independently tested. |
 | Local database | SQLite with GRDB / Room candidates | Transaction and migration tests. |
 | Maps | MapLibre Native with licensed offline data | Full offline render after restart. |
@@ -1128,78 +1131,84 @@ Simulator telemetry is richer but must be labeled synthetic. Avoid a live map of
 | Optional gateway | Python/FastAPI + PostgreSQL/PostGIS | Deferred until peer vertical slice works. |
 | Automation | GitHub Actions or equivalent | macOS iOS build runner plus Linux/Android jobs. |
 
-Verify exact versions, licenses, maintenance, and distribution requirements at project setup; this table is a recommendation, not a claim that dependencies have already been installed or reviewed.
+SwiftUI, Kotlin, Nearby, the Python fixture tooling, and GitHub Actions are implemented in the current foundation. Compose, GRDB/Room, MapLibre, private-message bindings, simulator dependencies, and the gateway are planned choices; verify versions, licenses, and integration before adding them.
 
 ### 23.2 Repository
+
+The current tracked layout is:
 
 ```text
 trailmesh/
   README.md
+  TrailMesh.md
+  CHANGELOG.md
   LICENSE
-  SECURITY.md
-  CONTRIBUTING.md
-  apps/
-    ios/                 # Native iPhone application and tests
-    android/             # Native Android companion and tests
   protocol/
-    schema/              # Frozen v1 envelope and frame schemas
-    vectors/             # Valid and invalid cross-platform vectors
-    examples/            # Clearly labeled human-readable examples
-  simulator/
-    trailmesh_sim/
-    scenarios/
-    tests/
-  gateway/               # Optional bounded public-bundle service
-  experiments/
-    manifests/
-    analysis/
-    sample-results/      # Small reproducible sample, no private traces
-  docs/
-    specification.md
-    architecture/
-    decisions/
-    feasibility/
-    protocol/
-    threat-model/
-    evaluation/
-    demo/
-    diploma/
+    fixture-v1.json
+    probe-v2-vectors.json
   tools/
-    fixture-validation/
-    demo-data/
-  .github/workflows/
+    protocol/                 # Signed-bundle reference and tests
+    transport/                # Exchange contracts and log validation
+  experiments/foreground_exchange/
+    android/                  # Native probe, Gradle wrapper, and tests
+    ios/                      # Native probe, Xcode project, widget, and tests
+    evidence-physical-v1.json
+    evidence-template-v1.json
+  docs/
+    UI_UX.md
+    feasibility/foreground-exchange.md
+  .github/
+    workflows/quality.yml
+    dependabot.yml
+  .coderabbit.yaml
+  .editorconfig
+  .gitattributes
+  .gitignore
 ```
 
-Inside each app, keep domain, persistence, transport, cryptography, features, and diagnostics separate. Do not make one global manager responsible for UI, BLE callbacks, database writes, and encryption.
+Add `apps/ios/` and `apps/android/` when implementing the product vertical slice, `simulator/` during the research milestone, and `gateway/` only when that optional service is implemented. Create additional documentation where a concrete decision or experiment needs it; do not add empty scaffolding or duplicate this specification across folders.
 
-Large datasets and raw device traces should be stored outside Git with checksums and retrieval instructions. Never commit provisioning secrets, credentials, private keys, or personal contact exports.
+Inside each app, separate domain, persistence, transport, cryptography, features, and diagnostics. Keep the probes available as an independent transport baseline while product integration develops.
+
+Build outputs, local SDK settings, map packs, personal traces, and signing material belong outside tracked Git content. Keep small redacted evidence summaries and reproducible fixtures in the repository.
 
 ## 24. CI/CD and release process
 
-Pull-request checks should run formatting/static analysis, schema checks, common vector validation, simulator tests, database tests, and Android compilation. A macOS runner should build and run supported iOS unit tests. Make unavailable physical checks explicit rather than pretending CI performed them.
+The current `Quality` workflow runs on pull requests, pushes to `main`/`develop`, and manual dispatch. It uses read-only repository permissions and pinned action revisions; checkout credentials are not persisted. Superseded runs for the same pull request are cancelled.
 
-Protocol or crypto changes require all platforms to consume the same vector set. A change to signed fields, canonicalization, or interpretation requires a version/compatibility decision. Migrations must be tested from the previous release's database fixture.
+Current checks:
 
-Keep protected signing credentials in the CI secret store and use least-privilege tokens. Do not expose signing material to untrusted pull requests. Pin dependencies and record build tool versions and licenses. Scan for accidentally committed secrets.
+- **Change detection:** selects platform jobs from changed paths. Workflow edits or an unavailable base commit run both platforms; manual dispatch also runs both.
+- **Protocol and transport contracts:** validates the frozen fixture, canonicalization/signature vectors, bounded exchange behavior, and redacted-log tooling.
+- **Android transport probe:** runs unit tests, builds the APK, and publishes the test artifact when relevant files change.
+- **iOS transport probe:** runs the frame and session tests on an iPhone simulator when relevant files change.
+- **Unsigned iPhone probe package:** builds and validates the device app and Live Activity extension, then publishes the IPA and checksum when relevant files change.
+- **Dependency review:** examines dependency changes on pull requests.
 
-Release path: remote signed builds → TestFlight internal installation on the primary iPhone → small device-test group → signed demonstration candidate → optional external beta distribution. Make build/sign/upload repeatable, retain matching symbols for crash analysis, and record installed build numbers with device results. Check TestFlight build validity and install a current tested build before presentation day; do not depend on a last-minute upload. Public store release is not a diploma completion requirement. Recheck current platform submission and privacy requirements if publishing later.
+Documentation-only changes do not run native builds. Markdown formatting and document-heading checks are not CI gates. GitHub secret scanning and push protection complement the repository's secret exclusions. Dependabot targets `develop` for scheduled Actions, Python, and Android dependency updates, grouping routine updates to reduce noise.
 
-Each tagged demonstration release includes its commit, protocol version, supported device matrix, known failures, demo reset instructions, and matching experiment manifest. Preserve a known-good build before rehearsals.
+Normal feature work uses short-lived branches from `develop`, focused commits, and pull requests linked to an issue, milestone, and project card. Assign the pull request only to the repository owner and apply relevant labels. Request CodeRabbit review, wait for CI and the actual review decision, address valid findings, then merge with a merge commit and delete the feature branch. Preserve logical commits rather than squash merging.
+
+Add database migration tests, simulator checks, and product-app builds as those components are introduced. Protocol or crypto changes require shared cross-platform vectors and an explicit compatibility decision. CI results do not substitute for physical radio tests.
+
+Use the current unsigned IPA/AltStore installation cycle for device iteration. Introduce a signed beta distribution pipeline when needed, with credentials held in protected secret storage. Each tagged demonstration release records the commit, protocol version, supported device matrix, known failures, reset instructions, and matching experiment manifest. Preserve a known-good build before rehearsals.
 
 ## 25. Nine-month milestones
+
+**Current position:** M1 Foundation is complete; M2 Durable exchange is the next implementation milestone. GitHub milestones and issues are the live work tracker. The nine-month table below describes the overall schedule, not nine separate GitHub milestones. The GitHub sequence is M1 Foundation, M2 Durable exchange, M3 Private messaging, M4 Research simulator, M5 GeoRoute, M6 Evaluation, and M7 Demo and release.
 
 Plan for roughly 36 weeks with variable school workload. This assumes consistent part-time effort and mentor access; it is not a guaranteed estimate. Keep 15–20% of the schedule for integration, writing, and unexpected failures.
 
 | Month | Deliverables | Exit evidence | Scope control |
 |---|---|---|---|
-| 1 | Device/tooling inventory, Apple build pipeline, literature notes, Nearby/BLE spikes, initial lifecycle tests | Install/update/log-export cycle proven; actual iPhone↔Android foreground bytes with hashes | Avoid polished UI; include diagnostics immediately. |
-| 2 | Transport decision, protocol v1 draft, persistence and map spike, crypto vectors | Durable signed report transfer and prepared offline map on iPhone | Freeze primary adapter; limit background investigation. |
-| 3 | iPhone report/map flow, Android companion, exact dedup and expiry | A→B→C public report with A absent; restart B | No photos/social features. |
-| 4 | Contact QR exchange, encrypted messages, verified receipts, quotas | Relay cannot decrypt; wrong keys and false receipts rejected | One-to-one text only. |
+| 1 | Device/tooling inventory, protocol fixture, field UI/UX baseline, foreground transport spike, initial lifecycle matrix | Install/update/log-export cycle; documented map-first screen and session behavior; actual iPhone/Android foreground bytes with hashes | No background guarantee; no polished secondary flows before feasibility evidence. |
+| 2 | Transport decision, durable signed report storage, report/map vertical slice, session controls, permitted offline map spike | Stored and deduplicated report survives restart; prepared map works offline; active public-report session behavior and limitations recorded | Freeze the first adapter only after physical evidence; no per-encounter prompt in the target public-report UX. |
+| 3 | iPhone map/report experience, Android companion, expiry and three-device relay | A -> B -> C public report with A absent; restart B; usable field workflow on both platforms | Keep Android interface smaller; no photos or social feed. |
+| 4 | Verified contacts, private message screens and encrypted envelope, delivery receipts, quotas | Relay cannot decrypt; false receipt rejected; public-report sharing remains separate | One-to-one text only. |
 | 5 | Deterministic simulator, bounded epidemic and limited-copy baselines, measured contact profiles | Repeatable traces and token-conservation tests | Simulator supports research before visual animation. |
 | 6 | PRoPHET-style comparison, GeoRoute, privacy controls, initial ablations | Shared-policy fixtures and preliminary held-out results | Freeze tuning procedure. |
-| 7 | Field/lifecycle measurements, integration hardening, optional public gateway | Failure injection passes; gateway-off core still works | Drop gateway if critical work slips. |
-| 8 | Final experiments, statistical analysis, thesis draft, usability walkthrough | Reproducible result package with failures and limitations | Feature freeze. |
+| 7 | Field/lifecycle measurements, accessibility walkthrough, integration hardening, optional public gateway | Failure injection passes; field tasks are understandable; gateway-off core still works | Drop gateway if critical work slips. |
+| 8 | Final experiments, statistical analysis, thesis draft, usability evaluation | Reproducible result package with failures, limitations, and usability findings | Feature freeze. |
 | 9 | Defect fixes, thesis revision, mentor review, presentation rehearsals | Tagged build, finished report, repeatable demo and backup recording | No major new transport or crypto scheme. |
 
 Monthly mentor review: demonstrate one working capability, inspect evidence, review risks, and decide the next bounded milestone. Begin writing background/methodology chapters early; do not leave the whole diploma document for month nine.
@@ -1309,16 +1318,17 @@ The diploma should be judged on functioning cross-platform offline exchange, cor
 
 ### 29.1 Main seven-minute scenario
 
-Use three physical devices: A is the primary iPhone, B an Android relay, C a compatible recipient phone. Prepare the region and contacts before the demonstration. Use fictional test identities and a clearly labeled synthetic report.
+Use three physical devices: A is the primary iPhone, B an Android relay, and C a compatible recipient phone. Prepare the region and contacts before the demonstration. Use fictional test identities and a clearly labeled synthetic report.
 
 1. **Explain the problem:** the map shows a spring, but the map cannot say whether water is flowing today.
-2. **Prove preparation:** disable internet while keeping the transport's required local radios enabled. Show the downloaded map and the app's gateway-disabled state. Airplane mode alone is not sufficient proof if radios are later re-enabled; document the actual setup.
-3. **Create:** A records “Demo: spring reported dry” and a private message addressed to C.
-4. **First contact:** A and B perform an explicit foreground exchange. B receives the public report and opaque private bundle.
-5. **Separate:** disable A's exchange or remove A from radio range. If practical, restart B to demonstrate persistence.
-6. **Second contact:** B meets C; C receives the original report and decrypts the private message. B never displays private text.
-7. **Explain delivery:** C can create a receipt, but A may remain at “Shared with a relay” until that receipt makes a return journey.
-8. **Show research:** display a chart comparing useful coverage/bytes under the same scenario and explain one case where GeoRoute loses or offers no benefit.
+2. **Prove preparation:** disable internet while keeping the transport's required local radios enabled. Show the downloaded map and gateway-disabled state. Document the actual setup.
+3. **Start once:** A's hiker starts the clearly labeled trail session before putting the phone away. Explain what public data can be exchanged and how to stop the session.
+4. **Create:** A records "Demo: spring reported dry" and a separate private message addressed to C.
+5. **First encounter:** A and B pass within range while the session is active. The intended public-report flow transfers the eligible report without per-encounter approval. B stores the separate private bundle as opaque ciphertext.
+6. **Separate:** A leaves radio range. If practical, restart B to demonstrate persistence.
+7. **Second encounter:** B later meets C; C receives the original report and decrypts the private message. B never displays private text.
+8. **Explain delivery and evidence:** show durable relay status and report age. If the tested transport still requires a foreground screen or peer action, state that limitation and demonstrate the strongest verified behavior instead of presenting the target UX as already achieved.
+9. **Show research:** display a chart comparing useful coverage and bytes under the same scenario and explain one case where GeoRoute loses or offers no benefit.
 
 Keep the report's original observation timestamp visible to demonstrate that forwarding does not make it fresh again. Show identical bundle IDs in a researcher view if useful, without overwhelming the audience with implementation details.
 
@@ -1344,38 +1354,33 @@ Do not invent successful device tests, benchmark numbers, background guarantees,
 
 Keep the iPhone as the primary product. Android compatibility is required, even if its initial UI is smaller. Never quietly substitute an Apple-only transport, web prototype, or cloud chat for the core offline exchange.
 
-### 30.2 First execution sequence
+### 30.2 Current execution sequence
 
-1. Inspect repository state and applicable project instructions; preserve existing work.
-2. Record the development setup, selected phones, and Apple build environment. Prove the build/install/update/log-export cycle in section 6.6. Ask only for missing facts that block the next gate.
-3. Create a concise decision log and milestone checklist.
-4. Verify current documentation and exact SDK versions for the target phones.
-5. Implement the smallest foreground cross-platform byte exchange and collect Gate A evidence.
-6. Add canonical envelope fixtures and cross-platform hash/signature verification.
-7. Add transactional local storage, deduplication, expiry, and one durable ACK.
-8. Demonstrate A→B→C with the original signed bytes.
-9. Add the iPhone offline-map/report slice and minimal Android UX.
-10. Add preverified contacts and encrypted text using the frozen crypto profile.
-11. Build the simulator and routing baselines; calibrate contact behavior.
-12. Add GeoRoute and run the predeclared evaluation.
-13. Add optional gateway/background/stretch features only after core milestones are secure.
+1. Inspect the working tree, applicable instructions, current milestone issues, and M1 evidence. Preserve existing work.
+2. Review the approved UI/UX brief and keep Explore as the home screen.
+3. Implement transactional signed-report ingest, canonical validation, deduplication, expiry, and restart recovery.
+4. Integrate a durable acknowledgement with the encounter state machine; distinguish received bytes from a verified, committed report.
+5. Demonstrate physical A → B → C delivery with A absent and the original signed bytes preserved, including a restart of B.
+6. Build the offline-map/report vertical slice and minimal Android equivalent.
+7. Integrate relevant public-report exchange into the one-start trail session, with bounded recovery and explicit production trust rules.
+8. Recheck physical behavior when transport/lifecycle code changes; extend the measured device/state matrix.
+9. Continue with verified contacts and encrypted text in M3, then the simulator, routing policies, evaluation, and demonstration milestones.
 
-### 30.3 First concrete backlog
+Do not repeat completed M1 work as a new foundation task or treat synthetic-byte transfer as a completed report feature. Keep optional gateway work behind the core delivery milestones.
 
-| Ticket | Deliverable | Done when |
+### 30.3 Current implementation backlog
+
+Use GitHub issue numbers as the task identifiers; avoid maintaining a second ticket list with invented IDs.
+
+| Issue | Deliverable | Done when |
 |---|---|---|
-| TM-001 | Environment/device inventory and installation workflow | Actual versions documented; build installed and updated on the iPhone; diagnostics retrieved in the development workspace. |
-| TM-002 | Nearby foreground spike | Bidirectional 2-KiB checksummed transfer demonstrated on target pair. |
-| TM-003 | Lifecycle experiment sheet | Foreground/background/screen-off test protocol ready and initial results captured. |
-| TM-004 | Protocol v1 fixtures | Same canonical bytes, IDs, and signature outcomes on both platforms. |
-| TM-005 | Bundle repository | Durable ingest, duplicate handling, expiry and restart tests pass. |
-| TM-006 | Encounter state machine | Timeout/cancel/retry work without false delivered states. |
-| TM-007 | Public two-hop relay | Physical A→B→C with A absent and original timestamp unchanged. |
-| TM-008 | Offline map slice | Prepared region renders after restart without internet. |
-| TM-009 | Contact/message slice | C decrypts A's message; B cannot; false receipt rejected. |
-| TM-010 | Simulator seed reproducibility | Same seed/config produces same event digest and metrics. |
+| [#3](https://github.com/DarianGanev/TrailMesh/issues/3) | Durable signed report storage | Verified ingest, duplicate handling, expiry, and restart tests pass. |
+| [#4](https://github.com/DarianGanev/TrailMesh/issues/4) | Three-device store-carry-forward | Physical A → B → C with A absent, relay restart, and unchanged signed content. |
+| [#26](https://github.com/DarianGanev/TrailMesh/issues/26) | Map-first hiking interface and reports | Prepared region renders offline and users can create, browse, and inspect locally stored reports. |
+| [#27](https://github.com/DarianGanev/TrailMesh/issues/27) | One-start public-report session | Eligible reports send and receive without role selection or per-encounter public-report approval. |
+| [#38](https://github.com/DarianGanev/TrailMesh/issues/38) | Android discovery recovery | Retry behavior after peer completion is diagnosed and bounded recovery verified. |
 
-For each ticket, include relevant tests, the observed outcome, limitations, and a small reviewable change. Prefer tests of invariants and failure cases over tests that merely mirror implementation details.
+Check the issue's current acceptance criteria before implementation. For each task, include relevant tests, observed outcomes, limitations, and a focused reviewable change. Keep regression tests with the behavior they verify.
 
 ### 30.4 Definition of done for a feature
 
@@ -1394,27 +1399,9 @@ Escalate architectural consequences rather than quietly changing the project if:
 
 Routine code organization, test scaffolding, and reversible implementation choices do not require repeatedly asking the user to approve work already within this specification.
 
-## 31. Mentor profile and meeting brief
 
-The best primary mentor is a **senior mobile engineer with strong iOS experience and practical Bluetooth/nearby networking knowledge**, ideally someone who has debugged real-device background execution and Android interoperability.
 
-For the research portion, periodic help from a distributed-systems or computer-networking engineer/researcher would be valuable. A security reviewer should inspect the key exchange and message design before strong privacy claims. One person need not be expert in every area; a mobile lead with access to those specialists is a good fit.
-
-Useful mentor capabilities:
-
-- Native iOS development, signing, device debugging, and lifecycle constraints.
-- BLE, peer-to-peer networking, asynchronous state machines, and failure recovery.
-- Offline persistence and data synchronization.
-- Experimental design, simulation, and fair performance comparison.
-- Ability to review bounded student work regularly and help cut scope.
-
-Meeting brief to adapt:
-
-> I am building TrailMesh for my diploma: an iPhone-first app that exchanges fresh hiking reports and encrypted messages with Android phones without internet. Phones store information and carry it to later encounters. The research part compares routing methods, including a geography- and route-aware policy. I am looking for a mentor with native mobile and nearby-networking experience who can help validate iOS limitations, review the architecture, and guide realistic experiments. Occasional input from a networking or security specialist would also help.
-
-Ask about periodic architecture/code reviews, help setting up Apple builds and TestFlight signing, additional test phones, and support designing experiments. A generic website-development mentor may help with software habits, but is unlikely to cover the project's hardest platform questions alone.
-
-## 32. References and evidence boundaries
+## 31. References and evidence boundaries
 
 These are primary documentation or research sources checked during preparation. Links support platform facts and prior algorithms; the proposed TrailMesh design, numerical budgets, and scheduling formula are this document's engineering proposals. Recheck evolving APIs before implementation.
 
