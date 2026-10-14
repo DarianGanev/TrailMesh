@@ -10,11 +10,19 @@ import java.io.IOException
 import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
+import java.nio.channels.FileChannel
 
-internal class SessionJournal(private val file: File) {
+internal class SessionJournal(
+    private val file: File,
+    private val syncDirectory: (File) -> Unit = { directory ->
+        FileChannel.open(directory.toPath(), StandardOpenOption.READ).use { it.force(true) }
+    },
+) {
     fun save(checkpoint: SessionCheckpoint) {
         SessionLedger.validate(checkpoint)
-        val pending = File(file.parentFile, file.name + ".pending")
+        val directory = file.absoluteFile.parentFile ?: throw IOException("checkpoint has no parent directory")
+        val pending = File(directory, file.name + ".pending")
         val bytes = ByteArrayOutputStream()
         DataOutputStream(bytes).use { data ->
             data.writeInt(0x544d4a32)
@@ -54,6 +62,9 @@ internal class SessionJournal(private val file: File) {
         FileOutputStream(pending).use { stream -> stream.write(bytes.toByteArray()); stream.fd.sync() }
         // Internal app storage supports rename; never remove the previous checkpoint first.
         Files.move(pending.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        // Persist the renamed directory entry before a caller can send a positive ACK.
+        // Propagate sync failures so the ledger cannot advance accepted progress.
+        syncDirectory(directory)
     }
 
     fun load(): SessionCheckpoint? {
