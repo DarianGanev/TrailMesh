@@ -122,6 +122,15 @@ class ProtocolVectorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-standard JSON constant"):
             parse_json_strict('{"a":NaN}')
 
+    def test_json_parser_rejects_overflowing_numbers_at_any_depth(self):
+        for value in ('1e400', '-1e400', '{"a":[1e400]}', b'{"a":-1e400}'):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "non-finite JSON number"):
+                    parse_json_strict(value)
+
+    def test_json_parser_preserves_finite_numbers(self):
+        self.assertEqual(parse_json_strict('[1.5,-2.5,1e300,42]'), [1.5, -2.5, 1e300, 42])
+
 
 if __name__ == "__main__":
     unittest.main()

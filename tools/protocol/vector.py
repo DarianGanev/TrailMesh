@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import re
 from typing import Any
 
@@ -53,7 +54,7 @@ def canonical_core_bytes(core: Any) -> bytes:
 
 
 def parse_json_strict(value: str | bytes) -> Any:
-    """Parse JSON while rejecting duplicate keys and non-standard constants."""
+    """Reject duplicate keys, non-standard constants, and non-finite numbers."""
 
     def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
@@ -66,10 +67,17 @@ def parse_json_strict(value: str | bytes) -> Any:
     def reject_constant(value: str) -> None:
         raise ValueError(f"non-standard JSON constant: {value}")
 
+    def finite_float(value: str) -> float:
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("non-finite JSON number")
+        return number
+
     return json.loads(
         value,
         object_pairs_hook=reject_duplicates,
         parse_constant=reject_constant,
+        parse_float=finite_float,
     )
 
 
