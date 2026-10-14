@@ -27,6 +27,12 @@ M1 transport foundation: native test probes, shared protocol validation, and rec
 - Updated README and specification for the completed M1 foundation and M2 implementation backlog.
 - Removed unused Android callback/error helpers and their obsolete tests; aligned editor line endings with Git's LF policy and excluded local Kotlin compiler caches.
 
+### Release hardening
+
+- Sync the Android checkpoint's parent directory after atomic replacement and reject accepted progress if syncing fails.
+- Reject overflowing JSON numbers in the signed-bundle reference parser.
+- Correct acceptance-threshold regression coverage and publish probe version 0.2.0 build 3 on both platforms.
+
 ## [0.1.0] - 2026-09-18
 
 ### Added
