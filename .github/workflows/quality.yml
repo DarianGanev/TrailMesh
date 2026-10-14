@@ -90,8 +90,8 @@ jobs:
           if fixture['status'] != 'frozen':
               raise SystemExit('fixtureVersion 1 must remain explicitly frozen after Issue #1')
           PY
-      - name: Run protocol vector tests
-        run: python3 -m unittest tools.protocol.test_vector
+      - name: Run protocol admission and vector tests
+        run: python3 -m unittest discover -s tools/protocol -p 'test_*.py'
       - name: Run bounded exchange contract tests
         run: python3 -m unittest discover -s tools/transport -p 'test_*.py'
 

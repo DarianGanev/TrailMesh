@@ -4,6 +4,11 @@ All notable changes to TrailMesh are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- M2 signed public-report admission profile and Python reference validator with bounded strict parsing, Ed25519/ID verification, immutable projections, and explicit invalid/expired/unsupported outcomes.
+- Shared literal admission vectors and regression tests, included in protocol CI. Native persistent stores and signed-report exchange remain follow-up work.
+
 ## [0.2.0] - 2026-10-14
 
 M1 transport foundation: native test probes, shared protocol validation, and recorded physical exchange evidence.

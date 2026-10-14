@@ -589,6 +589,10 @@ Category defaults: transient crowding two hours; water and mud observations 12 h
 
 ### 11.4 Validation order
 
+The initial public-report contract is implemented in [tools/protocol/report.py](tools/protocol/report.py), with a language-neutral [admission profile](protocol/report-v1-profile.json) and [literal test vectors](protocol/report-v1-vectors.json). `validate_report(raw: bytes, *, now_ms: int)` returns immutable verified canonical bytes and a report projection, or a typed `invalid`, `expired`, or `unsupported` rejection with a fixed redacted reason. The caller supplies a nonnegative safe-integer clock estimate; an invalid caller clock raises `ValueError`. This reference slice does not perform persistence, duplicate/quota decisions, ACKs, or peer trust checks. Native stores must pass these vectors before integration.
+
+The profile fixes exact envelope/core/body field sets, canonical unpadded binary encodings, and the initial category/status vocabulary. It rejects booleans and floating-point numbers even where a JSON library could coerce them to integers. Wire bytes must be UTF-8 without a BOM. A quote/escape-aware depth check runs before recursive JSON parsing; malformed JSON is still rejected by the strict parser. Cheap structural/range checks may precede signature verification, but signature verification precedes clock-relative freshness admission. Expiry is inclusive (`now_ms >= expires_at_ms`); receipt never refreshes signed times. The author hop cap accepts 0 through 12, with forwarding permission handled separately. Changes to this admission profile require cross-platform compatibility review.
+
 1. Enforce byte, depth, string, collection, and staging limits.
 2. Decode strict schema; reject duplicate keys, invalid enums, malformed base64, and unsupported major versions.
 3. Recompute canonical bytes and bundle ID.

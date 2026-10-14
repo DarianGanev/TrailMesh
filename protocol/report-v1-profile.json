@@ -1,0 +1,41 @@
+{
+  "schema": "trailmesh.report-admission-profile",
+  "version": 1,
+  "protocol_version": 1,
+  "kind": "report",
+  "envelope_fields": ["core", "signature", "bundle_id"],
+  "core_fields": ["protocol", "version", "kind", "author_key", "nonce", "created_at_ms", "expires_at_ms", "max_hops", "body"],
+  "body_fields": ["event_id", "category", "status", "observed_at_ms", "lat_e7", "lon_e7", "accuracy_m", "note", "supersedes"],
+  "limits": {
+    "envelope_bytes": 8192,
+    "json_depth": 8,
+    "safe_integer": 9007199254740991,
+    "note_scalars": 500,
+    "note_utf8_bytes": 2048,
+    "lifetime_ms": 259200000,
+    "future_tolerance_ms": 300000,
+    "max_hops": 12,
+    "latitude_e7": 900000000,
+    "longitude_e7": 1800000000
+  },
+  "category_statuses": {
+    "water": ["flowing", "low", "dry", "unknown"],
+    "obstruction": ["clear", "partial", "blocked", "unknown"],
+    "trail": ["good", "muddy", "icy", "damaged", "blocked", "unknown"],
+    "weather": ["clear", "rain", "snow", "storm", "fog", "unknown"],
+    "campsite": ["available", "occupied", "closed", "unknown"],
+    "hut": ["open", "closed", "unknown"],
+    "crowding": ["quiet", "moderate", "busy", "unknown"],
+    "note": ["observed", "unknown"]
+  },
+  "rules": {
+    "encoding": "Strict UTF-8 without BOM; reject duplicate keys, invalid Unicode, unknown fields, signed floats, and booleans.",
+    "canonicalization": "RFC 8785; preserve Unicode without normalization; use the existing core/id v1 domains.",
+    "binary_fields": "Canonical unpadded Base64URL: Ed25519 key 32 bytes, signature 64 bytes, nonce and event_id 16 bytes.",
+    "bundle_ids": "64 lowercase hexadecimal characters; supersedes is null or the same ID format.",
+    "times": "Nonnegative integer milliseconds; observed <= created < expires; lifetime <= 72 hours; created <= now + 5 minutes; expired when now >= expires.",
+    "accuracy": "Nonnegative safe integer meters.",
+    "hops": "Author cap 0..12; forwarding permission is evaluated separately.",
+    "rejections": ["invalid", "expired", "unsupported"]
+  }
+}
