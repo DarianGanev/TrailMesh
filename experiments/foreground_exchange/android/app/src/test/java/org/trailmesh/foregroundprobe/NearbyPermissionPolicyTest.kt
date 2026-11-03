@@ -145,4 +145,12 @@ class NearbyPermissionPolicyTest {
             NearbyPermissionPolicy.requiredPermissions(32).toSet(),
         )
     }
+    @Test
+    fun failureEvidenceRecordsBothLocationGrantsWithoutCoordinates() {
+        assertEquals(
+            mapOf("coarse_location_granted" to "true", "fine_location_granted" to "false"),
+            NearbyPermissionPolicy.locationGrantEvidence(setOf("android.permission.ACCESS_COARSE_LOCATION")),
+        )
+    }
+
 }
