@@ -62,14 +62,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
       - name: Install protocol tooling
-        run: python3 -m pip install --disable-pip-version-check --requirement tools/protocol/requirements.txt
+        run: python -m pip install --disable-pip-version-check --requirement tools/protocol/requirements.txt
       - name: Validate fixture JSON
-        run: python3 -m json.tool protocol/fixture-v1.json >/dev/null
+        run: python -m json.tool protocol/fixture-v1.json >/dev/null
       - name: Validate frozen fixture contract
         shell: bash
         run: |
-          python3 - <<'PY'
+          python - <<'PY'
           from pathlib import Path
           import sys
 
@@ -91,9 +94,9 @@ jobs:
               raise SystemExit('fixtureVersion 1 must remain explicitly frozen after Issue #1')
           PY
       - name: Run protocol admission and vector tests
-        run: python3 -m unittest discover -s tools/protocol -p 'test_*.py'
+        run: python -m unittest discover -s tools/protocol -p 'test_*.py'
       - name: Run bounded exchange contract tests
-        run: python3 -m unittest discover -s tools/transport -p 'test_*.py'
+        run: python -m unittest discover -s tools/transport -p 'test_*.py'
 
   android-probe:
     name: Android transport probe
@@ -140,7 +143,12 @@ jobs:
         id: simulator
         shell: bash
         run: |
-          simulator_id="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(device["udid"] for runtime in devices.values() for device in runtime if "iPhone" in device["name"]))')"
+          simulator_id="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; matches=sorted(((runtime, device["name"], device["udid"]) for runtime, entries in devices.items() if "iOS" in runtime for device in entries if device["name"] == "iPhone 16"), reverse=True); print(matches[0][2] if matches else "")')"
+          if [[ -z "$simulator_id" ]]; then
+            echo "No available iPhone 16 simulator found" >&2
+            exit 1
+          fi
+          xcrun simctl list devices available | grep -F "$simulator_id"
           echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
       - name: Run iOS frame and session tests
         run: >-
