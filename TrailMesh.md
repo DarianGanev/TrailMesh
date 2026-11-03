@@ -356,7 +356,7 @@ The validator checks both complete 20-attempt batches, unique logical indices, c
 
 #### Interruption and lifecycle matrix
 
-Run each condition separately on both Android models and the exact target iPhone/iOS build. Preserve failures and inconclusive results.
+Run each condition separately on each selected Android model and the exact target iPhone/iOS build. Use a separate evidence record for each Android device, identifying its model, OS version, and app build. Preserve failures and inconclusive results.
 
 | Condition | Required observation |
 |---|---|
