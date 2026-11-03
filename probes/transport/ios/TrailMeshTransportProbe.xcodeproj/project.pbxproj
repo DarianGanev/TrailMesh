@@ -14,12 +14,12 @@
         B00000000000000000000016 = {isa = PBXBuildFile; fileRef = F00000000000000000000016; };
         B00000000000000000000017 = {isa = PBXBuildFile; fileRef = F00000000000000000000012; };
         B00000000000000000000018 = {isa = PBXBuildFile; fileRef = F00000000000000000000018; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-        F00000000000000000000010 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbeSessionState.swift; sourceTree = "<group>"; };
-        F00000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbePeerContext.swift; sourceTree = "<group>"; };
-        F00000000000000000000012 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbeActivityAttributes.swift; sourceTree = "<group>"; };
-        F00000000000000000000013 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbeLiveActivity.swift; sourceTree = "<group>"; };
-        F00000000000000000000014 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbeSessionStateTests.swift; sourceTree = "<group>"; };
-        F00000000000000000000015 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbePeerContextTests.swift; sourceTree = "<group>"; };
+        F00000000000000000000010 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Session/ProbeSessionState.swift; sourceTree = "<group>"; };
+        F00000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transport/ProbePeerContext.swift; sourceTree = "<group>"; };
+        F00000000000000000000012 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Activity/ProbeActivityAttributes.swift; sourceTree = "<group>"; };
+        F00000000000000000000013 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Activity/ProbeLiveActivity.swift; sourceTree = "<group>"; };
+        F00000000000000000000014 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Session/ProbeSessionStateTests.swift; sourceTree = "<group>"; };
+        F00000000000000000000015 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transport/ProbePeerContextTests.swift; sourceTree = "<group>"; };
         F00000000000000000000016 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrailMeshSessionWidget.swift; sourceTree = "<group>"; };
         F00000000000000000000017 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
         F00000000000000000000018 = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TrailMeshSessionWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -53,11 +53,11 @@
 		B00000000000000000000006 = {isa = PBXBuildFile; productRef = 8936a81b184c243e4bc02a94; };
 		B00000000000000000000007 = {isa = PBXBuildFile; fileRef = F00000000000000000000009; };
 
-		F00000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrailMeshTransportProbeApp.swift; sourceTree = "<group>"; };
-		F00000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		F00000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundFrame.swift; sourceTree = "<group>"; };
+		F00000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/TrailMeshTransportProbeApp.swift; sourceTree = "<group>"; };
+		F00000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/ContentView.swift; sourceTree = "<group>"; };
+		F00000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transport/ForegroundFrame.swift; sourceTree = "<group>"; };
 		F00000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProbeModel.swift; sourceTree = "<group>"; };
-		F00000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundFrameTests.swift; sourceTree = "<group>"; };
+		F00000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transport/ForegroundFrameTests.swift; sourceTree = "<group>"; };
 		F00000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000007 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TrailMeshTransportProbe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F00000000000000000000008 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrailMeshTransportProbeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
