@@ -1,4 +1,4 @@
-﻿import io
+import io
 import unittest
 from contextlib import redirect_stdout
 
@@ -13,6 +13,7 @@ class InspectReportVectorTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn('"protocol": "trailmesh"', output.getvalue())
         self.assertIn('"outcome": "accepted"', output.getvalue())
+        self.assertIn("now_ms: 1789647000000", output.getvalue())
 
     def test_unknown_vector_fails_without_dumping_fixture(self):
         output = io.StringIO()

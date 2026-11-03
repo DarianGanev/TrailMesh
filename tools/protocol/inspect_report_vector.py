@@ -1,4 +1,4 @@
-﻿"""Inspect one literal report vector without modifying the shared fixture."""
+"""Inspect one literal report vector without modifying the shared fixture."""
 
 import argparse
 import base64
@@ -29,6 +29,7 @@ def main(argv=None):
         rendered = repr(wire)
     print(f'Case: {case["name"]}\nWire bytes: {len(wire)}\nDecoded wire:')
     print(rendered)
+    print(f'now_ms: {case["now_ms"]}')
     print('Expected:')
     print(json.dumps(case['expected'], ensure_ascii=True, indent=2))
     return 0
