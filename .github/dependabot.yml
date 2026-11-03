@@ -30,7 +30,7 @@ updates:
           - patch
 
   - package-ecosystem: gradle
-    directory: /experiments/foreground_exchange/android
+    directory: /probes/transport/android
     target-branch: develop
     schedule:
       interval: weekly
