@@ -584,12 +584,13 @@ class ProbeSessionService : Service() {
 
     private fun nearbyFailure(operation: String, exception: Exception) {
         val code = (exception as? ApiException)?.statusCode
-        event("nearby_operation_failed", "operation" to operation.lowercase(), "status_code" to (code?.toString() ?: "unknown"),
-            "status_name" to (code?.let(ConnectionsStatusCodes::getStatusCodeString)?.take(160) ?: "unknown"),
-            "exception_type" to exception.javaClass.simpleName.take(64))
-        if (!active) return
         val granted = listOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
             .filter { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }.toSet()
+        val grantEvidence = NearbyPermissionPolicy.locationGrantEvidence(granted)
+        event("nearby_operation_failed", "operation" to operation.lowercase(), "status_code" to (code?.toString() ?: "unknown"),
+            "status_name" to (code?.let(ConnectionsStatusCodes::getStatusCodeString)?.take(160) ?: "unknown"),
+            "exception_type" to exception.javaClass.simpleName.take(64), *grantEvidence.toList().toTypedArray())
+        if (!active) return
         val compatibility = NearbyPermissionPolicy.permissionsForCompatibilityFailure(Build.VERSION.SDK_INT, operation, code, granted)
         if (compatibility.isNotEmpty()) { askPermissions(compatibility); return }
         if (selectedPeer != null) recover("nearby_operation_failed")
