@@ -28,7 +28,7 @@ reviews:
       instructions: |
         Check platform lifecycle behavior, permissions, cancellation, durable ACK
         semantics, diagnostics redaction, and cross-platform parity.
-    - path: "experiments/foreground_exchange/**"
+    - path: "probes/transport/**"
       instructions: |
         Check session/link callback generations, foreground service ownership,
         ActivityKit availability and finite background fallback, retry bounds,
