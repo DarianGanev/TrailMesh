@@ -52,7 +52,7 @@ This specification combines the implemented M1 foundation with the design for su
 
 M1 transport feasibility is complete. The repository contains native SwiftUI and Kotlin generated-byte probes, an immutable signed-bundle v1 fixture with Python reference validation, probe-v2 wire vectors, session checkpointing and recovery, Android foreground-service ownership, and an iPhone Live Activity.
 
-The [M1 physical evidence](experiments/foreground_exchange/evidence-physical-v1.json), recorded on 6 October 2026, documents an iPhone 17 and Redmi Note 11 Pro 5G running Android 13. Each direction achieved 20/20 matching exchanges for 256-byte, 2-KiB, and 8-KiB payloads with Wi-Fi and mobile data disabled and Bluetooth enabled. A separate 2-KiB run achieved 20/20 in both directions after backgrounding; the owner reported both screens were off. The record distinguishes these observed results from lifecycle states and device combinations still to test.
+The [M1 physical evidence](probes/transport/evidence-physical-v1.json), recorded on 6 October 2026, documents an iPhone 17 and Redmi Note 11 Pro 5G running Android 13. Each direction achieved 20/20 matching exchanges for 256-byte, 2-KiB, and 8-KiB payloads with Wi-Fi and mobile data disabled and Bluetooth enabled. A separate 2-KiB run achieved 20/20 in both directions after backgrounding; the owner reported both screens were off. The record distinguishes these observed results from lifecycle states and device combinations still to test.
 
 Both probes start a bidirectional session with one control. iPhone discovers Android advertisers using the selected BLE path; Android pairs elect an initiator. Encounters are sequential point-to-point links. The probe automatically accepts connections for synthetic test bytes; production public-report validation and private-message authentication are separate work.
 
@@ -1224,7 +1224,7 @@ trailmesh/
   tools/
     protocol/                 # Signed-bundle reference and tests
     transport/                # Exchange contracts and log validation
-  experiments/foreground_exchange/
+  probes/transport/
     android/                  # Native probe, Gradle wrapper, and tests
     ios/                      # Native probe, Xcode project, widget, and tests
     evidence-physical-v1.json
