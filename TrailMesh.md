@@ -56,7 +56,7 @@ The [M1 physical evidence](experiments/foreground_exchange/evidence-physical-v1.
 
 Both probes start a bidirectional session with one control. iPhone discovers Android advertisers using the selected BLE path; Android pairs elect an initiator. Encounters are sequential point-to-point links. The probe automatically accepts connections for synthetic test bytes; production public-report validation and private-message authentication are separate work.
 
-**Next milestone: M2 Durable exchange.** Implement persistent signed-report ingest, deduplication and expiry, durable acknowledgements, physical A → B → C relaying, the map/report interface, and integration with the one-start public-report session. Report persistence, report routing, offline maps, and encrypted private messaging are not implemented by the generated-byte probe. The [UI/UX brief](docs/UI_UX.md), [transport notes](docs/feasibility/foreground-exchange.md), and GitHub issues provide the detailed implementation context.
+**Next milestone: M2 Durable exchange.** Implement persistent signed-report ingest, deduplication and expiry, durable acknowledgements, physical A → B → C relaying, the map/report interface, and integration with the one-start public-report session. Report persistence, report routing, offline maps, and encrypted private messaging are not implemented by the generated-byte probe. This specification and GitHub issues provide the implementation context.
 
 Use these terms consistently:
 
@@ -222,7 +222,28 @@ If gateway sync is enabled, the phone uploads eligible public bundles and fetche
 
 The iPhone interface is the presentation priority. Android initially needs a simpler map/list, report form, nearby session, message inbox/outbox, and diagnostics.
 
-The interaction and visual direction are specified in [docs/UI_UX.md](docs/UI_UX.md). Use actual licensed cartographic data in the product and preserve its required attribution. A design prototype or generated map image is not proof of a permitted or operational map source.
+Use actual licensed cartographic data in the product and preserve its required attribution. A design prototype or generated map image is not proof of a permitted or operational map source.
+
+#### Visual and accessibility direction
+
+
+- Use the platform system font and system text scaling. Keep sentence case for normal labels and use familiar words before technical terms.
+- Favor a restrained, daylight-readable palette with strong text/background contrast and one clear primary action per screen. Do not rely on color alone to communicate freshness, hazard, selection, or delivery.
+- Avoid decorative map-like backgrounds, made-up contour patterns, oversized cards, ornamental badges, neon effects, and unnecessary gradients. The real map should provide the visual detail.
+- Use a real basemap from a selected provider or permitted dataset. Show the provider's required attribution and verify download and redistribution rights before implementation. Never present a generated or illustrative image as operational cartography.
+- Keep controls large and plainly labeled; target at least 44 pt on iOS and 48 dp on Android where practical. Support VoiceOver, TalkBack, large text, and strong contrast.
+- Keep radio, protocol, routing, and raw diagnostic details off ordinary hiker screens. Put them in the separate research diagnostics area.
+
+
+#### Interface acceptance checks
+
+- A first-time or infrequent smartphone user can locate the offline map, read a report's age, submit a report, start/stop a trail session, and open a private message without a tutorial.
+- Explore map is the home destination after launch and remains legible with the report preview open.
+- Public reports can exchange during the intended active session without per-encounter approval in the product target; any transport limitation is shown accurately.
+- Private messaging is visibly separate and remains recipient-specific.
+- Denied permission, disabled radio, empty offline maps, failed downloads, expired reports, and uncertain message delivery have plain recovery guidance.
+- Screen-reader names, text scaling, contrast, and target sizes are checked on both platforms.
+- Production maps use a verified permitted data source with required attribution; the design prototype is not cited as map-source evidence.
 
 ### 5.2 Requirement identifiers
 
@@ -293,10 +314,21 @@ The Quality workflow builds the iPhone app and Live Activity extension for the p
 1. Edit and commit source, then push the change for automated checks.
 2. Download the matching successful CI artifacts: `TrailMeshTransportProbe-unsigned-iphoneos` and, when needed, `TrailMeshTransportProbe-android-debug`.
 3. Extract the iPhone artifact and verify its IPA against the included `SHA256SUMS.txt`.
-4. Install the IPA through AltStore Classic or AltServer. Complete account sign-in, trust, and device prompts locally; keep credentials and signing material outside Git. Follow the [installation guide](docs/feasibility/foreground-exchange.md#build-and-install).
+4. Install the IPA through AltStore Classic or AltServer. Complete account sign-in, trust, and device prompts locally; keep credentials and signing material outside Git.
 5. Install the compatible Android APK. Both phones must use the same supported probe protocol version.
 6. Disable internet for the experiment, retain the required local radio and permission settings, and record those settings with the test.
 7. Export both redacted logs, validate them, record the outcome, and repeat after relevant fixes.
+
+#### Windows installation details
+
+The Quality workflow builds an **unsigned iPhone-device IPA** including the session Live Activity extension and uploads it as the `TrailMeshTransportProbe-unsigned-iphoneos` artifact. Its `SHA256SUMS.txt` identifies the package to test. A simulator `.app` cannot be substituted for it. Android's debug APK is uploaded as `TrailMeshTransportProbe-android-debug`; local output remains `app/build/outputs/apk/debug/app-debug.apk`.
+
+1. Install [iTunes and iCloud directly from Apple](https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows), then install [AltServer for Windows](https://altstore.io/). Use **AltStore Classic** for IPA files; AltStore PAL does not import arbitrary IPA files.
+2. Connect and unlock the iPhone, trust the computer when prompted, and use AltServer to install AltStore Classic. Complete Apple ID sign-in on your own device and PC. Enable Wi-Fi sync if using wireless refresh. Complete the iPhone's trust and Developer Mode steps in the [AltStore Windows guide](https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows).
+3. Download and extract the artifact from the successful GitHub Actions run. Verify the IPA's SHA-256 against `SHA256SUMS.txt`. Import the IPA into AltStore Classic on the iPhone, or use AltServer's **Shift-click → Sideload .ipa** option on Windows. AltStore/AltServer signs it for the test phone; never commit Apple credentials or signing material to this repository.
+4. Open the probe and allow the Bluetooth and Local Network prompts. If the install or first launch fails, record the exact error and iOS version. Installation and each payload direction must be documented in Issue #2's physical evidence record.
+
+Refresh the sideloaded app before its displayed expiry. Keep AltServer reachable from the iPhone; a USB connection also works. AltStore attempts background refresh, but it is not guaranteed. [AltStore refresh instructions](https://faq.altstore.io/altstore-classic/your-altstore), [AltServer connection instructions](https://faq.altstore.io/altstore-classic/altserver).
 
 TestFlight can be introduced for later beta distribution; it is not the current probe installation path.
 
@@ -305,6 +337,45 @@ TestFlight can be introduced for later beta distribution; it is not the current 
 The probes already provide bounded, redacted log export. Preserve this during product integration and include build/commit ID where available, protocol version, phone OS, permission state, transport stages, errors, timestamps, and byte counts. Exclude private content and keys. Preserve useful diagnostics across ordinary app restarts and retain a practical export route after offline tests.
 
 Simulator tests verify supported UI and domain behavior. Bluetooth interoperability, lifecycle behavior, and energy use require physical-device measurements. Record the exact configuration and distinguish transfer on an existing connection from discovery of a new peer.
+
+#### Physical probe procedure
+
+1. Update every test phone to the same probe version. Keep both apps open and unlocked for the initial gate.
+2. Disable mobile data, disconnect from internet-connected Wi-Fi, disable hotspots, and keep Bluetooth on. Record Wi-Fi radio enabled/disabled and network association independently. Repeat with Wi-Fi disabled in Settings to characterize the BLE-oriented path.
+3. Choose the same size on both phones, then start a session on each. The apps automatically connect and exchange 20 attempts in each direction. Repeat at 256 bytes, 2 KiB and 8 KiB, stopping both sessions before changing size. Save both logs after each run.
+4. Record exact models, OS/MIUI/Google Play Services versions, app version/build, SDK revision, permissions, radios, network association, consent/authentication behavior and every attempt in `evidence-template-v1.json`. Internet-disabled is a manually recorded condition; the apps cannot infer it from a radio toggle. Do not include payload bytes or authentication tokens.
+5. Issue #2 passes only if the 2-KiB batch has at least 18 matching results out of 20 in each direction and receiver records corroborate unique deliveries. Retries and duplicates are not extra successes. Foreground results do not establish background behavior.
+
+Check the two v2 device exports from the repository root:
+
+```text
+python -m tools.transport.validate_probe_logs path/to/first-log.json path/to/second-log.json
+```
+
+The validator checks both complete 20-attempt batches, unique logical indices, current peer/session correlation, generated-byte digests and corresponding receiver evidence. Use `--payload-size 256` or `--payload-size 8192` for the optional sizes. Logs cannot establish radio settings, lack of internet or screen/background conditions; record those observations separately. Keep raw device exports in an ignored `device-logs/` folder.
+
+#### Interruption and lifecycle matrix
+
+Run each condition separately on each selected Android model and the exact target iPhone/iOS build. Use a separate evidence record for each Android device, identifying its model, OS version, and app build. Preserve failures and inconclusive results.
+
+| Condition | Required observation |
+|---|---|
+| Both launch orders; different sizes; old version | Deterministic compatible pairing or explicit refusal, no false success. |
+| Android Home/app switch/share chooser/rotation | Same session ID and progress; service notification stays available; no Activity-owned cancellation. |
+| Android notification denied; Stop; Task Manager Stop; force stop | Correct stopped/interrupted state and no unrequested restart. |
+| Saved Wi-Fi auto-association/roaming; Wi-Fi toggle; Bluetooth toggle | Healthy links not destroyed by mere default-network changes; disconnect recovery bounded; same attempt identity retained. |
+| Range loss before ACK, then return | Duplicate-safe re-ACK and one unique result; no skipped attempt or inflated count. |
+| Permission revoked; compatibility prompt denied or answered after Stop | Clear paused state, stale callback ignored, no background permission dialog or automatic restart. |
+| iPhone background behind another app, then foreground | Intent and counters preserved; actual data completion distinguished from saved progress. |
+| iOS26 Live Activity enabled, denied, dismissed, ended | Supported BLE integration or saved fallback; ending activity never erases progress. |
+| iPhone locked/display on versus fully off for 1/5/15/30 minutes | Fresh discovery and transfers measured separately from existing connection retention. |
+| Advertiser starts after iPhone backgrounds; both phones background | New discovery proven by correlated transfer logs, not an active-session label. |
+| Cold launch; checkpoint corruption/storage failure | Explicit Resume/interrupted/error state; no invented durable acceptance. |
+| Three phones, sequential encounters; extra incoming endpoint | Fair bounded serial exchange or rejected busy peer; never simultaneous fan-out or claimed multi-hop relay. |
+
+The final product requires signed report validation, transactional report storage, verified-contact encryption, relevance filtering and store-carry-forward routing. Probe session IDs/checksums and automatic Nearby verification do not implement those protections. Issue #36 delivers this hardened probe; #27 and the durable-exchange issues retain the production gates.
+
+If the phones cannot discover or connect, preserve the failed logs and reasons. Do not substitute loopback, simulator, or LAN results for this physical test.
 
 ### 6.6 Build-and-device regression gate
 
@@ -1158,9 +1229,6 @@ trailmesh/
     ios/                      # Native probe, Xcode project, widget, and tests
     evidence-physical-v1.json
     evidence-template-v1.json
-  docs/
-    UI_UX.md
-    feasibility/foreground-exchange.md
   .github/
     workflows/quality.yml
     dependabot.yml
@@ -1361,7 +1429,7 @@ Keep the iPhone as the primary product. Android compatibility is required, even 
 ### 30.2 Current execution sequence
 
 1. Inspect the working tree, applicable instructions, current milestone issues, and M1 evidence. Preserve existing work.
-2. Review the approved UI/UX brief and keep Explore as the home screen.
+2. Review the interface requirements in section 5 and keep Explore as the home screen.
 3. Implement transactional signed-report ingest, canonical validation, deduplication, expiry, and restart recovery.
 4. Integrate a durable acknowledgement with the encounter state machine; distinguish received bytes from a verified, committed report.
 5. Demonstrate physical A → B → C delivery with A absent and the original signed bytes preserved, including a restart of B.
