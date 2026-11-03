@@ -36,6 +36,11 @@ internal object NearbyPermissionPolicy {
         return locationPermissions + missing.filterNot(locationPermissions::contains)
     }
 
+    fun locationGrantEvidence(grantedPermissions: Set<String>): Map<String, String> = mapOf(
+        "coarse_location_granted" to (Manifest.permission.ACCESS_COARSE_LOCATION in grantedPermissions).toString(),
+        "fine_location_granted" to (Manifest.permission.ACCESS_FINE_LOCATION in grantedPermissions).toString(),
+    )
+
     fun permissionsForCompatibilityFailure(
         sdkInt: Int,
         operation: String,
