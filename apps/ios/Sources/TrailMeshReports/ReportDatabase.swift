@@ -1,3 +1,4 @@
+import Foundation
 import GRDB
 
 /// Opens the report database and applies its non-destructive migrations.
@@ -10,7 +11,9 @@ enum ReportDatabase {
             let hasMigrations = try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'grdb_migrations')") ?? false
             if hasMigrations {
                 let applied = Set(try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations"))
-                guard applied.isSubset(of: ["v1", "v2"]), !applied.contains("v2") || applied.contains("v1") else {
+                guard applied.isSubset(of: ["v1", "v2", "v3"]),
+                      !applied.contains("v2") || applied.contains("v1"),
+                      !applied.contains("v3") || applied.contains("v2") else {
                     throw ReportDatabaseError.unsupportedSchema
                 }
             }
@@ -40,7 +43,7 @@ enum ReportDatabase {
                     lat_e7 INTEGER NOT NULL,
                     lon_e7 INTEGER NOT NULL,
                     accuracy_m INTEGER NOT NULL,
-                    note TEXT NOT NULL,
+                    note BLOB NOT NULL,
                     supersedes TEXT
                 );
                 CREATE TABLE relay_state (
@@ -73,6 +76,36 @@ enum ReportDatabase {
                 SELECT 1, COALESCE(MAX(admitted_at_ms), 0) FROM bundles;
                 """)
         }
+        migrator.registerMigration("v3") { db in
+            try db.execute(sql: """
+                CREATE TABLE quarantined_ids (
+                    bundle_id TEXT PRIMARY KEY NOT NULL REFERENCES bundles(bundle_id) ON DELETE CASCADE,
+                    rate_hold_until_ms INTEGER NOT NULL
+                );
+                """)
+            // Pre-release v1/v2 used TEXT. Rebuild note bytes from authenticated wire
+            // so an embedded NUL is not lost during migration.
+            let legacy = try Row.fetchAll(db, sql: """
+                SELECT b.bundle_id, b.original_wire, b.canonical_core, b.signature, b.admitted_at_ms
+                FROM bundles b JOIN reports r ON r.bundle_id = b.bundle_id WHERE typeof(r.note) = 'text'
+                """)
+            for row in legacy {
+                let id = try row.decode(String.self, forColumn: "bundle_id")
+                let wire = try row.decode(Data.self, forColumn: "original_wire")
+                let canonical = try row.decode(Data.self, forColumn: "canonical_core")
+                let signature = try row.decode(Data.self, forColumn: "signature")
+                let admitted = try row.decode(Int64.self, forColumn: "admitted_at_ms")
+                let verified = ReportAdmission.validate(wire, now: admitted)
+                var parser = try StrictReportJSONParser(wire)
+                let envelope = try parser.parse()
+                guard verified.outcome == "accepted", verified.bundleID == id, verified.canonicalCore == canonical,
+                      ReportAdmission.binary(envelope["signature"], count: 64) == signature,
+                      let note = envelope["core"]?["body"]?["note"]?.string else {
+                    throw ReportDatabaseError.corruptLegacyReport
+                }
+                try db.execute(sql: "UPDATE reports SET note = CASE WHEN ? = 0 THEN zeroblob(0) ELSE ? END WHERE bundle_id = ?", arguments: [note.utf8.count, Data(note.utf8), id])
+            }
+        }
         try migrator.migrate(queue)
         return queue
     }
@@ -81,4 +114,5 @@ enum ReportDatabase {
 
 public enum ReportDatabaseError: Error {
     case unsupportedSchema
+    case corruptLegacyReport
 }
