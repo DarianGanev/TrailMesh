@@ -213,6 +213,164 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  ios-product-repository:
+    name: iOS product repository
+    needs: change-detection
+    if: needs.change-detection.outputs.ios == 'true'
+    runs-on: macos-15
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/ios
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select Xcode with Swift 6.1
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          swift --version
+      - name: Check the bundled vectors match the protocol contract
+        run: cmp ../../protocol/report-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/report-v1-vectors.json
+      - name: Test the product repository
+        env:
+          TRAILMESH_TEST_REPORT_OUTPUT: ${{ runner.temp }}/trailmesh-authored-report.json
+        shell: bash
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee "$RUNNER_TEMP/trailmesh-swift-test.log"
+          grep -Eq 'Executed [1-9][0-9]* tests?, with 0 failures' "$RUNNER_TEMP/trailmesh-swift-test.log"
+      - name: Verify the authored report using the Python reference
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/trailmesh-python"
+          "$RUNNER_TEMP/trailmesh-python/bin/python" -m pip install --disable-pip-version-check -r ../../tools/protocol/requirements.txt
+          PYTHONPATH=../.. "$RUNNER_TEMP/trailmesh-python/bin/python" - <<'PY'
+          import os
+          from pathlib import Path
+          from tools.protocol.report import ValidatedReport, validate_report
+          wire = Path(os.environ['RUNNER_TEMP'], 'trailmesh-authored-report.json').read_bytes()
+          result = validate_report(wire, now_ms=1789647000000)
+          if not isinstance(result, ValidatedReport):
+              raise SystemExit(f'Python rejected Swift-authored test report: {result}')
+          print('Python verified the Swift-authored public report')
+          PY
+
+  ios-product-simulator:
+    name: iOS product simulator tests
+    needs: change-detection
+    if: needs.change-detection.outputs.ios == 'true'
+    runs-on: macos-15
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/ios
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select Xcode with Swift 6.1
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+      - name: Check vectors and select simulator
+        id: simulator
+        shell: bash
+        run: |
+          cmp ../../protocol/report-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/report-v1-vectors.json
+          simulator_id="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; m=sorted(((r,x["udid"]) for r,es in d.items() if "iOS" in r for x in es if x["name"] == "iPhone 16"),reverse=True); print(m[0][1] if m else "")')"
+          test -n "$simulator_id"
+          echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
+      - name: Run report repository tests on iPhone simulator
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild test -project Product/TrailMesh.xcodeproj -scheme TrailMesh \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
+            -derivedDataPath "$RUNNER_TEMP/TrailMeshProductTests" \
+            ARCHS=arm64 CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO \
+            | tee "$RUNNER_TEMP/trailmesh-simulator-test.log"
+          grep -Eq 'Executed [1-9][0-9]* tests?, with 0 failures' "$RUNNER_TEMP/trailmesh-simulator-test.log"
+
+  ios-product-minimum:
+    name: iOS 16.1 product compatibility
+    needs: change-detection
+    if: needs.change-detection.outputs.ios == 'true'
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/ios
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select Xcode with Swift 6.1
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+      - name: Install the minimum supported iOS simulator runtime
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/TrailMeshIOS16"
+          xcrun simctl list >/dev/null
+          xcodebuild -downloadPlatform iOS -buildVersion 16.1 -exportPath "$RUNNER_TEMP/TrailMeshIOS16"
+      - name: Create the minimum-version simulator
+        id: simulator
+        shell: bash
+        run: |
+          runtime_id="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=json.load(sys.stdin)["runtimes"]; m=[x["identifier"] for x in r if x.get("version") == "16.1" and x.get("isAvailable")]; print(m[0] if m else "")')"
+          test -n "$runtime_id"
+          simulator_id="$(xcrun simctl create TrailMesh-iOS16 com.apple.CoreSimulator.SimDeviceType.iPhone-14 "$runtime_id")"
+          echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
+      - name: Run report repository tests on iOS 16.1
+        shell: bash
+        run: |
+          set -o pipefail
+          cmp ../../protocol/report-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/report-v1-vectors.json
+          xcodebuild test -project Product/TrailMesh.xcodeproj -scheme TrailMesh \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
+            -derivedDataPath "$RUNNER_TEMP/TrailMeshProductMinimum" \
+            ARCHS=arm64 CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO \
+            | tee "$RUNNER_TEMP/trailmesh-ios16-test.log"
+          grep -Eq 'Executed [1-9][0-9]* tests?, with 0 failures' "$RUNNER_TEMP/trailmesh-ios16-test.log"
+
+  ios-product-package:
+    name: Unsigned iPhone product package
+    needs: change-detection
+    if: needs.change-detection.outputs.ios == 'true'
+    runs-on: macos-15
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/ios
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select Xcode with Swift 6.1
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+      - name: Build the distinct product app
+        run: >-
+          xcodebuild build -project Product/TrailMesh.xcodeproj -scheme TrailMesh
+          -configuration Debug -sdk iphoneos -destination 'generic/platform=iOS'
+          -derivedDataPath "$RUNNER_TEMP/TrailMeshProductDevice" CODE_SIGNING_ALLOWED=NO
+      - name: Package unsigned product
+        shell: bash
+        run: |
+          app="$RUNNER_TEMP/TrailMeshProductDevice/Build/Products/Debug-iphoneos/TrailMesh.app"
+          test -d "$app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")" = 'org.trailmesh.ios'
+          xcrun lipo -archs "$app/TrailMesh" | grep -qw arm64
+          mkdir -p "$RUNNER_TEMP/TrailMeshProductPackage/Payload" "$RUNNER_TEMP/TrailMeshProductOutput"
+          ditto "$app" "$RUNNER_TEMP/TrailMeshProductPackage/Payload/TrailMesh.app"
+          (cd "$RUNNER_TEMP/TrailMeshProductPackage" && ditto -c -k --sequesterRsrc --keepParent Payload "$RUNNER_TEMP/TrailMeshProductOutput/TrailMeshProduct-unsigned.ipa")
+          unzip -t "$RUNNER_TEMP/TrailMeshProductOutput/TrailMeshProduct-unsigned.ipa"
+          (cd "$RUNNER_TEMP/TrailMeshProductOutput" && shasum -a 256 TrailMeshProduct-unsigned.ipa > SHA256SUMS.txt)
+      - name: Upload unsigned product for signing
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TrailMeshProduct-unsigned-iphoneos
+          path: ${{ runner.temp }}/TrailMeshProductOutput/
+          if-no-files-found: error
+          retention-days: 7
+
   dependency-review:
     name: Dependency review
     if: github.event_name == 'pull_request'
