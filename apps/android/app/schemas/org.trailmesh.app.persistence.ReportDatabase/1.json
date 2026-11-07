@@ -1,0 +1,307 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "358d16047b38ab0480cea1d116eb2514",
+    "entities": [
+      {
+        "tableName": "bundles",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`bundle_id` TEXT NOT NULL, `canonical_core` BLOB NOT NULL, `signature` BLOB NOT NULL, `original_wire` BLOB NOT NULL, `author_key` BLOB NOT NULL, `created_at_ms` INTEGER NOT NULL, `expires_at_ms` INTEGER NOT NULL, `admitted_at_ms` INTEGER NOT NULL, `is_local` INTEGER NOT NULL, PRIMARY KEY(`bundle_id`))",
+        "fields": [
+          {
+            "fieldPath": "bundle_id",
+            "columnName": "bundle_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "canonical_core",
+            "columnName": "canonical_core",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "signature",
+            "columnName": "signature",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "original_wire",
+            "columnName": "original_wire",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "author_key",
+            "columnName": "author_key",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "created_at_ms",
+            "columnName": "created_at_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "expires_at_ms",
+            "columnName": "expires_at_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "admitted_at_ms",
+            "columnName": "admitted_at_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "is_local",
+            "columnName": "is_local",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "bundle_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "bundles_expiry",
+            "unique": false,
+            "columnNames": [
+              "expires_at_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `bundles_expiry` ON `${TABLE_NAME}` (`expires_at_ms`)"
+          },
+          {
+            "name": "bundles_author_admission",
+            "unique": false,
+            "columnNames": [
+              "author_key",
+              "admitted_at_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `bundles_author_admission` ON `${TABLE_NAME}` (`author_key`, `admitted_at_ms`)"
+          }
+        ]
+      },
+      {
+        "tableName": "reports",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`bundle_id` TEXT NOT NULL, `event_id` BLOB NOT NULL, `category` TEXT NOT NULL, `status` TEXT NOT NULL, `observed_at_ms` INTEGER NOT NULL, `lat_e7` INTEGER NOT NULL, `lon_e7` INTEGER NOT NULL, `accuracy_m` INTEGER NOT NULL, `note` BLOB NOT NULL, `supersedes` TEXT, PRIMARY KEY(`bundle_id`), FOREIGN KEY(`bundle_id`) REFERENCES `bundles`(`bundle_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "bundle_id",
+            "columnName": "bundle_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "event_id",
+            "columnName": "event_id",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "observed_at_ms",
+            "columnName": "observed_at_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lat_e7",
+            "columnName": "lat_e7",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lon_e7",
+            "columnName": "lon_e7",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accuracy_m",
+            "columnName": "accuracy_m",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "supersedes",
+            "columnName": "supersedes",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "bundle_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "reports_event",
+            "unique": false,
+            "columnNames": [
+              "event_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `reports_event` ON `${TABLE_NAME}` (`event_id`)"
+          },
+          {
+            "name": "reports_location",
+            "unique": false,
+            "columnNames": [
+              "lat_e7",
+              "lon_e7"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `reports_location` ON `${TABLE_NAME}` (`lat_e7`, `lon_e7`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "bundles",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "bundle_id"
+            ],
+            "referencedColumns": [
+              "bundle_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "relay_state",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`bundle_id` TEXT NOT NULL, `local_expiry_ms` INTEGER NOT NULL, `max_hops` INTEGER NOT NULL, `outbox` INTEGER NOT NULL, PRIMARY KEY(`bundle_id`), FOREIGN KEY(`bundle_id`) REFERENCES `bundles`(`bundle_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "bundle_id",
+            "columnName": "bundle_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "local_expiry_ms",
+            "columnName": "local_expiry_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "max_hops",
+            "columnName": "max_hops",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "outbox",
+            "columnName": "outbox",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "bundle_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "relay_expiry",
+            "unique": false,
+            "columnNames": [
+              "local_expiry_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `relay_expiry` ON `${TABLE_NAME}` (`local_expiry_ms`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "bundles",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "bundle_id"
+            ],
+            "referencedColumns": [
+              "bundle_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "seen_ids",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`bundle_id` TEXT NOT NULL, `retain_until_ms` INTEGER NOT NULL, `reason` TEXT NOT NULL, PRIMARY KEY(`bundle_id`))",
+        "fields": [
+          {
+            "fieldPath": "bundle_id",
+            "columnName": "bundle_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "retain_until_ms",
+            "columnName": "retain_until_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reason",
+            "columnName": "reason",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "bundle_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "seen_retention",
+            "unique": false,
+            "columnNames": [
+              "retain_until_ms",
+              "bundle_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `seen_retention` ON `${TABLE_NAME}` (`retain_until_ms`, `bundle_id`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '358d16047b38ab0480cea1d116eb2514')"
+    ]
+  }
+}

@@ -896,7 +896,7 @@ Location is optional for manual report placement. GPS position can be available 
 
 ## 16. Data model and persistence
 
-Use SQLite with migrations, indexed queries, transactional ingest, and platform-appropriate concurrency. iOS may use GRDB after dependency verification; Android may use Room. Keep map renderer storage separate from protocol storage.
+Use SQLite with migrations, indexed queries, transactional ingest, and platform-appropriate concurrency. The native report repositories use GRDB on iPhone and Room on Android. Keep map renderer storage separate from protocol storage.
 
 ### 16.1 Tables
 
@@ -931,6 +931,8 @@ Use database durability settings appropriate for the ACK promise; test crash beh
 ### 16.3 Retention and deletion
 
 Suggested defaults: relay payloads until expiry; expired public history seven days locally; redacted diagnostics seven days; seen-ID records until original expiry plus 24 hours, capped by storage. User-owned messages remain until explicit deletion or a clearly communicated retention setting.
+
+The current native public-report repositories use a stricter clock-safety policy: expired report bytes and elapsed seen IDs are reclaimed only after explicit confirmation of clock accuracy and deletion. Admission reports quota instead of automatically deleting data under an unverified clock. This replaces automatic seven-day public-history deletion for this implementation. After a confirmed backward clock correction, existing reports are quarantined as identifiable history, never forwarded or presented as current, and remote author allowance is conservatively retained for one hour. The product interface must expose recovery and cleanup clearly; the current development screens do not yet implement those flows.
 
 On expiry, remove forwarding eligibility immediately even if history is retained. On user deletion, remove local data and keys as requested; explain that already distributed public observations and ciphertext copies cannot be remotely recalled. A retraction can propagate, but it is not guaranteed erasure.
 
@@ -1198,7 +1200,7 @@ Simulator telemetry is richer but must be labeled synthetic. Avoid a live map of
 | Android UI/application | Kotlin + Jetpack Compose + coroutines | Actual Android permissions and SDK compatibility. |
 | Transport | Nearby Connections; M1 point-to-point probe implemented | Signed-report integration and production trust policy in M2. |
 | Alternative transport | Native BLE GATT | Only if needed; independently tested. |
-| Local database | SQLite with GRDB / Room candidates | Transaction and migration tests. |
+| Local database | SQLite with GRDB on iPhone / Room on Android | Transaction and migration tests. |
 | Maps | MapLibre Native with licensed offline data | Full offline render after restart. |
 | Cryptography | Maintained libsodium-compatible bindings | Cross-platform vector and packaging spike. |
 | Protocol | Versioned canonical JSON + exact fixtures | Canonicalization and signature tests. |
@@ -1206,7 +1208,7 @@ Simulator telemetry is richer but must be labeled synthetic. Avoid a live map of
 | Optional gateway | Python/FastAPI + PostgreSQL/PostGIS | Deferred until peer vertical slice works. |
 | Automation | GitHub Actions or equivalent | macOS iOS build runner plus Linux/Android jobs. |
 
-SwiftUI, Kotlin, Nearby, the Python fixture tooling, and GitHub Actions are implemented in the current foundation. Compose, GRDB/Room, MapLibre, private-message bindings, simulator dependencies, and the gateway are planned choices; verify versions, licenses, and integration before adding them.
+SwiftUI, Kotlin, Nearby, GRDB/Room report repositories, protected native signing identities, the Python fixture tooling, and GitHub Actions are implemented in the current foundation. Compose, MapLibre, private-message bindings, simulator dependencies, and the gateway are planned choices; verify versions, licenses, and integration before adding them.
 
 ### 23.2 Repository
 
@@ -1218,9 +1220,14 @@ trailmesh/
   TrailMesh.md
   CHANGELOG.md
   LICENSE
+  apps/
+    ios/                      # iPhone product and GRDB report repository
+    android/                  # Android product and Room report repository
   protocol/
     fixture-v1.json
     probe-v2-vectors.json
+    report-v1-profile.json
+    report-v1-vectors.json
   tools/
     protocol/                 # Signed-bundle reference and tests
     transport/                # Exchange contracts and log validation
@@ -1238,7 +1245,7 @@ trailmesh/
   .gitignore
 ```
 
-Add `apps/ios/` and `apps/android/` when implementing the product vertical slice, `simulator/` during the research milestone, and `gateway/` only when that optional service is implemented. Create additional documentation where a concrete decision or experiment needs it; do not add empty scaffolding or duplicate this specification across folders.
+Extend the product targets as the vertical slice develops. Add `simulator/` during the research milestone and `gateway/` only when that optional service is implemented. Create additional documentation where a concrete decision or experiment needs it; do not add empty scaffolding or duplicate this specification across folders.
 
 Inside each app, separate domain, persistence, transport, cryptography, features, and diagnostics. Keep the probes available as an independent transport baseline while product integration develops.
 
