@@ -208,6 +208,16 @@ jobs:
         with:
           cmdline-tools-version: '15859902' # Command-line Tools 22.0
           log-accepted-android-sdk-licenses: false
+      - name: Expose pinned tools to the emulator action
+        run: |
+          pinned_tools="$ANDROID_HOME/cmdline-tools/22.0"
+          runner_latest="$ANDROID_HOME/cmdline-tools/latest"
+          test -x "$pinned_tools/bin/avdmanager"
+          if [[ -e "$runner_latest" || -L "$runner_latest" ]]; then
+            mv "$runner_latest" "$RUNNER_TEMP/android-preinstalled-cmdline-tools"
+          fi
+          ln -s "$pinned_tools" "$runner_latest"
+          grep -F 'Pkg.Revision=22.0' "$runner_latest/source.properties"
       - name: Run real Android SQLite, migration, crypto, Keystore and restart tests
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
@@ -216,7 +226,10 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          pre-emulator-launch-script: |
+            grep -Fx 'target=android-${{ matrix.api }}' "$HOME/.android/avd/test.ini"
           script: |
+            test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "$(printf '%s' '${{ matrix.api }}' | cut -d . -f 1)"
             cd apps/android && ./gradlew --no-daemon connectedDebugAndroidTest
             python tools/ci/check_junit.py apps/android/app/build/outputs/androidTest-results/connected
             adb install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
