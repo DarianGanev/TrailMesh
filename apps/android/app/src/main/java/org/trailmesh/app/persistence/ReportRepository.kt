@@ -79,6 +79,9 @@ class ForwardableReport(val bundleID: String, originalWire: ByteArray) {
         get() = wire.copyOf()
 }
 
+/**
+ * Durable public reports; successful outcomes are returned only after the Room transaction commits.
+ */
 class ReportRepository
 private constructor(
     internal var database: ReportDatabase,
@@ -88,6 +91,10 @@ private constructor(
     private val access = Mutex()
 
     companion object {
+        /**
+         * Opens and migrates off the main thread; unknown schemas never trigger destructive
+         * fallback.
+         */
         suspend fun open(context: Context, name: String): ReportRepository =
             withContext(Dispatchers.IO) {
                 ReportRepository(
@@ -152,10 +159,18 @@ private constructor(
         )
     }
 
+    /** Verifies a snapshot and transactionally applies duplicate, expiry and quota policy. */
     suspend fun ingest(wire: ByteArray, now: Long): StoreOutcome = ingest(wire) { now }
 
-    suspend fun ingest(wire: ByteArray, clock: () -> Long): StoreOutcome =
-        store(wire.copyOf(), clock, false)
+    /** Samples the clock for validation and again inside the protected write transaction. */
+    suspend fun ingest(wire: ByteArray, clock: () -> Long): StoreOutcome {
+        currentCoroutineContext().ensureActive()
+        if (wire.size > 8192) {
+            validClock(clock())
+            return StoreOutcome.Rejected("invalid")
+        }
+        return store(wire.copyOf(), clock, false)
+    }
 
     private suspend fun store(
         wire: ByteArray,
@@ -276,9 +291,14 @@ private constructor(
         }
     }
 
+    /**
+     * Rejects invalid drafts before signing and commits the report and initial outbox state
+     * together.
+     */
     suspend fun author(draft: ReportDraft, signer: ReportSigner, now: Long): StoreOutcome =
         author(draft, signer) { now }
 
+    /** Preserves signing/storage failures and detects clock corrections during authoring. */
     suspend fun author(draft: ReportDraft, signer: ReportSigner, clock: () -> Long): StoreOutcome {
         currentCoroutineContext().ensureActive()
         val created = clock()
@@ -320,7 +340,15 @@ private constructor(
                             "body" to body,
                         ),
                     )
-                val canonical = core.canonicalBytes()
+                val canonical =
+                    try {
+                        ReportAdmission.validateCoreFields(core)
+                        core.canonicalBytes()
+                    } catch (_: IllegalArgumentException) {
+                        return@withContext null
+                    } catch (_: IllegalStateException) {
+                        return@withContext null
+                    }
                 val id =
                     java.security.MessageDigest.getInstance("SHA-256")
                         .digest("TrailMesh/id/v1\n".toByteArray() + canonical)
@@ -335,9 +363,13 @@ private constructor(
                     )
                     .canonicalBytes()
             }
+        if (wire == null) return StoreOutcome.Rejected("invalid")
         return store(wire, clock, true, created)
     }
 
+    /**
+     * Returns verified projections; antimeridian bounds are supported and history requires opt-in.
+     */
     suspend fun reports(
         now: Long,
         bounds: ReportBounds = ReportBounds(),
@@ -373,6 +405,10 @@ private constructor(
         }
     }
 
+    /**
+     * Returns original wire copies only for current, non-quarantined reports with a positive hop
+     * cap.
+     */
     suspend fun forwardable(now: Long): List<ForwardableReport> = transaction { db ->
         observe(db, now)
         db.query(
@@ -506,6 +542,7 @@ private constructor(
         }
     }
 
+    /** Waits for an active transaction and closes the pool without interrupting its commit. */
     suspend fun close() {
         withContext(NonCancellable) {
             access.withLock { withContext(Dispatchers.IO) { database.close() } }

@@ -95,6 +95,95 @@ object ReportAdmission {
         require(value is ReportJSON.ObjectValue && value.members.keys == names.toSet())
     }
 
+    internal data class CoreFields(
+        val author: ByteArray,
+        val created: Long,
+        val expires: Long,
+        val hops: Int,
+        val report: ReportProjection,
+    )
+
+    /**
+     * Checks signed field shapes and ranges; freshness is checked only after signature
+     * verification.
+     */
+    internal fun validateCoreFields(core: ReportJSON): CoreFields {
+        val body = core["body"]!!
+        fields(
+            body,
+            "event_id",
+            "category",
+            "status",
+            "observed_at_ms",
+            "lat_e7",
+            "lon_e7",
+            "accuracy_m",
+            "note",
+            "supersedes",
+        )
+        val author = binary(core["author_key"], 32)
+        binary(core["nonce"], 16)
+        val event = binary(body["event_id"], 16)
+        val supersedes =
+            if (body["supersedes"] === ReportJSON.NullValue) null
+            else identifier(body["supersedes"])
+        val category = requireNotNull(body["category"]?.text)
+        val status = requireNotNull(body["status"]?.text)
+        require(statuses[category]?.contains(status) == true)
+        val note = requireNotNull(body["note"]?.text)
+        require(note.length <= 1000)
+        require(
+            note.codePointCount(0, note.length) <= 500 &&
+                note.toByteArray(Charsets.UTF_8).size <= 2048,
+        )
+        val created = requireNotNull(core["created_at_ms"]?.number)
+        val expires = requireNotNull(core["expires_at_ms"]?.number)
+        val hops = requireNotNull(core["max_hops"]?.number)
+        val observed = requireNotNull(body["observed_at_ms"]?.number)
+        val lat = requireNotNull(body["lat_e7"]?.number)
+        val lon = requireNotNull(body["lon_e7"]?.number)
+        val accuracy = requireNotNull(body["accuracy_m"]?.number)
+        require(
+            created in 0..ReportJSON.SAFE_INTEGER &&
+                expires in 1..ReportJSON.SAFE_INTEGER &&
+                observed in 0..ReportJSON.SAFE_INTEGER &&
+                accuracy in 0..ReportJSON.SAFE_INTEGER,
+        )
+        require(
+            observed >= 0 &&
+                observed <= created &&
+                created < expires &&
+                expires - created <= 259_200_000,
+        )
+        require(
+            hops in 0..12 &&
+                lat in -900_000_000..900_000_000 &&
+                lon in -1_800_000_000..1_800_000_000 &&
+                accuracy >= 0,
+        )
+        return CoreFields(
+            author,
+            created,
+            expires,
+            hops.toInt(),
+            ReportProjection(
+                event,
+                category,
+                status,
+                observed,
+                lat,
+                lon,
+                accuracy,
+                note,
+                supersedes,
+            ),
+        )
+    }
+
+    /**
+     * Validates the shared wire profile. Signature checks precede freshness; invalid caller clocks
+     * throw.
+     */
     fun validate(wire: ByteArray, now: Long): AdmissionResult {
         require(now in 0..ReportJSON.SAFE_INTEGER) { "Invalid caller clock" }
         try {
@@ -117,54 +206,13 @@ object ReportAdmission {
             val version = requireNotNull(core["version"]?.number)
             val kind = requireNotNull(core["kind"]?.text)
             if (version != 1L || kind != "report") return AdmissionResult("unsupported")
-            val body = core["body"]!!
-            fields(
-                body,
-                "event_id",
-                "category",
-                "status",
-                "observed_at_ms",
-                "lat_e7",
-                "lon_e7",
-                "accuracy_m",
-                "note",
-                "supersedes",
-            )
-            val author = binary(core["author_key"], 32)
-            binary(core["nonce"], 16)
-            val event = binary(body["event_id"], 16)
+            val checked = validateCoreFields(core)
+            val author = checked.author
+            val created = checked.created
+            val expires = checked.expires
+            val hops = checked.hops
             val signature = binary(envelope["signature"], 64)
             val id = identifier(envelope["bundle_id"])
-            val supersedes =
-                if (body["supersedes"] === ReportJSON.NullValue) null
-                else identifier(body["supersedes"])
-            val category = requireNotNull(body["category"]?.text)
-            val status = requireNotNull(body["status"]?.text)
-            require(statuses[category]?.contains(status) == true)
-            val note = requireNotNull(body["note"]?.text)
-            require(
-                note.codePointCount(0, note.length) <= 500 &&
-                    note.toByteArray(Charsets.UTF_8).size <= 2048,
-            )
-            val created = requireNotNull(core["created_at_ms"]?.number)
-            val expires = requireNotNull(core["expires_at_ms"]?.number)
-            val hops = requireNotNull(core["max_hops"]?.number)
-            val observed = requireNotNull(body["observed_at_ms"]?.number)
-            val lat = requireNotNull(body["lat_e7"]?.number)
-            val lon = requireNotNull(body["lon_e7"]?.number)
-            val accuracy = requireNotNull(body["accuracy_m"]?.number)
-            require(
-                observed >= 0 &&
-                    observed <= created &&
-                    created < expires &&
-                    expires - created <= 259_200_000,
-            )
-            require(
-                hops in 0..12 &&
-                    lat in -900_000_000..900_000_000 &&
-                    lon in -1_800_000_000..1_800_000_000 &&
-                    accuracy >= 0,
-            )
             val canonical = core.canonicalBytes()
             val computed =
                 java.security.MessageDigest.getInstance("SHA-256")
@@ -188,17 +236,7 @@ object ReportAdmission {
                     created,
                     expires,
                     hops.toInt(),
-                    ReportProjection(
-                        event,
-                        category,
-                        status,
-                        observed,
-                        lat,
-                        lon,
-                        accuracy,
-                        note,
-                        supersedes,
-                    ),
+                    checked.report,
                 ),
             )
         } catch (_: IllegalArgumentException) {

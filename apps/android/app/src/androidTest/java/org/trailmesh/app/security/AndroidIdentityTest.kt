@@ -12,6 +12,28 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AndroidIdentityTest {
+    @Test
+    fun ciphertextTamperingFailsAuthenticationWithoutReplacingIdentity() = runBlocking {
+        ProtectedSigningIdentityStore(context).createNew()
+        val file = File(context.noBackupFilesDir, "signing/identity.v1")
+        val corrupt =
+            file.readBytes().also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() }
+        file.writeBytes(corrupt)
+        try {
+            ProtectedSigningIdentityStore(context).loadExisting()
+            fail("Tampered identity")
+        } catch (e: IdentityException) {
+            assertEquals(IdentityFailure.CORRUPT_IDENTITY, e.reason)
+        }
+        try {
+            ProtectedSigningIdentityStore(context).createNew()
+            fail("Must not replace corrupt identity")
+        } catch (e: IdentityException) {
+            assertEquals(IdentityFailure.ALREADY_EXISTS, e.reason)
+        }
+        assertArrayEquals(corrupt, file.readBytes())
+    }
+
     private val context
         get() = ApplicationProvider.getApplicationContext<android.content.Context>()
 

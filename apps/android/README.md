@@ -27,7 +27,7 @@ Database work and signing run off the main thread. Cancellation before an operat
 
 ## Signing identity
 
-`ProtectedSigningIdentityStore.createNew()` is an explicit one-time action. `loadExisting()` never creates a replacement identity. A 32-byte Ed25519 seed is encrypted with AES-256-GCM using a non-exportable Android Keystore wrapping key, authenticated with a versioned domain, and stored atomically under app-private `noBackupFilesDir`. A file lock serializes creation across instances and processes. No seed is stored in SQLite. Backup is disabled for this development product.
+`ProtectedSigningIdentityStore.createNew()` is an explicit one-time action. `loadExisting()` never creates a replacement identity. A 32-byte Ed25519 seed is encrypted with AES-256-GCM using a non-exportable Android Keystore wrapping key, authenticated with a versioned domain, and stored atomically under app-private `noBackupFilesDir`. Creation flushes both file contents and the directory entry before returning. A file lock serializes creation across instances and processes. No seed is stored in SQLite. Legacy backup, cloud backup and Android device transfer are explicitly excluded for this development product.
 
 The wrapped-seed fallback is **not** a non-exportable Ed25519 Keystore key or a promise of hardware backing. Signing unwraps the seed into process memory and checks identity continuity. Missing/invalidated keys, corrupt ciphertext and failed persistence fail explicitly without replacing the identity. A failed first save can leave an orphan wrapping key; creation then fails safely and requires a future explicit reset flow, rather than silently selecting a new identity.
 

@@ -15,6 +15,56 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 class ProtectedSigningIdentityStoreTest {
+    @Test
+    fun anotherProcessCanWinDirectoryCreationWithoutFailingBeforeTheFileLock() {
+        val real = File(temporary.newFolder(), "identity")
+        val raced =
+            object : File(real.path) {
+                override fun mkdirs(): Boolean {
+                    check(real.mkdirs())
+                    return false
+                }
+            }
+        val keys = TestKeys()
+        val core = IdentityStoreCore(FileIdentityBlobStorage(raced, syncDirectory = {}), keys)
+        val signer = core.createNew()
+        assertArrayEquals(signer.publicKey, core.loadExisting().publicKey)
+        failure(IdentityFailure.ALREADY_EXISTS) { core.createNew() }
+    }
+
+    @Test
+    fun parentDirectoryIsFlushedBeforeCreationReturns() {
+        val directory = temporary.newFolder()
+        var flushed = false
+        val storage =
+            FileIdentityBlobStorage(directory) { parent ->
+                assertEquals(directory, parent)
+                assertEquals(61L, File(parent, "identity.v1").length())
+                flushed = true
+            }
+        IdentityStoreCore(storage, TestKeys()).createNew()
+        assertTrue("Atomic rename must be made durable before returning", flushed)
+    }
+
+    @Test
+    fun failedDirectoryFlushCannotReturnSuccessfulIdentityCreation() {
+        val directory = temporary.newFolder()
+        val keys = TestKeys()
+        val storage = FileIdentityBlobStorage(directory) { throw IOException("sync failure") }
+        failure(IdentityFailure.STORAGE_FAILURE) { IdentityStoreCore(storage, keys).createNew() }
+        assertTrue(File(directory, "identity.v1").exists())
+        failure(IdentityFailure.ALREADY_EXISTS) { IdentityStoreCore(storage, keys).createNew() }
+    }
+
+    @Test
+    fun cipherInitializationFailureIsKeyUnavailableNotCiphertextCorruption() {
+        val directory = temporary.newFolder()
+        val keys = TestKeys()
+        store(directory, keys).createNew()
+        keys.key = javax.crypto.spec.SecretKeySpec(ByteArray(5), "AES")
+        failure(IdentityFailure.KEY_UNAVAILABLE) { store(directory, keys).loadExisting() }
+    }
+
     @get:Rule val temporary = TemporaryFolder()
 
     @Test
@@ -96,7 +146,7 @@ class ProtectedSigningIdentityStoreTest {
     @Test
     fun failedSaveCannotReturnUsableIdentityOrSilentlyRecreateOrphanKey() {
         val directory = temporary.newFolder()
-        val storage = FileIdentityBlobStorage(directory)
+        val storage = FileIdentityBlobStorage(directory, syncDirectory = {})
         val keys = TestKeys()
         val failing =
             object : IdentityBlobStorage by storage {
@@ -160,7 +210,12 @@ class ProtectedSigningIdentityStoreTest {
                 }
             }
         val signer =
-            IdentityStoreCore(FileIdentityBlobStorage(directory), TestKeys(), random).createNew()
+            IdentityStoreCore(
+                    FileIdentityBlobStorage(directory, syncDirectory = {}),
+                    TestKeys(),
+                    random,
+                )
+                .createNew()
         assertArrayEquals(
             hex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"),
             signer.publicKey,
@@ -198,7 +253,7 @@ class ProtectedSigningIdentityStoreTest {
     }
 
     private fun store(directory: File, keys: TestKeys) =
-        IdentityStoreCore(FileIdentityBlobStorage(directory), keys)
+        IdentityStoreCore(FileIdentityBlobStorage(directory, syncDirectory = {}), keys)
 
     private fun hex(value: String): ByteArray =
         value.chunked(2).map { it.toInt(16).toByte() }.toByteArray()

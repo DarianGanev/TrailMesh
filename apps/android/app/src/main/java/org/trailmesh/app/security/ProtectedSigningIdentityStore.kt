@@ -4,6 +4,7 @@ import java.io.File
 import java.security.SecureRandom
 import javax.crypto.SecretKey
 
+/** Raw Ed25519 public key (32 bytes) and signatures (64 bytes), without wire-format prefixes. */
 interface ReportSigner {
     val publicKey: ByteArray
 
@@ -36,14 +37,20 @@ internal interface IdentityBlobStorage {
     fun createNew(bytes: ByteArray)
 }
 
-internal class FileIdentityBlobStorage(private val directory: File) : IdentityBlobStorage {
+internal class FileIdentityBlobStorage(
+    private val directory: File,
+    private val syncDirectory: (File) -> Unit = ::syncAndroidDirectory,
+) : IdentityBlobStorage {
     companion object {
         private val locks = java.util.concurrent.ConcurrentHashMap<String, Any>()
     }
 
     override fun <T> exclusively(block: () -> T): T =
         synchronized(locks.getOrPut(directory.canonicalPath) { Any() }) {
-            check(directory.isDirectory || directory.mkdirs())
+            if (!directory.isDirectory) {
+                check(directory.mkdirs() || directory.isDirectory)
+                syncDirectory(requireNotNull(directory.parentFile))
+            }
             java.io.RandomAccessFile(File(directory, "identity.lock"), "rw").use { file ->
                 file.channel.lock().use { block() }
             }
@@ -70,9 +77,24 @@ internal class FileIdentityBlobStorage(private val directory: File) : IdentityBl
                 destination.toPath(),
                 java.nio.file.StandardCopyOption.ATOMIC_MOVE,
             )
+            syncDirectory(directory)
         } finally {
             temporary.delete()
         }
+    }
+}
+
+private fun syncAndroidDirectory(directory: File) {
+    val descriptor =
+        android.system.Os.open(
+            directory.path,
+            android.system.OsConstants.O_RDONLY,
+            0,
+        )
+    try {
+        android.system.Os.fsync(descriptor)
+    } finally {
+        android.system.Os.close(descriptor)
     }
 }
 
@@ -132,9 +154,18 @@ internal class IdentityStoreCore(
                 javax.crypto.spec.GCMParameterSpec(128, record.copyOfRange(1, 13)),
             )
             cipher.updateAAD(aad)
-            cipher.doFinal(record.copyOfRange(13, record.size)).also { require(it.size == 32) }
-        } catch (_: Exception) {
+            val plain = cipher.doFinal(record.copyOfRange(13, record.size))
+            if (plain.size != 32) {
+                plain.fill(0)
+                throw IdentityException(IdentityFailure.CORRUPT_IDENTITY)
+            }
+            plain
+        } catch (failure: IdentityException) {
+            throw failure
+        } catch (_: javax.crypto.AEADBadTagException) {
             throw IdentityException(IdentityFailure.CORRUPT_IDENTITY)
+        } catch (_: Exception) {
+            throw IdentityException(IdentityFailure.KEY_UNAVAILABLE)
         }
     }
 
@@ -188,9 +219,13 @@ class ProtectedSigningIdentityStore(context: android.content.Context) {
             AndroidWrappingKeys(),
         )
 
+    /** Creates once off the main thread; existing or orphaned wrapping keys are never replaced. */
     suspend fun createNew(): ReportSigner =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { core().createNew() }
 
+    /**
+     * Loads an authenticated identity; missing, unavailable and corrupt identities fail explicitly.
+     */
     suspend fun loadExisting(): ReportSigner =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { core().loadExisting() }
 }

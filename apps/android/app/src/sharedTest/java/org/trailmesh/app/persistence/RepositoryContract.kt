@@ -15,6 +15,47 @@ abstract class RepositoryContract {
     protected abstract fun resource(name: String): ByteArray
 
     @Test
+    fun invalidDraftsAreRejectedBeforeSigningWithoutUncheckedCanonicalizationErrors() =
+        runBlocking {
+            val (_, now) = fixture()
+            val repo = ReportRepository.open(context, name())
+            val key = signer()
+            var signs = 0
+            val spy =
+                object : ReportSigner {
+                    override val publicKey
+                        get() = key.publicKey
+
+                    override fun sign(message: ByteArray): ByteArray {
+                        signs++
+                        return key.sign(message)
+                    }
+                }
+            val good = draft(now)
+            val bad =
+                listOf(
+                    good.copy(status = "flowing", category = "note"),
+                    good.copy(observedAt = now + 1),
+                    good.copy(observedAt = Long.MAX_VALUE),
+                    good.copy(expiresAt = now + 259_200_001),
+                    good.copy(expiresAt = now),
+                    good.copy(maxHops = 13),
+                    good.copy(latE7 = 900_000_001),
+                    good.copy(lonE7 = 1_800_000_001),
+                    good.copy(accuracyM = -1),
+                    good.copy(note = "x".repeat(501)),
+                    good.copy(note = "\ud800"),
+                    good.copy(note = "\udc00"),
+                )
+            for (draft in bad) {
+                assertEquals(StoreOutcome.Rejected("invalid"), repo.author(draft, spy, now))
+                assertEquals(0, signs)
+            }
+            assertEquals(0, count(repo, "bundles"))
+            repo.close()
+        }
+
+    @Test
     fun cancellationWhileQueuedBehindAnotherTransactionPreventsAdmission() = runBlocking {
         val (wire, now) = fixture()
         val repo = ReportRepository.open(context, name())
