@@ -14,7 +14,7 @@ The map-first screen hierarchy, accessibility direction, and trail-session inter
 
 M1 transport feasibility is complete. The repository contains native iPhone and Android transport probes, a frozen signed-bundle protocol fixture, and shared Python validation tools. M2 adds durable signed reports, expiry and deduplication, three-device relaying, and the first map/report interface.
 
-The iPhone product includes a GRDB report repository with Keychain-protected signing identity and tests against the [signed public-report admission profile](protocol/report-v1-profile.json), the Python reference validator, and [shared valid/invalid vectors](protocol/report-v1-vectors.json). The Android Room repository and report transport integration remain separate work. The probes still exchange generated test bytes.
+The native products include GRDB (iPhone) and Room (Android) report repositories with protected signing identities and tests against the [signed public-report admission profile](protocol/report-v1-profile.json), the Python reference validator, and [shared valid/invalid vectors](protocol/report-v1-vectors.json). Android encrypts its Ed25519 seed with a non-exportable Android Keystore AES key; the Ed25519 seed itself is not a non-exportable Keystore key. Report transport integration remains separate work. The probes still exchange generated test bytes.
 
 Inspect a shared case without changing its literal bytes with `python -m tools.protocol.inspect_report_vector frozen-v1`. Shared-vector tests do not establish physical iPhone-to-Android report exchange.
 
@@ -32,6 +32,7 @@ The product flow is: prepare a map, start a trail session once, and let eligible
 
 ```text
 apps/ios/                     iPhone product target and signed-report repository
+apps/android/                 Android product target and Room report repository
 protocol/                     Signed-report admission profile, fixtures, and wire vectors
 tools/protocol/               Admission, canonicalization, and signature reference tests
 tools/transport/              Exchange contracts and redacted-log validation
@@ -65,7 +66,18 @@ python -m unittest discover -s tools/transport -p "test_*.py"
 
 On a Mac with Xcode 16.4 and Swift 6.1, run the iPhone product repository tests with `cd apps/ios && swift test`. The product app project is `apps/ios/Product/TrailMesh.xcodeproj`; its bundle identifier and unsigned CI artifact are distinct from the transport probe. CI also tests the repository on an iPhone simulator. The product target is a development build and does not yet exchange reports over radio.
 
-Build and test Android with JDK 17 and the Android SDK configured:
+Build and test the Android product with JDK 17 and the Android SDK configured:
+
+```powershell
+cd apps/android
+.\gradlew.bat testDebugUnitTest assembleDebug assembleDebugAndroidTest
+# With an API 26+ emulator connected:
+.\gradlew.bat connectedDebugAndroidTest
+```
+
+See [Android product storage](apps/android/README.md) for repository APIs, migrations, key protection, test scope, and limitations. The product application ID is `org.trailmesh.app`; it coexists with the transport probe.
+
+Build the independent Android transport probe:
 
 ```powershell
 cd probes/transport/android
@@ -76,7 +88,7 @@ The APK is generated at `app/build/outputs/apk/debug/app-debug.apk`. Successful 
 
 ## Next work: M2 durable exchange
 
-1. Build on the [signed-report admission profile](https://github.com/DarianGanev/TrailMesh/issues/48) and [iPhone GRDB store](https://github.com/DarianGanev/TrailMesh/issues/49), then complete the [Android Room store](https://github.com/DarianGanev/TrailMesh/issues/50) under [storage issue #3](https://github.com/DarianGanev/TrailMesh/issues/3).
+1. Build on the [signed-report admission profile](https://github.com/DarianGanev/TrailMesh/issues/48), [iPhone GRDB store](https://github.com/DarianGanev/TrailMesh/issues/49), and [Android Room store](https://github.com/DarianGanev/TrailMesh/issues/50) to implement [durable inventory and ACK sync](https://github.com/DarianGanev/TrailMesh/issues/51) under [storage issue #3](https://github.com/DarianGanev/TrailMesh/issues/3).
 2. [Demonstrate A → B → C relaying](https://github.com/DarianGanev/TrailMesh/issues/4) with the original sender out of range.
 3. [Build the map and report workflows](https://github.com/DarianGanev/TrailMesh/issues/26) using the interface requirements in the specification.
 4. [Integrate the one-start public-report session](https://github.com/DarianGanev/TrailMesh/issues/27), with relevance filtering and bounded recovery.

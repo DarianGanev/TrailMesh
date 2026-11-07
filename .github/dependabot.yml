@@ -44,3 +44,20 @@ updates:
         update-types:
           - minor
           - patch
+
+  - package-ecosystem: gradle
+    directory: /apps/android
+    target-branch: develop
+    schedule:
+      interval: weekly
+    labels:
+      - infrastructure
+      - platform-android
+    open-pull-requests-limit: 3
+    groups:
+      android-product-minor-and-patch:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
