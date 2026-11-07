@@ -111,7 +111,8 @@ private constructor(
     }
 
     private suspend fun <T> transaction(block: (SupportSQLiteDatabase) -> T): T {
-        currentCoroutineContext().ensureActive()
+        val caller = currentCoroutineContext()
+        caller.ensureActive()
         // Once admitted to the transaction, cancellation must not discard a committed outcome.
         return access.withLock {
             currentCoroutineContext().ensureActive()
@@ -119,7 +120,12 @@ private constructor(
                 withContext(Dispatchers.IO) {
                     try {
                         database.runInTransaction(
-                            Callable { block(database.openHelper.writableDatabase) },
+                            Callable {
+                                // SQLite may have waited for another instance or process before
+                                // acquiring its write lock. Admission starts only after this check.
+                                caller.ensureActive()
+                                block(database.openHelper.writableDatabase)
+                            },
                         )
                     } catch (failure: android.database.sqlite.SQLiteException) {
                         // A failed COMMIT can leave Android's connection with an open SQL

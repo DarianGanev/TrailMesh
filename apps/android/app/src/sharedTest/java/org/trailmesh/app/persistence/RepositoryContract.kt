@@ -100,6 +100,51 @@ abstract class RepositoryContract {
     }
 
     @Test
+    fun cancellationWhileWaitingForAnotherConnectionPreventsAdmission() = runBlocking {
+        val (wire, now) = fixture()
+        val file = name()
+        val firstRepo = ReportRepository.open(context, file)
+        val secondRepo = ReportRepository.open(context, file)
+        val root = StrictJSON.parse(resource("report-v1-vectors.json"), 1_000_000, 16)
+        val other =
+            (root["cases"] as ReportJSON.ArrayValue).values.first {
+                it["name"]!!.text == "unicode-and-boundaries"
+            }
+        val second = Base64.getDecoder().decode(other["wire_base64"]!!.text)
+        val entered = CompletableDeferred<Unit>()
+        val waiting = CompletableDeferred<Unit>()
+        val release = java.util.concurrent.CountDownLatch(1)
+        var calls = 0
+        val first =
+            async(Dispatchers.Default) {
+                firstRepo.ingest(wire) {
+                    if (calls++ > 0) {
+                        entered.complete(Unit)
+                        check(release.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                    }
+                    now
+                }
+            }
+        entered.await()
+        val queued =
+            launch(Dispatchers.Default) {
+                secondRepo.ingest(second) {
+                    waiting.complete(Unit)
+                    now
+                }
+            }
+        waiting.await()
+        delay(200)
+        queued.cancel()
+        release.countDown()
+        withTimeout(5000) { queued.join() }
+        assertTrue(first.await() is StoreOutcome.Stored)
+        assertEquals(1, count(firstRepo, "bundles"))
+        firstRepo.close()
+        secondRepo.close()
+    }
+
+    @Test
     fun missingPayloadIsNeverAcknowledgedAsDuplicate() = runBlocking {
         val (wire, now) = fixture()
         val repo = ReportRepository.open(context, name())
