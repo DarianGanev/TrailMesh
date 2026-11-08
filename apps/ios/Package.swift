@@ -10,6 +10,6 @@ let package = Package(
     ],
     targets: [
         .target(name: "TrailMeshReports", dependencies: [.product(name: "GRDB", package: "GRDB.swift")]),
-        .testTarget(name: "TrailMeshReportsTests", dependencies: ["TrailMeshReports", .product(name: "GRDB", package: "GRDB.swift")], resources: [.copy("Fixtures/report-v1-vectors.json")])
+        .testTarget(name: "TrailMeshReportsTests", dependencies: ["TrailMeshReports", .product(name: "GRDB", package: "GRDB.swift")], resources: [.copy("Fixtures/report-v1-vectors.json"), .copy("Fixtures/exchange-v1-vectors.json")])
     ]
 )

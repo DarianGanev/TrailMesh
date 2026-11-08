@@ -54,9 +54,10 @@ final class ReportMigrationTests: XCTestCase {
         }
         XCTAssertEqual(before.0.count, 1)
         try await v1.write { db in
+            try db.execute(sql: "DROP TABLE exchange_cursor; DROP TABLE report_forwarding")
             try db.execute(sql: "DROP TABLE quarantined_ids")
             try db.execute(sql: "DROP TABLE repository_clock")
-            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('v2', 'v3')")
+            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('v2', 'v3', 'v4')")
         }
         let upgraded = try ReportDatabase.open(path: path)
         let after = try await upgraded.read { db -> ([String], [String]) in
@@ -137,8 +138,9 @@ final class ReportMigrationTests: XCTestCase {
         let database = try ReportDatabase.open(path: path)
         try await database.write { db in
             // Simulate v1 metadata with a conflicting table so migration v2 must fail.
+            try db.execute(sql: "DROP TABLE exchange_cursor; DROP TABLE report_forwarding")
             try db.execute(sql: "DROP TABLE quarantined_ids")
-            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('v2', 'v3')")
+            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('v2', 'v3', 'v4')")
         }
         XCTAssertThrowsError(try ReportDatabase.open(path: path))
         let saved = try await database.read { db -> (Data?, Int) in
