@@ -147,7 +147,8 @@ jobs:
       - name: Verify shared vectors and pre-release schema fixtures exist
         run: |
           test -s ../../protocol/report-v1-vectors.json
-          for version in 1 2 3; do
+          test -s ../../protocol/exchange-v1-vectors.json
+          for version in 1 2 3 4; do
             test -s "app/schemas/org.trailmesh.app.persistence.ReportDatabase/$version.json"
           done
       - name: Test repository and build product and instrumentation APKs
@@ -164,6 +165,7 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check -r ../../tools/protocol/requirements.txt
           PYTHONPATH=../.. python -c 'from pathlib import Path; from tools.protocol.report import validate_report, ValidatedReport; result=validate_report(Path("app/build/interop/android-authored.json").read_bytes(), now_ms=1789647000000); assert isinstance(result, ValidatedReport), result'
+          PYTHONPATH=../.. python -m tools.transport.report_exchange --verify-native app/build/interop/android-exchange-frames.json
       - name: Upload Android product artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -173,6 +175,7 @@ jobs:
             apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             apps/android/app/build/test-results/testDebugUnitTest/
             apps/android/app/build/interop/android-authored.json
+            apps/android/app/build/interop/android-exchange-frames.json
           if-no-files-found: error
           retention-days: 7
 
@@ -357,10 +360,13 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
           swift --version
       - name: Check the bundled vectors match the protocol contract
-        run: cmp ../../protocol/report-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/report-v1-vectors.json
+        run: |
+          cmp ../../protocol/report-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/report-v1-vectors.json
+          cmp ../../protocol/exchange-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/exchange-v1-vectors.json
       - name: Test the product repository
         env:
           TRAILMESH_TEST_REPORT_OUTPUT: ${{ runner.temp }}/trailmesh-authored-report.json
+          TRAILMESH_EXCHANGE_EXPORT: ${{ runner.temp }}/swift-exchange-frames.json
         shell: bash
         run: |
           set -o pipefail
@@ -381,6 +387,7 @@ jobs:
               raise SystemExit(f'Python rejected Swift-authored test report: {result}')
           print('Python verified the Swift-authored public report')
           PY
+          PYTHONPATH=../.. "$RUNNER_TEMP/trailmesh-python/bin/python" -m tools.transport.report_exchange --verify-native "$RUNNER_TEMP/swift-exchange-frames.json"
 
   ios-product-simulator:
     name: iOS product simulator tests
@@ -402,6 +409,7 @@ jobs:
         shell: bash
         run: |
           cmp ../../protocol/report-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/report-v1-vectors.json
+          cmp ../../protocol/exchange-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/exchange-v1-vectors.json
           simulator_id="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; m=sorted(((r,x["udid"]) for r,es in d.items() if "iOS" in r for x in es if x["name"] == "iPhone 16"),reverse=True); print(m[0][1] if m else "")')"
           test -n "$simulator_id"
           echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
@@ -450,6 +458,7 @@ jobs:
         run: |
           set -o pipefail
           cmp ../../protocol/report-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/report-v1-vectors.json
+          cmp ../../protocol/exchange-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/exchange-v1-vectors.json
           xcodebuild test -project Product/TrailMesh.xcodeproj -scheme TrailMesh \
             -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
             -derivedDataPath "$RUNNER_TEMP/TrailMeshProductMinimum" \
