@@ -21,6 +21,8 @@ Inventory uses bounded verified candidate pages. Schema v4 persists a rotating i
 
 An explicit emulator performance run is available with instrumentation class `org.trailmesh.app.persistence.ExchangePerformanceInstrumentedTest` and argument `mode=benchmark`. It seeds near the 25 MiB logical budget with real signed synthetic reports and measures full queries, bounded inventory pages, and concurrent ingest delay. This opt-in measurement is separate from ordinary correctness tests; report device, API, source/build and emulator limitations with its results.
 
+The [API 26 measurement](benchmark-results/report-store-api26-v1.json) records 5,154 reports using 26,146,242 logical bytes. Full verified queries took about 12 seconds and delayed a concurrent ingest by about 12 seconds; an eight-candidate inventory page took about 26 ms. This is one emulator run, not a physical-device guarantee. Before map/session radio integration, use bounded map/history pagination or a reviewed verification snapshot strategy that preserves signed-row integrity and clock tracking. Encounter timeouts must remain active during queued storage work.
+
 ## Repository contract
 
 `ReportRepository.open(context, databaseName)` opens Room and applies non-destructive migrations off the UI thread. `author` creates an immutable signed report and commits the bundle, report projection, relay/outbox state, and replay marker atomically. `ingest` verifies strict UTF-8/JSON, canonical bytes, content ID, Ed25519 signature and freshness before a short transaction rechecks expiry, duplicates, budgets and the clock. `Stored` is returned only after commit; signature authenticity does not establish that an observation is true.

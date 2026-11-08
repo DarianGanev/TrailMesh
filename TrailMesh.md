@@ -598,6 +598,8 @@ For an offered hop budget `H`, the receiving store saves `H - 1` in additive sch
 
 The caller supplies monotonic elapsed time for five-second negotiation, ten-second idle and thirty-second encounter limits and must drive timeout ticks when the link is quiet. Interrupted partial objects are discarded and retried from byte zero after reconnect. Completed objects are reconciled against the repository. Native fake-link tests exercise this contract; physical radio/session integration and relay evidence remain #27 and #4.
 
+The [API 26 storage measurement](apps/android/benchmark-results/report-store-api26-v1.json) uses 5,154 signed synthetic reports near the 25 MiB logical budget. Full verified map/history/forwarding queries held the repository lock for about 12 seconds and delayed concurrent ingestion; a bounded eight-candidate inventory page took about 26 ms. This emulator result requires a map/history pagination or reviewed snapshot strategy before UI/radio integration in #26/#27. Preserve integrity and clock checks while addressing contention. The measurement does not establish physical-device performance or radio behavior.
+
 ## 11. Bundle format and validation
 
 ### 11.1 Immutable and mutable separation

@@ -1,0 +1,50 @@
+{
+  "evidence_version": 1,
+  "kind": "emulator-measurement",
+  "date": "2026-11-08",
+  "source_commit": "b1b7cf27af32259b5694c35a9382f147a87955db",
+  "source_note": "Android runtime/test source and build configuration match this commit. Later documentation and iPhone edits do not alter these measured APKs.",
+  "device": {
+    "avd": "TrailMesh_API26",
+    "os": "Android 8.0.0",
+    "sdk": 26,
+    "abi": "x86_64",
+    "acceleration": "WHPX",
+    "graphics": "swiftshader_indirect",
+    "radio_exchange": false
+  },
+  "apk_sha256": {
+    "product": "0f1706eaa0be28f5ec8dfc0091961d6499a82e57f3b402e9112a5ee8117b284e",
+    "instrumentation": "4154bd8298b43506a20a68b4d151a2de74366b57409b826aafac9f82508103c1"
+  },
+  "method": {
+    "test_class": "org.trailmesh.app.persistence.ExchangePerformanceInstrumentedTest",
+    "argument": "mode=benchmark",
+    "data": "5,154 real Ed25519-signed synthetic public reports with 500-codepoint notes and unique event IDs/nonces. Validate each before seeding in one background transaction. Near the 25 MiB logical signed-data budget; SQLite page/index/WAL overhead is additional.",
+    "measurements": "One run: full map/history/forwarding queries, a page of eight inventory candidates, then concurrent history query and remote ingest. Timed with elapsedRealtimeNanos. No physical-device or radio claims.",
+    "reproduce": "Build/install product and test APKs; adb shell am instrument -w -r -e class org.trailmesh.app.persistence.ExchangePerformanceInstrumentedTest -e mode benchmark org.trailmesh.app.test/androidx.test.runner.AndroidJUnitRunner"
+  },
+  "metrics": {
+    "rows": 5154,
+    "logical_bytes": 26146242,
+    "seed_ms": 28165.9381,
+    "map_ms": 12194.6718,
+    "history_ms": 12184.4971,
+    "forwarding_ms": 11658.9628,
+    "bounded_page_ms": 25.7426,
+    "concurrent_history_ms": 12053.25,
+    "concurrent_ingest_ms": 12044.9094,
+    "sdk": 26,
+    "timing": "elapsedRealtimeNanos"
+  },
+  "interpretation": {
+    "full_queries": "Signature/projection verification holds the transaction lock for about 12 seconds and delays concurrent ingest. This exceeds the 10-second encounter idle deadline. Retain cancellation/deadline checks and retry without false stored ACKs.",
+    "bounded_inventory": "A page of eight inventory candidates takes about 26 ms here. Exchange uses bounded inventory and indexed lookups by ID instead of full forwardable scans.",
+    "integration_gate": "Before map/session radio integration (#26/#27), measure physical targets and use bounded map/history pages or a reviewed verification snapshot that preserves integrity, clock tracking and committed outcomes.",
+    "limitations": [
+      "One emulator run; no percentiles or physical-device guarantee.",
+      "Host load, JIT/GC, virtualization and colocated synthetic reports affect timing.",
+      "Storage/CPU evidence only; no radio, lifecycle or battery evidence."
+    ]
+  }
+}
