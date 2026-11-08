@@ -173,7 +173,7 @@ abstract class RepositoryContract {
             repo.ingest(wire) {
                 if (calls++ > 0)
                     repo.database.openHelper.writableDatabase.execSQL(
-                        "PRAGMA defer_foreign_keys=ON",
+                        "PRAGMA defer_foreign_keys=ON"
                     )
                 now
             }
@@ -301,7 +301,7 @@ abstract class RepositoryContract {
         val repo = ReportRepository.open(context, name())
         val key = signer()
         for (note in listOf("a\u0000b", "")) assertTrue(
-            repo.author(draft(now, note), key, now) is StoreOutcome.Stored,
+            repo.author(draft(now, note), key, now) is StoreOutcome.Stored
         )
         assertEquals(setOf("a\u0000b", ""), repo.reports(now).map { it.note }.toSet())
         val wires = repo.forwardable(now)
@@ -633,6 +633,73 @@ abstract class RepositoryContract {
         repo.close()
     }
 
+    @Test
+    fun transferredHopBudgetSurvivesRestartAndNeverIncreases() = runBlocking {
+        val (wire, now) = fixture()
+        val file = name()
+        var repo = ReportRepository.open(context, file)
+        assertTrue(repo.ingestTransferred(wire, 1) { now } is StoreOutcome.Stored)
+        assertEquals(1, repo.inventoryPage(null, 8, now).reports.single().hops)
+        assertTrue(repo.ingestTransferred(wire, 8) { now } is StoreOutcome.Duplicate)
+        assertEquals(1, repo.inventoryPage(null, 8, now).reports.single().hops)
+        repo.ingestTransferred(wire, 0) { now }
+        repo.close()
+        repo = ReportRepository.open(context, file)
+        assertTrue(repo.inventoryPage(null, 8, now).reports.isEmpty())
+        assertTrue(repo.forwardable(now).isEmpty())
+        assertEquals(1, repo.reports(now).size)
+        repo.close()
+    }
+
+    @Test
+    fun inventoryAdvancesPastFilteredCandidatesAndValidatesHopMetadata() = runBlocking {
+        val (_, now) = fixture()
+        val repo = ReportRepository.open(context, name())
+        repeat(10) { repo.author(draft(now), signer(), now) }
+        sql(repo, "INSERT INTO report_forwarding SELECT bundle_id,0 FROM bundles")
+        val page = repo.inventoryPage(null, 8, now)
+        assertTrue(page.reports.isEmpty())
+        assertTrue(page.hasMore)
+        assertNotNull(page.nextCursor)
+        assertFalse(repo.inventoryPage(page.nextCursor, 8, now).hasMore)
+        sql(repo, "DROP TRIGGER report_forwarding_check_update")
+        sql(repo, "UPDATE report_forwarding SET remaining_hops='bad'")
+        try {
+            repo.inventoryPage(null, 8, now)
+            fail("corrupt hop metadata")
+        } catch (e: ReportStoreException) {
+            assertEquals(StoreFailure.CORRUPT_STORED_REPORT, e.reason)
+        }
+        repo.close()
+    }
+
+    @Test
+    fun inventoryRotationSurvivesRestartAndReachesBeyondFirst64() = runBlocking {
+        val (_, now) = fixture()
+        val file = name()
+        var repo = ReportRepository.open(context, file)
+        val key = signer()
+        repeat(70) { repo.author(draft(now), key, now) }
+        val adapter = org.trailmesh.app.exchange.RepositoryExchangeStore(repo)
+        var cursor = adapter.initialCursor(now)
+        val first = mutableSetOf<String>()
+        repeat(8) {
+            val page = adapter.inventoryPage(cursor, 8, now)
+            first.addAll(page.reports.map { it.id })
+            cursor = page.nextCursor
+        }
+        assertEquals(64, first.size)
+        repo.close()
+        repo = ReportRepository.open(context, file)
+        val next = org.trailmesh.app.exchange.RepositoryExchangeStore(repo)
+        assertEquals(cursor, next.initialCursor(now))
+        val page = next.inventoryPage(next.initialCursor(now), 8, now)
+        assertEquals(6, page.reports.size)
+        assertTrue(page.reports.none { it.id in first })
+        assertNull(next.initialCursor(now))
+        repo.close()
+    }
+
     private suspend fun legacy(version: Int): String =
         withContext(Dispatchers.IO) {
             val file = name()
@@ -642,7 +709,7 @@ abstract class RepositoryContract {
                         String(
                             resource("org.trailmesh.app.persistence.ReportDatabase/$version.json"),
                             Charsets.UTF_8,
-                        ),
+                        )
                     )
                     .getJSONObject("database")
             val db = context.openOrCreateDatabase(file, 0, null)
@@ -658,7 +725,7 @@ abstract class RepositoryContract {
                             indexes
                                 .getJSONObject(j)
                                 .getString("createSql")
-                                .replace("\u0024{TABLE_NAME}", table),
+                                .replace("\u0024{TABLE_NAME}", table)
                         )
                 }
                 val setup = schema.getJSONArray("setupQueries")
@@ -716,7 +783,7 @@ abstract class RepositoryContract {
     fun bothPreReleaseSchemasMigrateWithoutChangingSignedBlobsOrProjection() = runBlocking {
         val (wire, now) = fixture()
         val verified = ReportAdmission.validate(wire, now).verified!!
-        for (version in listOf(1, 2)) {
+        for (version in listOf(1, 2, 3)) {
             val file = legacy(version)
             val repo = ReportRepository.open(context, file)
             assertEquals(StoreOutcome.Duplicate(verified.bundleID), repo.ingest(wire, now))
@@ -741,8 +808,8 @@ abstract class RepositoryContract {
                                 "reports_location",
                                 "relay_expiry",
                                 "seen_retention",
-                            ),
-                        ),
+                            )
+                        )
                     )
                 }
             }
@@ -766,6 +833,7 @@ abstract class RepositoryContract {
                             }
                         },
                         ReportDatabase.MIGRATION_2_3,
+                        ReportDatabase.MIGRATION_3_4,
                     )
                     .build()
             try {
@@ -795,7 +863,7 @@ abstract class RepositoryContract {
         repo.ingest(wire, now)
         repo.close()
         withContext(Dispatchers.IO) {
-            context.openOrCreateDatabase(file, 0, null).use { it.version = 4 }
+            context.openOrCreateDatabase(file, 0, null).use { it.version = 5 }
         }
         try {
             ReportRepository.open(context, file)
@@ -803,7 +871,7 @@ abstract class RepositoryContract {
         } catch (_: IllegalStateException) {}
         withContext(Dispatchers.IO) {
             context.openOrCreateDatabase(file, 0, null).use { db ->
-                assertEquals(4, db.version)
+                assertEquals(5, db.version)
                 db.rawQuery("SELECT original_wire FROM bundles", null).use {
                     it.moveToFirst()
                     assertArrayEquals(wire, it.getBlob(0))

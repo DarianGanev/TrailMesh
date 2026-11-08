@@ -34,7 +34,7 @@ internal data class BundleRow(
                 parentColumns = ["bundle_id"],
                 childColumns = ["bundle_id"],
                 onDelete = ForeignKey.CASCADE,
-            ),
+            )
         ],
     indices =
         [
@@ -64,7 +64,7 @@ internal data class ProjectionRow(
                 parentColumns = ["bundle_id"],
                 childColumns = ["bundle_id"],
                 onDelete = ForeignKey.CASCADE,
-            ),
+            )
         ],
     indices = [Index(value = ["local_expiry_ms"], name = "relay_expiry")],
 )
@@ -97,10 +97,27 @@ internal data class ClockRow(@PrimaryKey val singleton: Int, val last_now_ms: Lo
                 parentColumns = ["bundle_id"],
                 childColumns = ["bundle_id"],
                 onDelete = ForeignKey.CASCADE,
-            ),
+            )
         ],
 )
 internal data class QuarantineRow(@PrimaryKey val bundle_id: String, val rate_hold_until_ms: Long)
+
+@Entity(
+    tableName = "report_forwarding",
+    foreignKeys =
+        [
+            ForeignKey(
+                entity = BundleRow::class,
+                parentColumns = ["bundle_id"],
+                childColumns = ["bundle_id"],
+                onDelete = ForeignKey.CASCADE,
+            )
+        ],
+)
+internal data class ForwardingRow(@PrimaryKey val bundle_id: String, val remaining_hops: Int)
+
+@Entity(tableName = "exchange_cursor")
+internal data class ExchangeCursorRow(@PrimaryKey val singleton: Int, val after_id: String?)
 
 @Dao
 internal interface ReportDao {
@@ -123,8 +140,10 @@ internal interface ReportDao {
             SeenRow::class,
             ClockRow::class,
             QuarantineRow::class,
+            ForwardingRow::class,
+            ExchangeCursorRow::class,
         ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 internal abstract class ReportDatabase : RoomDatabase() {
@@ -135,10 +154,10 @@ internal abstract class ReportDatabase : RoomDatabase() {
             object : Migration(1, 2) {
                 override fun migrate(db: SupportSQLiteDatabase) {
                     db.execSQL(
-                        "CREATE TABLE IF NOT EXISTS repository_clock (singleton INTEGER NOT NULL, last_now_ms INTEGER NOT NULL, PRIMARY KEY(singleton))",
+                        "CREATE TABLE IF NOT EXISTS repository_clock (singleton INTEGER NOT NULL, last_now_ms INTEGER NOT NULL, PRIMARY KEY(singleton))"
                     )
                     db.execSQL(
-                        "INSERT INTO repository_clock SELECT 1, COALESCE(MAX(admitted_at_ms),0) FROM bundles",
+                        "INSERT INTO repository_clock SELECT 1, COALESCE(MAX(admitted_at_ms),0) FROM bundles"
                     )
                 }
             }
@@ -146,7 +165,19 @@ internal abstract class ReportDatabase : RoomDatabase() {
             object : Migration(2, 3) {
                 override fun migrate(db: SupportSQLiteDatabase) {
                     db.execSQL(
-                        "CREATE TABLE IF NOT EXISTS quarantined_ids (bundle_id TEXT NOT NULL, rate_hold_until_ms INTEGER NOT NULL, PRIMARY KEY(bundle_id), FOREIGN KEY(bundle_id) REFERENCES bundles(bundle_id) ON UPDATE NO ACTION ON DELETE CASCADE)",
+                        "CREATE TABLE IF NOT EXISTS quarantined_ids (bundle_id TEXT NOT NULL, rate_hold_until_ms INTEGER NOT NULL, PRIMARY KEY(bundle_id), FOREIGN KEY(bundle_id) REFERENCES bundles(bundle_id) ON UPDATE NO ACTION ON DELETE CASCADE)"
+                    )
+                }
+            }
+
+        val MIGRATION_3_4 =
+            object : Migration(3, 4) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL(
+                        "CREATE TABLE IF NOT EXISTS exchange_cursor (singleton INTEGER NOT NULL, after_id TEXT, PRIMARY KEY(singleton))"
+                    )
+                    db.execSQL(
+                        "CREATE TABLE IF NOT EXISTS report_forwarding (bundle_id TEXT NOT NULL, remaining_hops INTEGER NOT NULL CHECK(typeof(remaining_hops)='integer' AND remaining_hops BETWEEN 0 AND 12), PRIMARY KEY(bundle_id), FOREIGN KEY(bundle_id) REFERENCES bundles(bundle_id) ON UPDATE NO ACTION ON DELETE CASCADE)"
                     )
                 }
             }
@@ -157,7 +188,7 @@ internal abstract class ReportDatabase : RoomDatabase() {
                     ReportDatabase::class.java,
                     name,
                 )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .addCallback(
                     object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
@@ -178,13 +209,15 @@ internal abstract class ReportDatabase : RoomDatabase() {
                                     "relay_state" to
                                         "NEW.max_hops BETWEEN 0 AND 12 AND NEW.outbox IN(0,1)",
                                     "repository_clock" to "NEW.singleton=1 AND NEW.last_now_ms>=0",
+                                    "report_forwarding" to
+                                        "typeof(NEW.remaining_hops)='integer' AND NEW.remaining_hops BETWEEN 0 AND 12",
                                 )
                             db.beginTransaction()
                             try {
                                 for ((table, condition) in checks) for (operation in
                                     listOf("INSERT", "UPDATE")) {
                                     db.execSQL(
-                                        "CREATE TRIGGER IF NOT EXISTS ${table}_check_${operation.lowercase()} BEFORE $operation ON $table WHEN NOT($condition) BEGIN SELECT RAISE(ABORT,'report constraint'); END",
+                                        "CREATE TRIGGER IF NOT EXISTS ${table}_check_${operation.lowercase()} BEFORE $operation ON $table WHEN NOT($condition) BEGIN SELECT RAISE(ABORT,'report constraint'); END"
                                     )
                                 }
                                 db.setTransactionSuccessful()
@@ -192,7 +225,7 @@ internal abstract class ReportDatabase : RoomDatabase() {
                                 db.endTransaction()
                             }
                         }
-                    },
+                    }
                 )
                 .build()
                 .also { database ->
