@@ -15,7 +15,7 @@ public struct ExchangeOutgoing: Sendable {
 public protocol ReportExchangeStore: Sendable {
     func inventoryPage(after: String?, limit: Int, now: Int64) async throws -> ExchangeInventoryPage
     func currentIDs(_ ids: [String], now: Int64) async throws -> Set<String>
-    func loadOutgoing(_ id: String, now: Int64) async throws -> ExchangeOutgoing?
+    func loadOutgoing(_ id: String, clock: @Sendable () -> Int64) async throws -> ExchangeOutgoing?
     func ingestTransferred(_ wire: Data, offeredHops: Int, clock: @Sendable () -> Int64) async throws -> ReportStoreOutcome
 }
 
@@ -63,10 +63,16 @@ extension ReportRepository: ReportExchangeStore {
         }
     }
     public func loadOutgoing(_ id: String, now: Int64) throws -> ExchangeOutgoing? {
+        try loadOutgoing(id, clock: { now })
+    }
+    public func loadOutgoing(_ id: String, clock: @Sendable () -> Int64) throws -> ExchangeOutgoing? {
         try Task.checkCancellation()
+        let validationNow = clock()
         _ = try ExchangeWire.idBytes(id)
-        guard (0...9_007_199_254_740_991).contains(now) else { throw ReportStoreError.clock }
+        guard (0...9_007_199_254_740_991).contains(validationNow) else { throw ReportStoreError.clock }
         return try database.write { db in
+            let now = clock()
+            guard (0...9_007_199_254_740_991).contains(now), now >= validationNow else { throw ReportStoreError.clock }
             try Self.observeClock(db, now: now)
             guard let row = try Row.fetchOne(db, sql: """
                 SELECT \(Self.storedColumns) FROM bundles b

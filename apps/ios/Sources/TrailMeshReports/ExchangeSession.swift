@@ -4,6 +4,8 @@ import Foundation
 public struct ExchangeAction: Sendable {
     public let generation: UInt64
     public let bytes: Data
+    fileprivate let terminal: Bool
+    fileprivate init(generation: UInt64, bytes: Data, terminal: Bool = false) { self.generation = generation; self.bytes = bytes; self.terminal = terminal }
 }
 public actor ExchangeSession {
     private let store: any ReportExchangeStore
@@ -36,7 +38,7 @@ public actor ExchangeSession {
     private struct Incoming { let transfer: Int; let descriptor: ExchangeDescriptor; var bytes: Data; var received: [Bool]; var count = 0 }
 
     public init(store: any ReportExchangeStore, nonce: Data, generation: UInt64, wallClock: @escaping @Sendable () -> Int64) { self.store = store; self.nonce = nonce; self.generation = generation; self.wallClock = wallClock }
-    public func isLive(_ action: ExchangeAction) -> Bool { action.generation == generation && !invalidated }
+    public func isLive(_ action: ExchangeAction) -> Bool { action.generation == generation && !invalidated && (active || action.terminal) }
     private func discardPending() { let callbacks = pending; pending.removeAll(); queuedBytes = 0; for callback in callbacks { callback.continuation.resume(returning: []) } }
     public func cancel() { invalidated = true; active = false; incoming = nil; decoder = ExchangeStreamDecoder(); discardPending() }
     public func disconnect() { cancel() }
@@ -56,7 +58,7 @@ public actor ExchangeSession {
         let frame = peer.map { ExchangeFrame(source: nonce, destination: $0, body: .close(reason)) }
         let bytes = frame.flatMap { try? ExchangeWire.encode($0) }
         active = false; incoming = nil; discardPending()
-        return bytes.map { [ExchangeAction(generation: generation, bytes: $0)] } ?? []
+        return bytes.map { [ExchangeAction(generation: generation, bytes: $0, terminal: true)] } ?? []
     }
     private func time(_ elapsed: Int64) throws {
         guard elapsed >= 0, elapsed >= observed else { throw SessionFailure.reason(5) }
@@ -127,7 +129,9 @@ public actor ExchangeSession {
         advertised = nil
         if moreLocal { localPage += 1; return try await page(now: now) }
         localDone = true
-        var actions = [try emit(.done)]; actions += try finish(); return actions
+        // Keep DONE dispatchable until the peer observes it. If its DONE already
+        // arrived, the peer will initiate the complete CLOSE after this frame.
+        return [try emit(.done)]
     }
     private func finish() throws -> [ExchangeAction] {
         if localDone && remoteDone && incoming == nil && requested.isEmpty && awaiting == nil { return close(0) }; return []
@@ -135,7 +139,7 @@ public actor ExchangeSession {
     private func sendNext(now: Int64) async throws -> [ExchangeAction] {
         guard !outbound.isEmpty else { return try await finishPage(now: now) }
         let descriptor = outbound.removeFirst()
-        guard let loaded = try await store.loadOutgoing(descriptor.id, now: wallClock()) else { throw SessionFailure.reason(4) }; try live()
+        guard let loaded = try await store.loadOutgoing(descriptor.id, clock: wallClock) else { throw SessionFailure.reason(4) }; try live()
         guard loaded.descriptor == descriptor else { throw SessionFailure.reason(4) }
         offered += 1; awaiting = (offered, descriptor)
         var actions = [try emit(.offer(transfer: offered, descriptor: descriptor))]

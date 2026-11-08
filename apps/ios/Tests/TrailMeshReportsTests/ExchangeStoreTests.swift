@@ -173,3 +173,19 @@ extension ExchangeStoreTests {
         XCTAssertEqual(counts, [0, 0, 0, 0, 0])
     }
 }
+
+extension ExchangeStoreTests {
+    func testOutgoingLoadSamplesClockAgainInsideDatabaseTransaction() async throws {
+        let (wire, now, id) = try exchangeFixture()
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: wire) as? [String: Any])
+        let core = try XCTUnwrap(envelope["core"] as? [String: Any])
+        let expires = try XCTUnwrap(core["expires_at_ms"] as? Int64)
+        let store = try ReportRepository(path: ":memory:")
+        _ = try await store.ingest(wire, now: now)
+        let clock = ExchangeSequenceClock([now, expires])
+        let expired = try await store.loadOutgoing(id, clock: { clock.next() })
+        XCTAssertNil(expired)
+        let backwards = ExchangeSequenceClock([expires, expires - 1])
+        do { _ = try await store.loadOutgoing(id, clock: { backwards.next() }); XCTFail("Clock changed while waiting for database") } catch ReportStoreError.clock { }
+    }
+}

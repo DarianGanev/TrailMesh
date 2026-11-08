@@ -143,7 +143,7 @@ extension ExchangeSessionTests {
         let repository = try ReportRepository(path: ":memory:")
         let gate = CommitGateStore(repository: repository)
         let session = try await prepare(gate, descriptor: ExchangeDescriptor(id: id, total: wire.count, hops: 2), now: now)
-        let transfer = Task { try await Self.send(wire, to: session, now: now) }
+        let transfer = Task { @Sendable [wire, session, now] in try await ExchangeSessionTests.send(wire, to: session, now: now) }
         await gate.waitForCommit()
         await session.cancel()
         await gate.release()
@@ -174,7 +174,7 @@ private actor CommitGateStore: ReportExchangeStore {
     init(repository: ReportRepository) { self.repository = repository }
     func inventoryPage(after: String?, limit: Int, now: Int64) async throws -> ExchangeInventoryPage { try await repository.inventoryPage(after: after, limit: limit, now: now) }
     func currentIDs(_ ids: [String], now: Int64) async throws -> Set<String> { try await repository.currentIDs(ids, now: now) }
-    func loadOutgoing(_ id: String, now: Int64) async throws -> ExchangeOutgoing? { try await repository.loadOutgoing(id, now: now) }
+    func loadOutgoing(_ id: String, clock: @Sendable () -> Int64) async throws -> ExchangeOutgoing? { try await repository.loadOutgoing(id, clock: clock) }
     func ingestTransferred(_ wire: Data, offeredHops: Int, clock: @Sendable () -> Int64) async throws -> ReportStoreOutcome {
         let result = try await repository.ingestTransferred(wire, offeredHops: offeredHops, clock: clock)
         committed = true
@@ -201,13 +201,13 @@ extension ExchangeSessionTests {
         let repository = try ReportRepository(path: ":memory:")
         let gate = CommitGateStore(repository: repository)
         let session = try await prepare(gate, descriptor: ExchangeDescriptor(id: id, total: wire.count, hops: 2), now: now)
-        let transfer = Task { try await Self.send(wire, to: session, now: now) }
+        let transfer = Task { @Sendable [wire, session, now] in try await ExchangeSessionTests.send(wire, to: session, now: now) }
         await gate.waitForCommit()
         let replayBytes = try Self.remote(.chunk(transfer: 1, offset: 0, total: wire.count, bytes: wire.prefix(1)))
         let replay = Task { await session.receive(replayBytes, generation: 1, elapsed: 5) }
         // Observe admission rather than assuming a fixed number of scheduler yields.
         for _ in 0..<5000 {
-            if await session.queuedInputCount > 0 { break }
+            if (await session.queuedInputCount) > 0 { break }
             try await Task.sleep(nanoseconds: 1_000_000)
         }
         let queuedCount = await session.queuedInputCount
@@ -224,7 +224,7 @@ extension ExchangeSessionTests {
         let secondStore = try ReportRepository(path: ":memory:")
         let secondGate = CommitGateStore(repository: secondStore)
         let timed = try await prepare(secondGate, descriptor: ExchangeDescriptor(id: id, total: wire.count, hops: 2), now: now)
-        let pending = Task { try await Self.send(wire, to: timed, now: now) }
+        let pending = Task { @Sendable [wire, timed, now] in try await ExchangeSessionTests.send(wire, to: timed, now: now) }
         await secondGate.waitForCommit()
         let closed = await timed.tick(elapsed: 30000)
         XCTAssertEqual(try ExchangeWire.decode(XCTUnwrap(closed.first).bytes).body, .close(5))
@@ -259,10 +259,14 @@ extension ExchangeSessionTests {
         var qa = await left.start(elapsed: 0), qb = await right.start(elapsed: 0)
         for _ in 0..<200 {
             var na: [ExchangeAction] = [], nb: [ExchangeAction] = []
-            for x in qa { nb += await right.receive(x.bytes, generation: 6, elapsed: 1) }
-            for x in qb { na += await left.receive(x.bytes, generation: 5, elapsed: 1) }
+            for x in qa { if await left.isLive(x) { nb += await right.receive(x.bytes, generation: 6, elapsed: 1) } }
+            for x in qb { if await right.isLive(x) { na += await left.receive(x.bytes, generation: 5, elapsed: 1) } }
             qa = na; qb = nb
-            if qa.isEmpty && qb.isEmpty { return }
+            if qa.isEmpty && qb.isEmpty {
+                let leftFailure = await left.failureReason, rightFailure = await right.failureReason
+                XCTAssertNil(leftFailure); XCTAssertNil(rightFailure)
+                return
+            }
         }
         XCTFail("Fake link failed to quiesce")
     }
@@ -292,5 +296,28 @@ extension ExchangeSessionTests {
         XCTAssertEqual(saved, original?.wire)
         let remaining = try await db.read { try Int.fetchOne($0, sql: "SELECT remaining_hops FROM report_forwarding") }
         XCTAssertEqual(remaining, 0)
+    }
+}
+
+extension ExchangeSessionTests {
+    func testRetainedAcknowledgementExpiresButTerminalCloseRemainsDispatchable() async throws {
+        let (wire, now, id) = try exchangeFixture()
+        let store = try ReportRepository(path: ":memory:")
+        let session = try await prepare(store, descriptor: ExchangeDescriptor(id: id, total: wire.count, hops: 2), now: now)
+        let actions = try await Self.send(wire, to: session, now: now)
+        let acknowledgement = try XCTUnwrap(actions.last)
+        let initiallyLive = await session.isLive(acknowledgement)
+        XCTAssertTrue(initiallyLive)
+        let timeout = await session.tick(elapsed: 30000)
+        let terminal = try XCTUnwrap(timeout.first)
+        let ackStillLive = await session.isLive(acknowledgement)
+        let terminalLive = await session.isLive(terminal)
+        XCTAssertFalse(ackStillLive)
+        XCTAssertTrue(terminalLive)
+        let saved = try await store.loadOutgoing(id, now: now)
+        XCTAssertEqual(saved?.wire, wire)
+        await session.disconnect()
+        let disconnectedTerminal = await session.isLive(terminal)
+        XCTAssertFalse(disconnectedTerminal)
     }
 }
