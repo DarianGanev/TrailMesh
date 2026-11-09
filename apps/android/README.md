@@ -11,7 +11,17 @@ Use JDK 17 and Android SDK 36 to compile. The supported minimum is API 26. Depen
 .\gradlew.bat connectedDebugAndroidTest
 ```
 
-The application APK is `app/build/outputs/apk/debug/app-debug.apk`; the test APK is `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`. CI publishes them under distinct `TrailMeshProduct` artifact names, verifies nonzero passing tests, and independently checks an Android-authored public test report with Python. Shared authoritative vectors are loaded directly from `protocol/` through source sets, rather than maintained as a second copy.
+The application APK is `app/build/outputs/apk/debug/app-debug.apk`; the test APK is `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`. CI publishes them under distinct `TrailMeshProduct` artifact names, verifies nonzero passing tests, and independently checks an Android-authored public test report and every valid native-encoded exchange frame with Python. Shared authoritative vectors are loaded directly from `protocol/` through source sets, rather than maintained as a second copy.
+
+## Report encounter contract
+
+`ExchangeSession` and `RepositoryExchangeStore` implement the transport-independent [report-exchange profile](../../protocol/exchange-v1-profile.json). They do not connect radios. A transport owner supplies a fresh random 16-byte nonce, a unique local link generation, a wall-clock callback, and monotonic elapsed times. Feed byte callbacks through `receive`, drive `tick` while idle, and call `cancel` or `disconnect` when the encounter ends. Check `isCurrent(action.generation)` immediately before dispatching each returned action. Positive acknowledgements follow a successful repository commit; `peerOutcomes` records only peer claims, not verified recipient delivery.
+
+Inventory uses bounded verified candidate pages. Schema v4 persists a rotating inventory cursor and each report's remaining hop budget, atomically with admission. A received budget is decremented once; duplicate traffic cannot increase it. Exhausted reports remain readable but cannot be advertised or forwarded. Partial transfers are discarded on disconnect and restart from byte zero in a new encounter. Native fake links test these rules without establishing physical-radio interoperability.
+
+An explicit emulator performance run is available with instrumentation class `org.trailmesh.app.persistence.ExchangePerformanceInstrumentedTest` and argument `mode=benchmark`. It seeds near the 25 MiB logical budget with real signed synthetic reports and measures full queries, bounded inventory pages, and concurrent ingest delay. This opt-in measurement is separate from ordinary correctness tests; report device, API, source/build and emulator limitations with its results.
+
+The [API 26 measurement](benchmark-results/report-store-api26-v1.json) records 5,154 reports using 26,146,242 logical bytes. Full verified queries took about 12 seconds and delayed a concurrent ingest by about 12 seconds; an eight-candidate inventory page took about 26 ms. This is one emulator run, not a physical-device guarantee. Before map/session radio integration, use bounded map/history pagination or a reviewed verification snapshot strategy that preserves signed-row integrity and clock tracking. Encounter timeouts must remain active during queued storage work.
 
 ## Repository contract
 

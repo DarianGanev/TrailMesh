@@ -105,9 +105,9 @@ private constructor(
             }
 
         private const val COLUMNS =
-            "b.*, r.event_id,r.category,r.status,r.observed_at_ms,r.lat_e7,r.lon_e7,r.accuracy_m,r.note,r.supersedes,s.local_expiry_ms,s.max_hops,CASE WHEN q.bundle_id IS NULL THEN 0 ELSE 1 END AS quarantined"
+            "b.*, r.event_id,r.category,r.status,r.observed_at_ms,r.lat_e7,r.lon_e7,r.accuracy_m,r.note,r.supersedes,s.local_expiry_ms,s.max_hops,f.remaining_hops,CASE WHEN q.bundle_id IS NULL THEN 0 ELSE 1 END AS quarantined"
         private const val JOIN =
-            "FROM bundles b LEFT JOIN reports r ON r.bundle_id=b.bundle_id LEFT JOIN relay_state s ON s.bundle_id=b.bundle_id LEFT JOIN quarantined_ids q ON q.bundle_id=b.bundle_id"
+            "FROM bundles b LEFT JOIN reports r ON r.bundle_id=b.bundle_id LEFT JOIN relay_state s ON s.bundle_id=b.bundle_id LEFT JOIN quarantined_ids q ON q.bundle_id=b.bundle_id LEFT JOIN report_forwarding f ON f.bundle_id=b.bundle_id"
     }
 
     private suspend fun <T> transaction(block: (SupportSQLiteDatabase) -> T): T {
@@ -125,7 +125,7 @@ private constructor(
                                 // acquiring its write lock. Admission starts only after this check.
                                 caller.ensureActive()
                                 block(database.openHelper.writableDatabase)
-                            },
+                            }
                         )
                     } catch (failure: android.database.sqlite.SQLiteException) {
                         // A failed COMMIT can leave Android's connection with an open SQL
@@ -178,11 +178,26 @@ private constructor(
         return store(wire.copyOf(), clock, false)
     }
 
+    /** Incoming transfer budget is committed atomically with the immutable signed report. */
+    suspend fun ingestTransferred(
+        wire: ByteArray,
+        hopsAfterReceipt: Int,
+        clock: () -> Long,
+    ): StoreOutcome {
+        require(hopsAfterReceipt in 0..11)
+        if (wire.size > 8192) {
+            validClock(clock())
+            return StoreOutcome.Rejected("invalid")
+        }
+        return store(wire.copyOf(), clock, false, hopsAfterReceipt = hopsAfterReceipt)
+    }
+
     private suspend fun store(
         wire: ByteArray,
         clock: () -> Long,
         local: Boolean,
         minimumNow: Long = 0,
+        hopsAfterReceipt: Int? = null,
     ): StoreOutcome {
         currentCoroutineContext().ensureActive()
         val validationNow = clock()
@@ -200,6 +215,8 @@ private constructor(
             observe(db, now)
             if (report == null || now >= report.expiresAt)
                 return@transaction StoreOutcome.Rejected("expired")
+            if (hopsAfterReceipt != null && report.maxHops <= hopsAfterReceipt)
+                return@transaction StoreOutcome.Rejected("invalid")
             db.query("SELECT $COLUMNS $JOIN WHERE b.bundle_id=?", arrayOf<Any?>(report.bundleID))
                 .use { cursor ->
                     if (cursor.moveToFirst()) {
@@ -209,6 +226,13 @@ private constructor(
                                 !existing.verified.signature.contentEquals(report.signature)
                         )
                             throw ReportStoreException(StoreFailure.CORRUPT_STORED_REPORT)
+                        if (hopsAfterReceipt != null && !existing.report.isExpired) {
+                            val remaining = minOf(existing.remainingHops, hopsAfterReceipt)
+                            db.execSQL(
+                                "INSERT OR REPLACE INTO report_forwarding VALUES(?,?)",
+                                arrayOf<Any?>(report.bundleID, remaining),
+                            )
+                        }
                         return@transaction if (existing.report.isExpired)
                             StoreOutcome.Rejected("expired")
                         else StoreOutcome.Duplicate(report.bundleID)
@@ -262,7 +286,7 @@ private constructor(
                         report.expiresAt,
                         now,
                         if (local) 1 else 0,
-                    ),
+                    )
                 )
             database
                 .records()
@@ -278,7 +302,7 @@ private constructor(
                         p.accuracyM,
                         p.note.toByteArray(Charsets.UTF_8),
                         p.supersedes,
-                    ),
+                    )
                 )
             database
                 .records()
@@ -288,11 +312,16 @@ private constructor(
                         minOf(report.expiresAt, now + 259_200_000),
                         report.maxHops,
                         if (local) 1 else 0,
-                    ),
+                    )
                 )
             database
                 .records()
                 .insert(SeenRow(report.bundleID, report.expiresAt + 86_400_000, "stored"))
+            if (hopsAfterReceipt != null)
+                db.execSQL(
+                    "INSERT INTO report_forwarding VALUES(?,?)",
+                    arrayOf<Any?>(report.bundleID, hopsAfterReceipt),
+                )
             StoreOutcome.Stored(report.bundleID)
         }
     }
@@ -315,7 +344,7 @@ private constructor(
                 fun number(value: Long) = ReportJSON.IntegerValue(value)
                 fun random() =
                     ReportAdmission.encode(
-                        ByteArray(16).also { java.security.SecureRandom().nextBytes(it) },
+                        ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }
                     )
                 val body =
                     ReportJSON.ObjectValue(
@@ -330,7 +359,7 @@ private constructor(
                             "note" to text(draft.note),
                             "supersedes" to
                                 (draft.supersedes?.let { text(it) } ?: ReportJSON.NullValue),
-                        ),
+                        )
                     )
                 val core =
                     ReportJSON.ObjectValue(
@@ -344,7 +373,7 @@ private constructor(
                             "expires_at_ms" to number(draft.expiresAt),
                             "max_hops" to number(draft.maxHops.toLong()),
                             "body" to body,
-                        ),
+                        )
                     )
                 val canonical =
                     try {
@@ -365,7 +394,7 @@ private constructor(
                             "core" to core,
                             "bundle_id" to text(id),
                             "signature" to text(ReportAdmission.encode(signature)),
-                        ),
+                        )
                     )
                     .canonicalBytes()
             }
@@ -425,16 +454,126 @@ private constructor(
                 buildList {
                     while (c.moveToNext()) {
                         val checked = verified(c, now)
-                        add(
-                            ForwardableReport(
-                                checked.report.bundleID,
-                                checked.verified.originalWire,
-                            ),
-                        )
+                        if (checked.remainingHops > 0)
+                            add(
+                                ForwardableReport(
+                                    checked.report.bundleID,
+                                    checked.verified.originalWire,
+                                )
+                            )
                     }
                 }
             }
     }
+
+    suspend fun exchangeInventoryCursor(now: Long): String? = transaction { db ->
+        observe(db, now)
+        db.query("SELECT singleton,after_id FROM exchange_cursor").use { c ->
+            if (!c.moveToFirst()) null
+            else {
+                if (
+                    c.getType(0) != Cursor.FIELD_TYPE_INTEGER ||
+                        c.getInt(0) != 1 ||
+                        (!c.isNull(1) &&
+                            (c.getType(1) != Cursor.FIELD_TYPE_STRING ||
+                                !c.getString(1).matches(Regex("[0-9a-f]{64}"))))
+                )
+                    throw ReportStoreException(StoreFailure.CORRUPT_STORED_REPORT)
+                val result = if (c.isNull(1)) null else c.getString(1)
+                if (c.moveToNext()) throw ReportStoreException(StoreFailure.CORRUPT_STORED_REPORT)
+                result
+            }
+        }
+    }
+
+    suspend fun recordExchangeInventoryProgress(cursor: String?, hasMore: Boolean, now: Long) =
+        transaction { db ->
+            observe(db, now)
+            require(cursor == null || cursor.matches(Regex("[0-9a-f]{64}")))
+            db.execSQL(
+                "INSERT OR REPLACE INTO exchange_cursor VALUES(1,?)",
+                arrayOf<Any?>(if (hasMore) cursor else null),
+            )
+        }
+
+    suspend fun inventoryPage(
+        afterID: String?,
+        limit: Int,
+        now: Long,
+    ): org.trailmesh.app.exchange.InventoryPage {
+        require(limit in 1..8)
+        require(afterID == null || afterID.matches(Regex("[0-9a-f]{64}")))
+        return transaction { db ->
+            observe(db, now)
+            val items = mutableListOf<org.trailmesh.app.exchange.ReportDescriptor>()
+            var cursor: String? = null
+            var more = false
+            db.query(
+                    "SELECT $COLUMNS $JOIN WHERE b.bundle_id>? ORDER BY b.bundle_id LIMIT ?",
+                    arrayOf<Any?>(afterID ?: "", limit + 1),
+                )
+                .use { c ->
+                    var scanned = 0
+                    while (c.moveToNext()) {
+                        if (scanned++ == limit) {
+                            more = true
+                            break
+                        }
+                        val checked = verified(c, now)
+                        cursor = checked.report.bundleID
+                        if (!checked.report.isExpired && checked.remainingHops > 0)
+                            items.add(
+                                org.trailmesh.app.exchange.ReportDescriptor(
+                                    cursor,
+                                    checked.verified.originalWire.size,
+                                    checked.remainingHops,
+                                )
+                            )
+                    }
+                }
+            org.trailmesh.app.exchange.InventoryPage(items, cursor, more)
+        }
+    }
+
+    suspend fun currentIDs(ids: List<String>, now: Long): Set<String> {
+        require(ids.size <= 8)
+        return transaction { db ->
+            observe(db, now)
+            buildSet {
+                for (id in ids) {
+                    require(id.matches(Regex("[0-9a-f]{64}")))
+                    db.query("SELECT $COLUMNS $JOIN WHERE b.bundle_id=?", arrayOf<Any?>(id)).use { c
+                        ->
+                        if (c.moveToFirst()) {
+                            val checked = verified(c, now)
+                            if (!checked.report.isExpired) add(id)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    suspend fun loadForExchange(id: String, now: Long): org.trailmesh.app.exchange.OutgoingReport? =
+        transaction { db ->
+            observe(db, now)
+            db.query("SELECT $COLUMNS $JOIN WHERE b.bundle_id=?", arrayOf<Any?>(id)).use { c ->
+                if (!c.moveToFirst()) null
+                else {
+                    val checked = verified(c, now)
+                    if (checked.report.isExpired || checked.remainingHops == 0) null
+                    else
+                        org.trailmesh.app.exchange.OutgoingReport(
+                            org.trailmesh.app.exchange.ReportDescriptor(
+                                id,
+                                checked.verified.originalWire.size,
+                                checked.remainingHops,
+                            ),
+                            checked.verified.originalWire,
+                        )
+                }
+            }
+        }
 
     /** Only after explicit confirmation that the backward correction is intentional. */
     suspend fun recoverClockAfterUserConfirmation(now: Long): Int = transaction { db ->
@@ -472,7 +611,11 @@ private constructor(
         ids.size
     }
 
-    private data class Checked(val verified: VerifiedReport, val report: StoredReport)
+    private data class Checked(
+        val verified: VerifiedReport,
+        val report: StoredReport,
+        val remainingHops: Int,
+    )
 
     private fun verified(c: Cursor, now: Long): Checked {
         try {
@@ -491,33 +634,36 @@ private constructor(
             require(
                 admitted in 0..ReportJSON.SAFE_INTEGER &&
                     local >= admitted &&
-                    local == minOf(expiry, admitted + 259_200_000),
+                    local == minOf(expiry, admitted + 259_200_000)
             )
             val v =
                 requireNotNull(ReportAdmission.validate(bytes("original_wire"), admitted).verified)
+            val remaining =
+                if (c.isNull(c.getColumnIndexOrThrow("remaining_hops"))) v.maxHops
+                else number("remaining_hops").also { require(it in 0..v.maxHops.toLong()) }.toInt()
             val p = v.report
             require(
                 v.bundleID == id &&
                     v.canonicalCore.contentEquals(bytes("canonical_core")) &&
                     v.signature.contentEquals(bytes("signature")) &&
-                    v.authorKey.contentEquals(bytes("author_key")),
+                    v.authorKey.contentEquals(bytes("author_key"))
             )
             require(
                 v.createdAt == number("created_at_ms") &&
                     v.expiresAt == expiry &&
                     v.maxHops.toLong() == number("max_hops") &&
-                    p.eventID.contentEquals(bytes("event_id")),
+                    p.eventID.contentEquals(bytes("event_id"))
             )
             require(
                 p.category == text("category") &&
                     p.status == text("status") &&
-                    p.note.toByteArray(Charsets.UTF_8).contentEquals(bytes("note")),
+                    p.note.toByteArray(Charsets.UTF_8).contentEquals(bytes("note"))
             )
             require(
                 p.observedAt == number("observed_at_ms") &&
                     p.latE7 == number("lat_e7") &&
                     p.lonE7 == number("lon_e7") &&
-                    p.accuracyM == number("accuracy_m"),
+                    p.accuracyM == number("accuracy_m")
             )
             val supersedes =
                 if (c.isNull(c.getColumnIndexOrThrow("supersedes"))) null else text("supersedes")
@@ -542,6 +688,7 @@ private constructor(
                     p.eventID,
                     v.authorKey,
                 ),
+                remaining,
             )
         } catch (_: Exception) {
             throw ReportStoreException(StoreFailure.CORRUPT_STORED_REPORT)

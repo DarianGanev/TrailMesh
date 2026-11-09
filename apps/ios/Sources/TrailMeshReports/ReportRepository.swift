@@ -14,8 +14,8 @@ public enum ReportStoreOutcome: Equatable, Sendable {
 }
 
 public actor ReportRepository {
-    private let database: DatabaseQueue
-    private static let storedColumns = """
+    let database: DatabaseQueue
+    static let storedColumns = """
         b.bundle_id, b.canonical_core, b.signature, b.original_wire, b.author_key,
         b.created_at_ms, b.expires_at_ms, b.admitted_at_ms,
         r.event_id, r.category, r.status, r.observed_at_ms, r.lat_e7, r.lon_e7,
@@ -88,8 +88,9 @@ public actor ReportRepository {
                 WHERE q.bundle_id IS NULL AND b.expires_at_ms > ? AND s.local_expiry_ms > ? AND s.max_hops > 0
                 ORDER BY b.admitted_at_ms, b.bundle_id
                 """, arguments: [now, now])
-            return try rows.map { row in
+            return try rows.compactMap { row -> ForwardableReport? in
                 let checked = try Self.verifyStoredRow(row, now: now)
+                guard try Self.remainingHops(db, id: checked.report.bundleID, cap: Int(row.decode(Int64.self, forColumn: "max_hops"))) > 0 else { return nil }
                 return ForwardableReport(bundleID: checked.report.bundleID, originalWire: checked.wire)
             }
         }
@@ -175,7 +176,7 @@ public actor ReportRepository {
         return try store(Data(envelope.canonical().utf8), clock: clock, local: true, minimumNow: created)
     }
 
-    private static func verifyStoredRow(_ row: Row, now: Int64) throws -> (report: StoredReport, wire: Data, canonical: Data, signature: Data) {
+    static func verifyStoredRow(_ row: Row, now: Int64) throws -> (report: StoredReport, wire: Data, canonical: Data, signature: Data) {
         do {
             for column in ["core_type", "signature_type", "wire_type", "author_type", "event_type", "note_type"] {
                 guard try row.decode(String.self, forColumn: column) == "blob" else { throw ReportStoreError.conflictingStoredBundle }
@@ -239,7 +240,7 @@ public actor ReportRepository {
         }
     }
 
-    private static func observeClock(_ db: Database, now: Int64) throws {
+    static func observeClock(_ db: Database, now: Int64) throws {
         let lastNow = try Int64.fetchOne(db, sql: "SELECT last_now_ms FROM repository_clock WHERE singleton = 1")
         guard let lastNow, now >= lastNow else { throw ReportStoreError.clock }
         try db.execute(sql: "UPDATE repository_clock SET last_now_ms = ? WHERE singleton = 1", arguments: [now])
@@ -267,7 +268,17 @@ public actor ReportRepository {
         try store(wire, clock: clock, local: false)
     }
 
-    private func store(_ wire: Data, clock: @Sendable () -> Int64, local: Bool, minimumNow: Int64? = nil) throws -> ReportStoreOutcome {
+    public func ingestTransferred(_ wire: Data, offeredHops: Int, now: Int64) throws -> ReportStoreOutcome {
+        guard (1...12).contains(offeredHops) else { return .rejected(.invalid) }
+        return try ingestTransferred(wire, offeredHops: offeredHops, clock: { now })
+    }
+
+    public func ingestTransferred(_ wire: Data, offeredHops: Int, clock: @Sendable () -> Int64) throws -> ReportStoreOutcome {
+        guard (1...12).contains(offeredHops) else { return .rejected(.invalid) }
+        return try store(wire, clock: clock, local: false, offeredHops: offeredHops)
+    }
+
+    private func store(_ wire: Data, clock: @Sendable () -> Int64, local: Bool, minimumNow: Int64? = nil, offeredHops: Int? = nil) throws -> ReportStoreOutcome {
         try Task.checkCancellation()
         let validationNow = clock()
         guard (0...9_007_199_254_740_991).contains(validationNow), validationNow >= (minimumNow ?? 0) else { throw ReportStoreError.clock }
@@ -296,6 +307,7 @@ public actor ReportRepository {
               let accuracy = body["accuracy_m"]?.integer, let note = body["note"]?.string else {
             return .rejected(.invalid)
         }
+        if let offeredHops, offeredHops < 1 || offeredHops > Int(hops) { return .rejected(.invalid) }
         let supersedes = body["supersedes"]?.string
         // Once a transaction starts, return its committed outcome even if cancellation arrives.
         try Task.checkCancellation()
@@ -314,6 +326,10 @@ public actor ReportRepository {
                 guard stored.report.bundleID == id, stored.canonical == canonical,
                       stored.signature == signature else { throw ReportStoreError.conflictingStoredBundle }
                 guard !stored.report.isExpired else { return .rejected(.expired) }
+                if let offeredHops {
+                    let previous = try Self.remainingHops(db, id: id, cap: Int(hops))
+                    try db.execute(sql: "INSERT INTO report_forwarding VALUES (?, ?) ON CONFLICT(bundle_id) DO UPDATE SET remaining_hops = excluded.remaining_hops", arguments: [id, min(previous, offeredHops - 1)])
+                }
                 return .duplicate(id)
             }
             let seen = try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM seen_ids WHERE bundle_id = ? AND retain_until_ms > ?)", arguments: [id, now]) ?? false
@@ -342,6 +358,7 @@ public actor ReportRepository {
             try db.execute(sql: "INSERT INTO relay_state VALUES (?, ?, ?, ?)",
                            arguments: [id, min(expires, now + 259_200_000), hops, local ? 1 : 0])
             try db.execute(sql: "INSERT OR REPLACE INTO seen_ids VALUES (?, ?, 'stored')", arguments: [id, expires + 86_400_000])
+            if let offeredHops { try db.execute(sql: "INSERT INTO report_forwarding VALUES (?, ?)", arguments: [id, offeredHops - 1]) }
             return .stored(id)
         }
     }

@@ -11,9 +11,10 @@ enum ReportDatabase {
             let hasMigrations = try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'grdb_migrations')") ?? false
             if hasMigrations {
                 let applied = Set(try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations"))
-                guard applied.isSubset(of: ["v1", "v2", "v3"]),
+                guard applied.isSubset(of: ["v1", "v2", "v3", "v4"]),
                       !applied.contains("v2") || applied.contains("v1"),
-                      !applied.contains("v3") || applied.contains("v2") else {
+                      !applied.contains("v3") || applied.contains("v2"),
+                      !applied.contains("v4") || applied.contains("v3") else {
                     throw ReportDatabaseError.unsupportedSchema
                 }
             }
@@ -105,6 +106,16 @@ enum ReportDatabase {
                 }
                 try db.execute(sql: "UPDATE reports SET note = CASE WHEN ? = 0 THEN zeroblob(0) ELSE ? END WHERE bundle_id = ?", arguments: [note.utf8.count, Data(note.utf8), id])
             }
+        }
+        migrator.registerMigration("v4") { db in
+            try db.execute(sql: """
+                CREATE TABLE exchange_cursor (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), last_scanned TEXT);
+                INSERT INTO exchange_cursor VALUES (1, NULL);
+                CREATE TABLE report_forwarding (
+                    bundle_id TEXT PRIMARY KEY NOT NULL REFERENCES bundles(bundle_id) ON DELETE CASCADE,
+                    remaining_hops INTEGER NOT NULL CHECK (remaining_hops BETWEEN 0 AND 12)
+                );
+                """)
         }
         try migrator.migrate(queue)
         return queue

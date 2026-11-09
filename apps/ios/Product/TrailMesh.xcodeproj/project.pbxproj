@@ -4,6 +4,14 @@
   classes = {};
   objectVersion = 56;
   objects = {
+    100000000000000000000040 = {isa = PBXFileReference; lastKnownFileType = text.json; path = "../Tests/TrailMeshReportsTests/Fixtures/exchange-v1-vectors.json"; sourceTree = "<group>"; };
+    200000000000000000000040 = {isa = PBXBuildFile; fileRef = 100000000000000000000040; };
+    100000000000000000000032 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Tests/TrailMeshReportsTests/ExchangeSessionTests.swift"; sourceTree = "<group>"; };
+    200000000000000000000032 = {isa = PBXBuildFile; fileRef = 100000000000000000000032; };
+    100000000000000000000031 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Tests/TrailMeshReportsTests/ExchangeStoreTests.swift"; sourceTree = "<group>"; };
+    200000000000000000000031 = {isa = PBXBuildFile; fileRef = 100000000000000000000031; };
+    100000000000000000000030 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Tests/TrailMeshReportsTests/ExchangeWireTests.swift"; sourceTree = "<group>"; };
+    200000000000000000000030 = {isa = PBXBuildFile; fileRef = 100000000000000000000030; };
     100000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Tests/TrailMeshReportsTests/ReportAdmissionTests.swift"; sourceTree = "<group>"; };
     100000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Tests/TrailMeshReportsTests/ReportAuthoringTests.swift"; sourceTree = "<group>"; };
     100000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Tests/TrailMeshReportsTests/ReportDatabaseTests.swift"; sourceTree = "<group>"; };
@@ -32,10 +40,10 @@
     D00000000000000000000003 = {isa = XCSwiftPackageProductDependency; package = D00000000000000000000002; productName = TrailMeshReports; };
     D00000000000000000000004 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/groue/GRDB.swift.git"; requirement = {kind = exactVersion; version = 7.11.1; }; };
     D00000000000000000000005 = {isa = XCSwiftPackageProductDependency; package = D00000000000000000000004; productName = GRDB; };
-    C00000000000000000000004 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (200000000000000000000001, 200000000000000000000002, 200000000000000000000003, 200000000000000000000004, 200000000000000000000005, 200000000000000000000006, 200000000000000000000007, 200000000000000000000008, 200000000000000000000009, 20000000000000000000000A, ); runOnlyForDeploymentPostprocessing = 0; };
+    C00000000000000000000004 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (200000000000000000000030, 200000000000000000000031, 200000000000000000000032, 200000000000000000000001, 200000000000000000000002, 200000000000000000000003, 200000000000000000000004, 200000000000000000000005, 200000000000000000000006, 200000000000000000000007, 200000000000000000000008, 200000000000000000000009, 20000000000000000000000A, ); runOnlyForDeploymentPostprocessing = 0; };
     C00000000000000000000005 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (200000000000000000000021, 200000000000000000000022, ); runOnlyForDeploymentPostprocessing = 0; };
-    C00000000000000000000006 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (200000000000000000000020, ); runOnlyForDeploymentPostprocessing = 0; };
-    B00000000000000000000003 = {isa = PBXGroup; children = (100000000000000000000001, 100000000000000000000002, 100000000000000000000003, 100000000000000000000004, 100000000000000000000005, 100000000000000000000006, 100000000000000000000007, 100000000000000000000008, 100000000000000000000009, 10000000000000000000000A, 100000000000000000000020, ); name = Tests; sourceTree = "<group>"; };
+    C00000000000000000000006 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (200000000000000000000040, 200000000000000000000020, ); runOnlyForDeploymentPostprocessing = 0; };
+    B00000000000000000000003 = {isa = PBXGroup; children = (100000000000000000000030, 100000000000000000000031, 100000000000000000000032, 100000000000000000000040, 100000000000000000000001, 100000000000000000000002, 100000000000000000000003, 100000000000000000000004, 100000000000000000000005, 100000000000000000000006, 100000000000000000000007, 100000000000000000000008, 100000000000000000000009, 10000000000000000000000A, 100000000000000000000020, ); name = Tests; sourceTree = "<group>"; };
     E00000000000000000000009 = {isa = PBXNativeTarget; buildConfigurationList = E0000000000000000000000A; buildPhases = (C00000000000000000000004, C00000000000000000000005, C00000000000000000000006, ); buildRules = (); dependencies = (E0000000000000000000000D, ); name = TrailMeshTests; packageProductDependencies = (D00000000000000000000003, D00000000000000000000005, ); productName = TrailMeshTests; productReference = 100000000000000000000021; productType = "com.apple.product-type.bundle.unit-test"; };
     E0000000000000000000000A = {isa = XCConfigurationList; buildConfigurations = (E0000000000000000000000B, E0000000000000000000000C, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
     E0000000000000000000000B = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.1; PRODUCT_BUNDLE_IDENTIFIER = org.trailmesh.ios.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TrailMesh.app/TrailMesh"; }; name = Debug; };

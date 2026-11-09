@@ -117,8 +117,9 @@ final class ReportAuthoringTests: XCTestCase {
         let old = try ReportDatabase.open(path: path)
         try await old.write { db in
             try db.execute(sql: "UPDATE reports SET note = 'before'")
+            try db.execute(sql: "DROP TABLE exchange_cursor; DROP TABLE report_forwarding")
             try db.execute(sql: "DROP TABLE quarantined_ids")
-            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = 'v3'")
+            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier IN ('v3', 'v4')")
         }
         let upgraded = try ReportRepository(path: path)
         let reports = try await upgraded.reports(now: now, bounds: ReportBounds(south: -1, north: 1, west: -1, east: 1))
