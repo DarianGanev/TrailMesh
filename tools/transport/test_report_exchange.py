@@ -77,6 +77,14 @@ class ExchangeWireTests(unittest.TestCase):
         with self.assertRaises(WireError):
             encode_frame(Frame([], SOURCE, DESTINATION, {}))
 
+    def test_nonhello_equal_nonces_and_unsorted_requests_reject(self):
+        with self.assertRaises(WireError):
+            encode_frame(Frame("DONE", SOURCE, SOURCE, {}))
+        with self.assertRaises(WireError):
+            encode_frame(Frame("REQUEST", SOURCE, DESTINATION, {"ids": ["02" * 32, "01" * 32]}))
+        with self.assertRaises(WireError):
+            encode_frame(Frame("SUMMARY", SOURCE, DESTINATION, {"page": 7, "more": 1, "entries": []}))
+
     def test_chunk_and_inventory_hard_bounds(self):
         for data, offset, total in (("ab" * 1025, 0, 8192), ("ab", 2, 2), ("", 0, 1)):
             with self.assertRaises(WireError):

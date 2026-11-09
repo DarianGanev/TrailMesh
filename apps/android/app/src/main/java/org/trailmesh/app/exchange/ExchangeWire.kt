@@ -106,6 +106,7 @@ object ExchangeWire {
             is ExchangeMessage.Summary -> {
                 check(
                     m.page in 0..7 &&
+                        !(m.page == 7 && m.more) &&
                         m.entries.size <= 8 &&
                         m.entries.zipWithNext().all { it.first.id < it.second.id }
                 )

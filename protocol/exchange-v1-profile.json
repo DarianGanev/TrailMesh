@@ -22,7 +22,8 @@
     "callback_frames": 64,
     "negotiation_ms": 5000,
     "idle_ms": 10000,
-    "encounter_ms": 30000
+    "encounter_ms": 30000,
+    "terminal_close_bytes": 44
   },
   "types": {
     "HELLO": 1,
@@ -67,14 +68,14 @@
       "max_chunk:u16 64..1024"
     ],
     "SUMMARY": [
-      "page:u16 0..7 consecutive per direction",
+      "page:u16 0..7 consecutive per direction; page7 requires more=0",
       "more:u8 0|1",
       "count:u8 0..8",
       "entries[count]: id32,size:u16 1..8192,hops:u8 1..12; strictly ascending unique IDs across pages"
     ],
     "REQUEST": [
       "count:u8 0..8",
-      "ids[count]:32 bytes; unique inventory-order subset of last summary"
+      "ids[count]:32 bytes; strictly ascending unique inventory-order subset of last summary"
     ],
     "OFFER": [
       "transfer:u32 1..32 consecutive per direction",
@@ -100,7 +101,7 @@
   },
   "framing": "All integer fields are unsigned big-endian. Prefix counts payload bytes only. Reject unknown type, unsupported version, missing/trailing bytes and out-of-range values. Decoder holds one payload only after validating its prefix; each callback is limited to 256KiB and 64 completed frames.",
   "negotiation": "HELLO before all other messages. Negotiate smaller frame/chunk limits (chunk<=frame-47). Require different nonzero session nonces. Other frames bind both negotiated nonces. Local link-generation checks guard callbacks and emitted actions. Never use peer time or identity keys for session ordering.",
-  "flow": "Each side sends keyset-paginated inventory after negotiation. Each direction uses OFFER+CHUNK stop-and-wait until RECEIVED; one incoming and one outgoing transfer total. Finish each requested page before advertising next. DONE only after all offered transfers acknowledged and local inventory finished. Both DONE and no pending inbound requests permit complete CLOSE. Exceeding remaining32-offer allowance closes budget before sending that request; exhaustion with more inventory closes budget. Local close never implies remote durable acceptance.",
+  "flow": "Each side sends keyset-paginated inventory after negotiation. Each direction uses OFFER+CHUNK stop-and-wait until RECEIVED; one incoming and one outgoing transfer total. Finish each requested page before advertising next. DONE only after all offered transfers acknowledged and local inventory finished. Both DONE and no pending inbound requests permit complete CLOSE. Exceeding remaining32-offer allowance closes budget before sending that request; exhaustion with more inventory closes budget. Local close never implies remote durable acceptance. One terminal CLOSE of 44 encoded bytes is permitted outside the traffic counter for bounded shutdown. The budget bounds application processing/transmission; it cannot prevent an SDK from delivering an oversized callback, which is discarded.",
   "inventory": "Scan at most8 raw repository candidates plus lookahead per page, validate each scanned row, emit eligible descriptors and use last scanned ID as local continuation. Empty SUMMARY with more=1 is valid. At most8 pages/64 candidates per direction; later IDs wait for a new encounter. Hints never establish storage or delivery. A durable local/global scan cursor resumes after the last scanned candidate across new encounters and process restart, resetting at EOF for the next encounter only. Never wrap within an active encounter. Invalid persisted cursors fail storage.",
   "hops": "OFFER H requires 1<=H<=signed author cap. Receiver persists H-1 atomically with ingest; duplicate takes minimum and never increases remaining hops. Zero-hop reports may be read but never advertised/forwarded. Original wire/core/signature/ID/observation time are unchanged. Hop metadata is cooperative and not a security boundary.",
   "failure": "No positive RECEIVED on failed transaction, clock error or cancelled/stale generation. Once a commit completes, cancellation may suppress its ACK but never discards stored bytes. Partial objects are discarded on disconnect; reconnect starts from bytezero and authoritative repository checks. Identical overlapping chunks are idempotent; inconsistent overlaps close protocol. ACK claims belong only to this encounter, not a recipient-delivery ledger."

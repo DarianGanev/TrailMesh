@@ -37,6 +37,8 @@ def encode_frame(frame, *, max_frame=16384):
         raise WireError()
     if (frame.destination == bytes(16)) != (frame.kind == "HELLO"):
         raise WireError()
+    if frame.kind != "HELLO" and frame.source == frame.destination:
+        raise WireError()
     f = frame.fields
     kind = frame.kind
     if kind == "HELLO":
@@ -51,6 +53,8 @@ def encode_frame(frame, *, max_frame=16384):
         _keys(f, "page", "more", "entries")
         _limit(f["page"], 0, 7)
         _limit(f["more"], 0, 1)
+        if f["page"] == 7 and f["more"]:
+            raise WireError()
         _list(f["entries"], 8)
         body = struct.pack(">HBB", f["page"], f["more"], len(f["entries"]))
         ids = []
@@ -67,7 +71,7 @@ def encode_frame(frame, *, max_frame=16384):
         _keys(f, "ids")
         _list(f["ids"], 8)
         identifiers = [_hex(x, 32, 32) for x in f["ids"]]
-        if len(set(f["ids"])) != len(f["ids"]):
+        if f["ids"] != sorted(set(f["ids"])):
             raise WireError()
         body = bytes([len(f["ids"])]) + b"".join(identifiers)
     elif kind == "OFFER":
@@ -159,6 +163,11 @@ def decode_frame(raw, *, max_frame=16384, max_chunk=1024):
 
 
 class FrameDecoder:
+    """Incremental framing with one reserved payload and bounded callback work.
+
+    Discard this decoder after a WireError. A new encounter must negotiate its
+    own limits and bind decoded messages to the current nonces and generation.
+    """
     def __init__(self, max_frame=16384):
         _limit(max_frame, 512, MAX_FRAME)
         self.max_frame = max_frame
@@ -205,6 +214,7 @@ class FrameDecoder:
             raise
 
     def finish(self):
+        """Reject a disconnected stream that ends inside a prefix or payload."""
         if self._failed or self._buffer:
             self._failed = True
             self._buffer.clear()

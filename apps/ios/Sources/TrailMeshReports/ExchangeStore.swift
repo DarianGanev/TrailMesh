@@ -1,6 +1,8 @@
 import Foundation
 import GRDB
 
+/// At most eight eligible descriptors from a bounded raw-candidate scan. nextCursor
+/// is the last scanned ID, even for an empty filtered page; hasMore tracks candidates.
 public struct ExchangeInventoryPage: Sendable {
     public let entries: [ExchangeDescriptor]
     public let nextCursor: String?
@@ -12,9 +14,17 @@ public struct ExchangeOutgoing: Sendable {
     public let wire: Data
     public init(descriptor: ExchangeDescriptor, wire: Data) { self.descriptor = descriptor; self.wire = wire }
 }
+/// Authoritative durable adapter. Implementations must verify stored signed bytes,
+/// projections, clock, expiry, quarantine, and hop metadata before exposing reports.
+/// Ingest commits the original wire and offeredHops-1 atomically; duplicates may only
+/// decrease their budget. Storage/clock failures throw and must never produce ACK.
 public protocol ReportExchangeStore: Sendable {
+    /// Scans at most limit<=8 rows plus lookahead. nil resumes the durable global
+    /// cursor; EOF resets it for the next encounter, without wrapping this encounter.
     func inventoryPage(after: String?, limit: Int, now: Int64) async throws -> ExchangeInventoryPage
+    /// Checks at most eight current IDs, including readable zero-hop reports.
     func currentIDs(_ ids: [String], now: Int64) async throws -> Set<String>
+    /// Rechecks current forwarding eligibility and resamples clock inside the transaction.
     func loadOutgoing(_ id: String, clock: @Sendable () -> Int64) async throws -> ExchangeOutgoing?
     func ingestTransferred(_ wire: Data, offeredHops: Int, clock: @Sendable () -> Int64) async throws -> ReportStoreOutcome
 }

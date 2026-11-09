@@ -72,7 +72,7 @@ abstract class ExchangeContract {
                             expected.getString("source"),
                             expected.getString("destination"),
                             message,
-                        )
+                        ),
                     )
                 assertArrayEquals(c.getString("name"), bytes, authored)
                 native.add(authored)
@@ -106,7 +106,7 @@ abstract class ExchangeContract {
         kotlinx.coroutines.runBlocking {
             val context =
                 androidx.test.core.app.ApplicationProvider.getApplicationContext<
-                    android.content.Context
+                    android.content.Context,
                 >()
             val aName = "exchange-${java.util.UUID.randomUUID()}.db"
             val bName = "exchange-${java.util.UUID.randomUUID()}.db"
@@ -194,7 +194,7 @@ abstract class ExchangeContract {
             val (_, now) = signedFixture()
             val context =
                 androidx.test.core.app.ApplicationProvider.getApplicationContext<
-                    android.content.Context
+                    android.content.Context,
                 >()
             val names = List(3) { "hop-${java.util.UUID.randomUUID()}.db" }
             val repos =
@@ -276,7 +276,7 @@ abstract class ExchangeContract {
             val (wire, now) = signedFixture()
             val context =
                 androidx.test.core.app.ApplicationProvider.getApplicationContext<
-                    android.content.Context
+                    android.content.Context,
                 >()
             val repo =
                 org.trailmesh.app.persistence.ReportRepository.open(
@@ -285,7 +285,7 @@ abstract class ExchangeContract {
                 )
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 repo.database.openHelper.writableDatabase.execSQL(
-                    "CREATE TRIGGER reject_forwarding BEFORE INSERT ON report_forwarding BEGIN SELECT RAISE(ABORT,'injected'); END"
+                    "CREATE TRIGGER reject_forwarding BEFORE INSERT ON report_forwarding BEGIN SELECT RAISE(ABORT,'injected'); END",
                 )
             }
             val (s, _) = inbound(RepositoryExchangeStore(repo), wire, now)
@@ -348,11 +348,12 @@ abstract class ExchangeContract {
                 peerNonce,
                 if (m is ExchangeMessage.Hello) ExchangeWire.ZERO else localNonce,
                 m,
-            )
+            ),
         )
 
-    private fun messages(actions: List<ExchangeAction>) =
-        actions.map { ExchangeWire.decode(it.bytes).message }
+    private fun messages(actions: List<ExchangeAction>) = actions.map {
+        ExchangeWire.decode(it.bytes).message
+    }
 
     private open class EmptyStore : ReportExchangeStore {
         override suspend fun inventoryPage(afterID: String?, limit: Int, now: Long) =
@@ -423,11 +424,11 @@ abstract class ExchangeContract {
                                 split,
                                 wire.size,
                                 wire.copyOfRange(split, wire.size),
-                            )
+                            ),
                         ),
                         2,
                     )
-                    .isEmpty()
+                    .isEmpty(),
             )
             assertTrue(
                 s.receive(
@@ -438,11 +439,11 @@ abstract class ExchangeContract {
                                 split,
                                 wire.size,
                                 wire.copyOfRange(split, wire.size),
-                            )
+                            ),
                         ),
                         2,
                     )
-                    .isEmpty()
+                    .isEmpty(),
             )
             val first = ExchangeMessage.Chunk(1, 0, wire.size, wire.copyOfRange(0, split))
             val result =
@@ -484,7 +485,7 @@ abstract class ExchangeContract {
                 val (s, _) = inbound(store, wire, now)
                 val out =
                     messages(
-                        s.receive(9, peerFrame(ExchangeMessage.Chunk(1, 0, wire.size, wire)), 2)
+                        s.receive(9, peerFrame(ExchangeMessage.Chunk(1, 0, wire.size, wire)), 2),
                     )
                 if (reason == "exception") assertEquals(listOf(ExchangeMessage.Close(4)), out)
                 else assertEquals(code, (out.single() as ExchangeMessage.Received).result)
@@ -497,7 +498,7 @@ abstract class ExchangeContract {
             val (wire, now) = signedFixture()
             val context =
                 androidx.test.core.app.ApplicationProvider.getApplicationContext<
-                    android.content.Context
+                    android.content.Context,
                 >()
             val repo =
                 org.trailmesh.app.persistence.ReportRepository.open(
@@ -600,6 +601,30 @@ abstract class ExchangeContract {
         }
 
     @Test
+    fun finalSummaryPageCannotPromiseAnotherPage() =
+        kotlinx.coroutines.runBlocking {
+            val s = ExchangeSession(EmptyStore(), localNonce, 9) { 0 }
+            s.start(0)
+            s.receive(9, peerFrame(ExchangeMessage.Hello()), 1)
+            repeat(7) { page ->
+                assertEquals(
+                    listOf(ExchangeMessage.Request(emptyList())),
+                    messages(
+                        s.receive(
+                            9,
+                            peerFrame(ExchangeMessage.Summary(page, true, emptyList())),
+                            1,
+                        ),
+                    ),
+                )
+            }
+            // Start with a legal final page and mutate only the `more` flag on the wire.
+            val illegal = peerFrame(ExchangeMessage.Summary(7, false, emptyList()))
+            illegal[45] = 1
+            assertEquals(listOf(ExchangeMessage.Close(3)), messages(s.receive(9, illegal, 1)))
+        }
+
+    @Test
     fun negotiatedLimitAppliesBeforeAllocationInCoalescedCallback() =
         kotlinx.coroutines.runBlocking {
             val s = ExchangeSession(EmptyStore(), localNonce, 9) { 0 }
@@ -634,7 +659,7 @@ abstract class ExchangeContract {
             s.receive(9, peerFrame(ExchangeMessage.Hello()), 1)
             val wrong =
                 ExchangeWire.encode(
-                    ExchangeFrame("33".repeat(16), localNonce, ExchangeMessage.Done)
+                    ExchangeFrame("33".repeat(16), localNonce, ExchangeMessage.Done),
                 )
             assertEquals(listOf(ExchangeMessage.Close(3)), messages(s.receive(9, wrong, 2)))
         }
@@ -673,7 +698,7 @@ abstract class ExchangeContract {
                             9,
                             peerFrame(ExchangeMessage.Request(summary.entries.map { it.id })),
                             1,
-                        )
+                        ),
                     )
                 while (out.any { it is ExchangeMessage.Offer }) {
                     val offer = out.filterIsInstance<ExchangeMessage.Offer>().single()
@@ -683,10 +708,10 @@ abstract class ExchangeContract {
                             s.receive(
                                 9,
                                 peerFrame(
-                                    ExchangeMessage.Received(offer.transfer, offer.report.id, 0)
+                                    ExchangeMessage.Received(offer.transfer, offer.report.id, 0),
                                 ),
                                 1,
-                            )
+                            ),
                         )
                 }
             }

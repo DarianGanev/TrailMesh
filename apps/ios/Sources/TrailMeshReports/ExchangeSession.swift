@@ -7,6 +7,12 @@ public struct ExchangeAction: Sendable {
     fileprivate let terminal: Bool
     fileprivate init(generation: UInt64, bytes: Data, terminal: Bool = false) { self.generation = generation; self.bytes = bytes; self.terminal = terminal }
 }
+/// A single duplex public-report encounter; no radio integration or delivery claim.
+/// Supply a fresh secure-random nonzero 16-byte nonce and a new local generation for
+/// each link. Feed callbacks with that generation, call tick even without traffic,
+/// and check isLive immediately before dispatching every returned action.
+/// Elapsed milliseconds must be nonnegative and monotonic across receive/tick;
+/// wallClock supplies current epoch milliseconds and is resampled for durable work.
 public actor ExchangeSession {
     private let store: any ReportExchangeStore
     private let nonce: Data
@@ -31,15 +37,20 @@ public actor ExchangeSession {
     private var incoming: Incoming?
     private var completed: [Int: (ExchangeDescriptor, Int, Data)] = [:]
     private var acknowledged: [Int: (String, Int)] = [:]
+    /// Untrusted peer RECEIVED result codes; these do not establish recipient delivery.
     public private(set) var peerOutcomes: [Int] = []
+    /// Fixed local CLOSE reason, including pre-HELLO failures that cannot emit CLOSE.
     public private(set) var failureReason: Int?
     // Counts only queued callbacks, excluding the operation currently awaiting storage.
     var queuedInputCount: Int { pending.count }
     private struct Incoming { let transfer: Int; let descriptor: ExchangeDescriptor; var bytes: Data; var received: [Bool]; var count = 0 }
 
     public init(store: any ReportExchangeStore, nonce: Data, generation: UInt64, wallClock: @escaping @Sendable () -> Int64) { self.store = store; self.nonce = nonce; self.generation = generation; self.wallClock = wallClock }
+    /// Normal actions expire when the encounter closes. Its terminal CLOSE remains
+    /// dispatchable until cancel/disconnect invalidates the entire generation.
     public func isLive(_ action: ExchangeAction) -> Bool { action.generation == generation && !invalidated && (active || action.terminal) }
     private func discardPending() { let callbacks = pending; pending.removeAll(); queuedBytes = 0; for callback in callbacks { callback.continuation.resume(returning: []) } }
+    /// Invalidates pending output and partial input; already committed reports remain stored.
     public func cancel() { invalidated = true; active = false; incoming = nil; decoder = ExchangeStreamDecoder(); discardPending() }
     public func disconnect() { cancel() }
     private func emit(_ body: ExchangeBody) throws -> ExchangeAction {
@@ -71,10 +82,12 @@ public actor ExchangeSession {
         started = true; began = elapsed; last = elapsed; observed = elapsed
         do { return [try emit(.hello(features: 1, maxFrame: 16_384, maxChunk: 1024))] } catch { return close(2) }
     }
+    /// Applies HELLO (5s), idle (10s), and total (30s) deadlines without network callbacks.
     public func tick(elapsed: Int64) -> [ExchangeAction] {
         guard active, started else { return [] }
         do { try time(elapsed); return [] } catch { return close(5) }
     }
+    /// Serializes bounded input during repository suspension; stale generations return no actions.
     public func receive(_ bytes: Data, generation callbackGeneration: UInt64, elapsed: Int64) async -> [ExchangeAction] {
         guard active, started, callbackGeneration == generation else { return [] }
         guard pending.count < 64, queuedBytes + bytes.count <= 262_144 else { return close(2) }

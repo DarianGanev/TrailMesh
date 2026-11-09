@@ -100,3 +100,15 @@ extension ExchangeWireTests {
         XCTAssertThrowsError(try oversized.feed(Data(count: 262145)))
     }
 }
+
+extension ExchangeWireTests {
+    func testEncoderRejectsUnorderedRequestsEqualNoncesAndPageOverflow() throws {
+        let first = String(repeating: "01", count: 32), second = String(repeating: "02", count: 32)
+        let source = Data(repeating: 1, count: 16), peer = Data(repeating: 2, count: 16)
+        XCTAssertThrowsError(try ExchangeWire.encode(ExchangeFrame(source: source, destination: peer, body: .request([second, first]))))
+        XCTAssertThrowsError(try ExchangeWire.encode(ExchangeFrame(source: source, destination: source, body: .done)))
+        XCTAssertThrowsError(try ExchangeWire.encode(ExchangeFrame(source: source, destination: peer, body: .summary(page: 7, more: true, entries: []))))
+        let descending = [ExchangeDescriptor(id: second, total: 1, hops: 1), ExchangeDescriptor(id: first, total: 1, hops: 1)]
+        XCTAssertThrowsError(try ExchangeWire.encode(ExchangeFrame(source: source, destination: peer, body: .summary(page: 0, more: false, entries: descending))))
+    }
+}

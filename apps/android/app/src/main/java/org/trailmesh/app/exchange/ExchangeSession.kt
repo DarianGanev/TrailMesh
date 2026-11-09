@@ -276,6 +276,7 @@ class ExchangeSession(
                         requested.isEmpty() &&
                         remoteMore &&
                         message.page == remotePage &&
+                        !(message.page == 7 && message.more) &&
                         (message.entries.isEmpty() ||
                             remoteLastID == null ||
                             remoteLastID!! < message.entries.first().id)

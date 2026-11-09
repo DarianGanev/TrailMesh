@@ -1,5 +1,6 @@
 import Foundation
 
+/// An immutable-wire identifier, byte length, and current cooperative forwarding budget.
 public struct ExchangeDescriptor: Equatable, Sendable {
     public let id: String
     public let total: Int
@@ -24,6 +25,9 @@ public struct ExchangeFrame: Equatable, Sendable {
 }
 public enum ExchangeWireError: Error, Equatable { case malformed, unsupported }
 
+/// Strict v1.0 binary frames. Unknown versions or missing required capabilities throw unsupported; malformed
+/// fields, nonces, ordering, or trailing bytes throw malformed. Encoding applies the
+/// same validation as decoding. The negotiated payload ceiling is 512...16384 bytes.
 public enum ExchangeWire {
     public static func encode(_ frame: ExchangeFrame, maxFrame: Int = 16_384) throws -> Data {
         guard (512...16384).contains(maxFrame), frame.source.count == 16, frame.destination.count == 16 else { throw ExchangeWireError.malformed }
@@ -64,7 +68,7 @@ public enum ExchangeWire {
         guard size >= 39, size <= min(maxFrame, 16_384), size == bytes.count - 4, try take(4) == Data("TMXR".utf8) else { throw ExchangeWireError.malformed }
         guard try number(1) == 1, try number(1) == 0 else { throw ExchangeWireError.unsupported }
         let kind = try number(1), source = try take(16), destination = try take(16)
-        guard source != Data(repeating: 0, count: 16), (destination == Data(repeating: 0, count: 16)) == (kind == 1) else { throw ExchangeWireError.malformed }
+        guard source != destination, source != Data(repeating: 0, count: 16), (destination == Data(repeating: 0, count: 16)) == (kind == 1) else { throw ExchangeWireError.malformed }
         let body: ExchangeBody
         switch kind {
         case 1:
@@ -74,14 +78,14 @@ public enum ExchangeWire {
             body = .hello(features: UInt32(features), maxFrame: frame, maxChunk: chunk)
         case 2:
             let page = try number(2), more = try number(1), count = try number(1)
-            guard page < 8, more <= 1, count <= 8 else { throw ExchangeWireError.malformed }
+            guard page < 8, more <= 1, !(page == 7 && more == 1), count <= 8 else { throw ExchangeWireError.malformed }
             var entries: [ExchangeDescriptor] = []; for _ in 0..<count { entries.append(try descriptor()) }
             guard zip(entries, entries.dropFirst()).allSatisfy({ pair in pair.0.id < pair.1.id }) else { throw ExchangeWireError.malformed }
             body = .summary(page: page, more: more == 1, entries: entries)
         case 3:
             let count = try number(1); guard count <= 8 else { throw ExchangeWireError.malformed }
             var ids: [String] = []; for _ in 0..<count { ids.append(try id()) }
-            guard Set(ids).count == ids.count else { throw ExchangeWireError.malformed }; body = .request(ids)
+            guard zip(ids, ids.dropFirst()).allSatisfy({ pair in pair.0 < pair.1 }) else { throw ExchangeWireError.malformed }; body = .request(ids)
         case 4:
             let transfer = try number(4); guard (1...32).contains(transfer) else { throw ExchangeWireError.malformed }; body = .offer(transfer: transfer, descriptor: try descriptor())
         case 5:
@@ -105,7 +109,9 @@ public enum ExchangeWire {
     }
 }
 
-/// Holds at most one frame; callers may supply arbitrarily coalesced callbacks.
+/// Holds at most one partial frame. Each callback accepts at most 256 KiB and emits
+/// at most 64 frames; split and coalesced callbacks preserve frame boundaries.
+/// Call finish at EOF to detect truncation. Discard the decoder after an error.
 public struct ExchangeStreamDecoder: Sendable {
     private var buffer = Data()
     public var maxFrame = 16_384
