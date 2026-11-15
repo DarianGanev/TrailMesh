@@ -90,4 +90,24 @@ final class ProbePeerPoolTests: XCTestCase {
         pool.reset()
         XCTAssertNotNil(pool.reserveIncoming(candidate(33)))
     }
+
+    func testFullJournalUnknownFloodCannotBlockSavedPeerRecovery() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProbeCheckpointStore(url: directory.appendingPathComponent("session.json"))
+        var state = ProbeSessionState(sessionID: String(repeating: "f", count: 32), payloadSize: 2048)
+        for value in 1...8 { try state.bindPeer(candidate(value).context.sessionID) }
+        try store.save(state)
+        let model = ProbeModel(store: store)
+        var pool = ProbePeerPool()
+        for value in 100...131 { XCTAssertTrue(pool.offer(candidate(value))) }
+        XCTAssertEqual(pool.waitingCount, 32)
+        XCTAssertFalse(model.candidateMayContinue(candidate(132)))
+        pool.pruneWaiting(eligible: model.candidateMayContinue)
+        XCTAssertEqual(pool.waitingCount, 0)
+        XCTAssertTrue(model.candidateMayContinue(candidate(1)))
+        XCTAssertTrue(pool.offer(candidate(1)))
+        let saved = try XCTUnwrap(pool.reserveNext(eligible: model.candidateMayContinue))
+        XCTAssertEqual(saved.candidate.context.sessionID, candidate(1).context.sessionID)
+    }
 }

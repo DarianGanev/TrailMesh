@@ -231,19 +231,25 @@ final class ProbeModel: ObservableObject, ProbeLinkHost {
         state?.intendedActive == true && !awaitingResume && links[link.endpointID] === link && pool.contains(link.reservation)
     }
 
-    private func candidateIsEligible(_ candidate: ProbePeerCandidate) -> Bool {
-        guard let state,
-              (retryCounts[candidate.context.sessionID] ?? 0) <= 5,
-              (eligibleAfter[candidate.context.sessionID] ?? 0) <= ProcessInfo.processInfo.systemUptime else { return false }
+    func candidateMayContinue(_ candidate: ProbePeerCandidate) -> Bool {
+        guard let state, (retryCounts[candidate.context.sessionID] ?? 0) <= 5 else { return false }
         guard let peer = state.peer(candidate.context.sessionID) else { return state.peers.count < 8 }
         guard let completed = peer.completedAt else { return true }
         let age = Date().timeIntervalSince(completed)
         return age >= 0 && age < 60 && (catchUpLinks[peer.sessionID] ?? 0) < 1 && (catchUpRequests[peer.sessionID] ?? 0) < 3
     }
 
+    private func candidateIsEligible(_ candidate: ProbePeerCandidate) -> Bool {
+        candidateMayContinue(candidate)
+            && (eligibleAfter[candidate.context.sessionID] ?? 0) <= ProcessInfo.processInfo.systemUptime
+    }
+
     private func fillSlots() {
         guard mayStartWork, !finishingInBackground, restartWork == nil, let scanner = discoverer,
               let manager = connectionManager, let localContext else { return }
+        // A full journal cannot admit new identities. Remove permanently blocked
+        // candidates so they cannot occupy every waiting slot ahead of saved peers.
+        pool.pruneWaiting(eligible: { self.candidateMayContinue($0) })
         while let reservation = pool.reserveNext(eligible: { self.candidateIsEligible($0) }) {
             guard let link = makeLink(reservation, manager: manager) else { continue }
             scanner.requestConnection(to: link.endpointID, using: Data(localContext.encoded.utf8), mediums: [.ble]) { [weak self, weak manager, weak link] error in
@@ -535,7 +541,9 @@ extension ProbeModel: DiscovererDelegate, AdvertiserDelegate, ConnectionManagerD
         guard self.discoverer === discoverer, mayStartWork, !finishingInBackground,
               let remote = ProbePeerContext.parse(context), let localContext,
               localContext.isCompatible(with: remote), localContext.canInitiate(to: remote) else { return }
-        _ = pool.offer(ProbePeerCandidate(endpointID: endpointID, context: remote))
+        let candidate = ProbePeerCandidate(endpointID: endpointID, context: remote)
+        guard candidateMayContinue(candidate) else { return }
+        _ = pool.offer(candidate)
         fillSlots()
     }
 

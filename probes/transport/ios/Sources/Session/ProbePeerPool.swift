@@ -79,6 +79,10 @@ struct ProbePeerPool {
         waiting.removeAll { $0.endpointID == endpointID }
     }
 
+    mutating func pruneWaiting(eligible: (ProbePeerCandidate) -> Bool) {
+        waiting.removeAll { !eligible($0) }
+    }
+
     mutating func reset() {
         active.removeAll()
         waiting.removeAll()
