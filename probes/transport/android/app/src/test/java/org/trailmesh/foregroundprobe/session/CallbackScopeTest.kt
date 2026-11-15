@@ -7,28 +7,30 @@ class CallbackScopeTest {
     @Test fun stopAndNewSessionRejectAllOldSdkAndTimerCallbacks() {
         val scope = CallbackScope()
         scope.start()
-        val old = scope.capture()
+        val old = scope.select("peer")
         scope.stop()
         assertFalse(scope.accepts(old))
         scope.start()
         assertFalse(scope.accepts(old))
-        assertTrue(scope.accepts(scope.capture()))
+        assertTrue(scope.acceptsRadio(scope.capture()))
     }
 
-    @Test fun radioRestartAndPeerChangeInvalidateEndpointBoundCallbacks() {
+    @Test fun simultaneousPeersHaveIndependentGenerationsAndRetirement() {
         val scope = CallbackScope()
         scope.start()
-        val radio = scope.capture()
-        scope.select("first")
-        val first = scope.capture()
-        assertFalse(scope.accepts(radio))
+        val first = scope.select("first")
+        val second = scope.select("second")
         assertTrue(scope.accepts(first, "first"))
+        assertTrue(scope.accepts(second, "second"))
         assertFalse(scope.accepts(first, "second"))
-        scope.select("second")
-        assertFalse(scope.accepts(first, "first"))
-        val second = scope.capture()
+        scope.retire("first")
+        val replacement = scope.select("first")
+        assertFalse(scope.accepts(first))
+        assertTrue(scope.accepts(second))
+        assertTrue(scope.accepts(replacement))
         scope.restartRadio()
-        assertFalse(scope.accepts(second, "second"))
+        assertFalse(scope.accepts(second))
+        assertFalse(scope.accepts(replacement))
     }
 
     @Test fun advertisingInitiationRemainsScopedToItsRadioButOldRadioIsRejected() {

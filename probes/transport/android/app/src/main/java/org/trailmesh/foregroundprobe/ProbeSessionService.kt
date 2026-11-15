@@ -22,6 +22,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.*
@@ -36,7 +37,7 @@ import kotlin.random.Random
 internal data class ProbeSnapshot(
     val active: Boolean, val status: String, val checkpoint: SessionCheckpoint?,
     val permissionTicket: Long, val permissionsNeeded: List<String>,
-    val selectedPeer: String?,
+    val activePeers: Int, val waitingPeers: Int,
 ) {
     val canResume: Boolean get() = !active && checkpoint?.open == true
 }
@@ -56,27 +57,19 @@ class ProbeSessionService : Service() {
     private var message = "Not running"
     private val observers = linkedSetOf<(ProbeSnapshot) -> Unit>()
     private val timers = mutableMapOf<String, Runnable>()
-    private val candidates = linkedMapOf<String, Pair<String, ProbePeerContext>>()
-    private var selectedEndpoint: String? = null
-    private var selectedPeer: ProbePeerContext? = null
-    private var linkToken: CallbackToken? = null
-    private var accepted = false
-    private var connected = false
-    private var exchange = LinkExchange()
-    private val helloReceived get() = exchange.helloReceived
-    private val localFinishAcknowledged get() = exchange.localFinishAcknowledged
-    private var finishingGrace = false
-    private var finishTransmissions = 0
-    private val pendingSend get() = exchange.pending
-    private val transfers = mutableMapOf<Long, Transfer>()
+    private val scheduler = PeerScheduler()
+    private val registry = ProbeLinkRegistry(scope)
+    private val links get() = registry.links
+    // The shared advertising delegate cannot identify an old attempt after endpoint reuse.
+    // Keep retired IDs until the radio rotates, after all healthy links have drained.
+    private val cooldowns = mutableMapOf<String, Long>()
+    private var restartWhenIdle = false
     private var radioFailures = 0
     private var waitingForRadio = false
     private var permissionTicket = System.nanoTime()
     private var permissionsNeeded = emptyList<String>()
     private var monitoring = false
     private var lastNetworkPresent: Boolean? = null
-
-    private data class Transfer(val token: CallbackToken, val purpose: String, val sendSerial: Long? = null)
 
     private val radioReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) = onMain {
@@ -129,6 +122,9 @@ class ProbeSessionService : Service() {
         scope.stop()
         active = false
         cancelTimers()
+        links.values.forEach { it.cancelTimers(handler); it.transfers.clear() }
+        registry.clear()
+        scheduler.clear()
         stopSdk()
         unregisterMonitoring()
         observers.clear()
@@ -141,7 +137,7 @@ class ProbeSessionService : Service() {
     }
     internal fun removeObserver(observer: (ProbeSnapshot) -> Unit) { observers.remove(observer) }
     internal fun snapshot() = ProbeSnapshot(active, message, ledger?.checkpoint ?: saved,
-        permissionTicket, permissionsNeeded, selectedPeer?.sessionID)
+        permissionTicket, permissionsNeeded, links.size, scheduler.waitingCount)
 
     internal fun permissionResult(ticket: Long, granted: Boolean) = onMain {
         if (!active || ticket != permissionTicket || permissionsNeeded.isEmpty()) return@onMain
@@ -162,6 +158,9 @@ class ProbeSessionService : Service() {
         scope.stop()
         active = false
         cancelTimers()
+        links.values.forEach { it.cancelTimers(handler); it.transfers.clear() }
+        registry.clear()
+        scheduler.clear()
         stopSdk()
         unregisterMonitoring()
         try {
@@ -193,6 +192,7 @@ class ProbeSessionService : Service() {
             scope.start()
             active = true
             radioFailures = 0
+            cooldowns.clear()
             permissionTicket++
             permissionsNeeded = emptyList()
             registerMonitoring()
@@ -242,347 +242,404 @@ class ProbeSessionService : Service() {
         val context = localContext()
         if (ledger!!.checkpoint.peers.size >= SessionLedger.MAX_PEERS &&
             ledger!!.checkpoint.peers.all { it.complete || it.exhausted }) {
-            pause("This session reached its eight-peer limit. Start a new session for more peers.")
+            pause("This controlled test run reached its eight-peer journal limit. Start a new run for more peers.")
             return
         }
         val token = scope.capture()
-        val advertising = AdvertisingOptions.Builder().setStrategy(Strategy.P2P_POINT_TO_POINT)
+        val advertising = AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER)
             .setConnectionType(ConnectionType.NON_DISRUPTIVE).setLowPower(true).build()
-        val discovery = DiscoveryOptions.Builder().setStrategy(Strategy.P2P_POINT_TO_POINT).setLowPower(true).build()
-        status("Finding compatible nearby probes. Each connection tests 20 payloads in both directions.")
+        val discovery = DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).setLowPower(true).build()
+        status("Finding cluster probes. Up to four links run together; this controlled test records eight peers.")
         client.startAdvertising(context.encode(), SERVICE_ID, lifecycle(token), advertising)
-            .addOnFailureListener { onMain { if (scope.acceptsRadio(token) && selectedEndpoint == null) nearbyFailure("Advertising", it) } }
+            .addOnFailureListener { onMain { if (scope.acceptsRadio(token)) nearbyFailure("Advertising", it) } }
         client.startDiscovery(SERVICE_ID, discovery(token), discovery)
-            .addOnFailureListener { onMain { if (scope.acceptsRadio(token) && selectedEndpoint == null) nearbyFailure("Discovery", it) } }
+            .addOnFailureListener { onMain { if (scope.acceptsRadio(token)) nearbyFailure("Discovery", it) } }
         event("radio_cycle_started", "connection_policy" to "non_disruptive", "discovery_policy" to "low_power")
     }
 
     private fun discovery(token: CallbackToken) = object : EndpointDiscoveryCallback() {
         override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) = onMain {
-            if (!scope.acceptsRadio(token) || selectedEndpoint != null || timers.containsKey("recovery")) return@onMain
+            if (!scope.acceptsRadio(token) || timers.containsKey("recovery")) return@onMain
             val peer = ProbePeerContext.parse(info.endpointName) ?: return@onMain
             if (!eligible(peer) || !localContext().canInitiate(peer)) return@onMain
-            if (candidates.size < SessionLedger.MAX_PEERS) candidates[peer.sessionID] = endpointId to peer
-            chooseCandidate()
+            scheduler.discover(endpointId, peer, cooldowns[peer.sessionID] ?: 0)
+            chooseCandidates()
         }
         override fun onEndpointLost(endpointId: String) = onMain {
             if (!scope.acceptsRadio(token)) return@onMain
-            candidates.entries.removeAll { it.value.first == endpointId }
+            scheduler.lost(endpointId)
+            publish()
         }
     }
 
     private fun eligible(peer: ProbePeerContext, incoming: Boolean = false): Boolean {
         if (!localContext().isCompatible(peer)) return false
+        if (incoming && SystemClock.elapsedRealtime() < (cooldowns[peer.sessionID] ?: 0)) return false
         val stored = ledger!!.peer(peer.sessionID)
         return stored?.let { !it.exhausted && (!it.complete || incoming &&
             ledger!!.canReplayCompletion(it.sessionID, System.currentTimeMillis())) }
             ?: (ledger!!.checkpoint.peers.size < SessionLedger.MAX_PEERS)
     }
 
-    private fun chooseCandidate() {
-        if (!active || selectedEndpoint != null || candidates.isEmpty()) return
-        val candidate = candidates.values.first()
-        if (!select(candidate.first, candidate.second)) return
-        val token = scope.capture()
-        val options = ConnectionOptions.Builder().setConnectionType(ConnectionType.NON_DISRUPTIVE)
-            .setLowPower(true).build()
-        event("connection_requested", "peer_platform" to candidate.second.platform.name.lowercase())
-        client.requestConnection(localContext().encode(), candidate.first, lifecycle(token), options)
-            .addOnFailureListener { onMain { if (scope.accepts(token)) nearbyFailure("Connection", it) } }
+    private fun chooseCandidates() {
+        if (!active || timers.containsKey("recovery")) return
+        cancel("candidate_retry")
+        if (links.isEmpty() && ledger!!.checkpoint.peers.size >= SessionLedger.MAX_PEERS &&
+            ledger!!.checkpoint.peers.all { it.complete || it.exhausted }) {
+            pause("This controlled test run reached its eight-peer journal limit. Start a new run for more peers.")
+            return
+        }
+        while (links.size < PeerScheduler.MAX_LINKS) {
+            val candidate = scheduler.takeNext(SystemClock.elapsedRealtime(),
+                { eligible(it.peer) }, { !registry.wasRetired(it.endpoint) }) ?: break
+            val link = select(candidate.endpoint, candidate.peer)
+            if (link == null) {
+                scheduler.release(candidate.endpoint)
+                if (!active) return
+                continue
+            }
+            val options = ConnectionOptions.Builder().setConnectionType(ConnectionType.NON_DISRUPTIVE)
+                .setLowPower(true).build()
+            event(link, "connection_requested", "peer_platform" to link.peer.platform.name.lowercase())
+            if (!current(link)) return
+            client.requestConnection(localContext().encode(), link.endpoint, lifecycle(scope.capture(), link.token), options)
+                .addOnFailureListener { onMain { if (current(link)) nearbyFailure("Connection", it, link) } }
+        }
+        if (links.isEmpty() && (restartWhenIdle || scheduler.waitingCount > 0 || registry.hasRetiredEndpoints)) {
+            val readyAt = scheduler.nextReadyAt ?: SystemClock.elapsedRealtime()
+            schedule("candidate_retry", maxOf(1_000, readyAt - SystemClock.elapsedRealtime())) { startRadio() }
+        }
+        publish()
     }
 
-    private fun select(endpointId: String, peer: ProbePeerContext, incoming: Boolean = false): Boolean {
-        if (!active || selectedEndpoint != null || !eligible(peer, incoming)) return false
+    private fun select(endpointId: String, peer: ProbePeerContext, incoming: Boolean = false): ProbeLink? {
+        if (!active || registry.wasRetired(endpointId) || links.containsKey(endpointId) || !eligible(peer, incoming)) return null
         if (!durable {
             if (ledger!!.peer(peer.sessionID)?.complete == true) {
                 require(ledger!!.beginCompletionReplay(peer.sessionID, System.currentTimeMillis()))
-            } else ledger!!.selectPeer(peer.sessionID, peer.platform.name.lowercase())
-        } || !active) return false
-        selectedEndpoint = endpointId
-        selectedPeer = peer
-        scope.select(endpointId)
-        linkToken = scope.capture()
-        client.stopDiscovery()
-        status("Connecting to a compatible ${peer.platform.name.lowercase()} probe.")
-        schedule("connection", CONNECTION_TIMEOUT) { recover("connection_timeout") }
-        return true
+            } else requireNotNull(ledger!!.selectPeer(peer.sessionID, peer.platform.name.lowercase()))
+        } || !active) return null
+        val link = registry.add(endpointId, peer) ?: return null
+        status("${links.size}/4 links connecting or exchanging; ${scheduler.waitingCount} waiting.")
+        schedule(link, "connection", CONNECTION_TIMEOUT) { recover(link, "connection_timeout") }
+        return link
     }
 
-    private fun lifecycle(origin: CallbackToken) = object : ConnectionLifecycleCallback() {
+    private fun current(link: ProbeLink): Boolean = active && registry.current(link.token) === link
+
+    private fun lifecycle(origin: CallbackToken, requested: CallbackToken? = null) = object : ConnectionLifecycleCallback() {
+        // Tokens are captured when this callback accepts its first initiation for an endpoint.
+        // A delayed result/disconnect never borrows a replacement link's token.
+        private val callbacks = LinkCallbacks(requested)
+        private fun linkFor(endpoint: String): ProbeLink? {
+            if (!scope.acceptsRadio(origin)) return null
+            val token = callbacks.token(endpoint) ?: return null
+            return registry.current(token, endpoint)
+        }
+
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) = onMain {
             if (!scope.acceptsRadio(origin)) return@onMain
+            if (requested != null && !scope.accepts(requested, endpointId)) return@onMain
             val peer = ProbePeerContext.parse(info.endpointName)
-            if (peer == null || !eligible(peer, incoming = true) ||
-                (selectedEndpoint != null && (selectedEndpoint != endpointId || selectedPeer != peer))) {
+            var link = links[endpointId]
+            if (peer == null || registry.wasRetired(endpointId) ||
+                (link != null && link.peer != peer) || !eligible(peer, incoming = true)) {
                 client.rejectConnection(endpointId)
                 event("connection_rejected", "reason" to "incompatible_or_busy")
                 return@onMain
             }
-            if (selectedEndpoint == null && !select(endpointId, peer, incoming = true)) { client.rejectConnection(endpointId); return@onMain }
-            if (accepted) return@onMain
-            accepted = true
-            val token = scope.capture()
-            event("connection_accepted", "authentication" to "unauthenticated_generated_bytes_only")
-            client.acceptConnection(endpointId, payloadCallback(token)).addOnFailureListener {
-                onMain { if (scope.accepts(token, endpointId)) nearbyFailure("Connection", it) }
+            if (link == null) {
+                if (!scheduler.reserveIncoming(endpointId, peer)) {
+                    client.rejectConnection(endpointId)
+                    return@onMain
+                }
+                link = select(endpointId, peer, incoming = true)
+                if (link == null) {
+                    scheduler.release(endpointId)
+                    client.rejectConnection(endpointId)
+                    return@onMain
+                }
+            }
+            val selected = link
+            if (!callbacks.initiate(selected)) return@onMain
+            if (selected.accepted) return@onMain
+            selected.accepted = true
+            event(selected, "connection_accepted", "authentication" to "unauthenticated_generated_bytes_only")
+            if (!current(selected)) return@onMain
+            client.acceptConnection(endpointId, payloadCallback(selected)).addOnFailureListener {
+                onMain { if (current(selected)) nearbyFailure("Connection", it, selected) }
             }
         }
         override fun onConnectionResult(endpointId: String, result: ConnectionResolution) = onMain {
-            val token = linkToken ?: return@onMain
-            if (!scope.acceptsRadio(origin) || !scope.accepts(token, endpointId)) return@onMain
+            val link = linkFor(endpointId) ?: return@onMain
             if (result.status.statusCode != ConnectionsStatusCodes.STATUS_OK) {
-                event("connection_failed", "status_code" to "${result.status.statusCode}")
-                recover("connection_failed")
+                event(link, "connection_failed", "status_code" to "${result.status.statusCode}")
+                recover(link, "connection_failed")
                 return@onMain
             }
             // A healthy link ends the consecutive radio-failure streak. Resetting on
             // just one start callback could retry forever when the other operation fails.
             radioFailures = 0
-            if (connected) return@onMain
-            connected = true
-            cancel("connection")
-            schedule("exchange_deadline", 180_000) { recover("exchange_deadline") }
-            client.stopDiscovery()
-            event("connected", "peer_platform" to selectedPeer!!.platform.name.lowercase())
-            status("Connected. Exchanging generated bytes in both directions.")
-            sendControl(ForegroundFrame.encodeHelloMessage(localContext().sessionID, selectedPeer!!.sessionID,
+            if (link.connected) return@onMain
+            link.connected = true
+            cancel(link, "connection")
+            schedule(link, "exchange_deadline", 180_000) { recover(link, "exchange_deadline") }
+            event(link, "connected", "peer_platform" to link.peer.platform.name.lowercase())
+            if (!current(link)) return@onMain
+            status("${links.size}/4 cluster links connected or connecting. Exchanging generated bytes.")
+            if (!current(link)) return@onMain
+            sendControl(link, ForegroundFrame.encodeHelloMessage(localContext().sessionID, link.peer.sessionID,
                 localContext().payloadSize), "hello")
-            schedule("hello", HELLO_TIMEOUT) { recover("hello_timeout") }
-            if (helloReceived) { cancel("hello"); sendNext() }
+            schedule(link, "hello", HELLO_TIMEOUT) { recover(link, "hello_timeout") }
+            if (link.helloReceived) { cancel(link, "hello"); sendNext(link) }
         }
         override fun onDisconnected(endpointId: String) = onMain {
-            val token = linkToken ?: return@onMain
-            if (!scope.acceptsRadio(origin) || !scope.accepts(token, endpointId)) return@onMain
-            event("disconnected")
-            if (ledger!!.peer(selectedPeer!!.sessionID)?.complete == true) startRadio()
-            else recover("peer_disconnected")
+            val link = linkFor(endpointId) ?: return@onMain
+            event(link, "disconnected")
+            if (ledger!!.peer(link.peer.sessionID)?.complete == true) depart(link)
+            else recover(link, "peer_disconnected")
         }
         override fun onBandwidthChanged(endpointId: String, bandwidthInfo: BandwidthInfo) = onMain {
-            val token = linkToken ?: return@onMain
-            if (scope.acceptsRadio(origin) && scope.accepts(token, endpointId))
-                event("bandwidth_changed", "quality" to "${bandwidthInfo.quality}")
+            val link = linkFor(endpointId) ?: return@onMain
+            event(link, "bandwidth_changed", "quality" to "${bandwidthInfo.quality}")
         }
     }
 
-    private fun payloadCallback(token: CallbackToken) = object : PayloadCallback() {
-        override fun onPayloadReceived(endpointId: String, payload: Payload) = onMain {
-            if (!scope.accepts(token, endpointId)) return@onMain
-            if (!exchange.acceptPacket()) {
-                event("peer_frame_limit")
-                val peer = selectedPeer ?: return@onMain
-                if (!durable { ledger!!.abandon(peer.sessionID) }) return@onMain
-                resetRadio()
-                status("Peer sent too many frames. Finding other peers; Resume can retry saved progress.")
-                schedule("recovery", 1_500) { startRadio() }
-                return@onMain
+    private fun payloadCallback(link: ProbeLink) = object : PayloadCallback() {
+        override fun onPayloadReceived(endpointId: String, payload: Payload) = onLinkMain(link) {
+            if (!current(link) || endpointId != link.endpoint) return@onLinkMain
+            if (!link.exchange.acceptPacket()) {
+                event(link, "peer_frame_limit")
+                if (!current(link)) return@onLinkMain
+                val peer = link.peer
+                if (!durable { ledger!!.abandon(peer.sessionID) }) return@onLinkMain
+                depart(link)
+                if (!active) return@onLinkMain
+                status("Peer sent too many frames. Other cluster links continue; Resume can retry saved progress.")
+                return@onLinkMain
             }
             val bytes = payload.asBytes() ?: run {
                 client.cancelPayload(payload.id)
-                event("invalid_frame", "reason" to "non_bytes_cancelled")
-                return@onMain
+                event(link, "invalid_frame", "reason" to "non_bytes_cancelled")
+                return@onLinkMain
             }
             try {
                 when {
-                    ForegroundFrame.isHelloMessage(bytes) -> hello(ForegroundFrame.decodeHelloMessage(bytes))
-                    ForegroundFrame.isFinishMessage(bytes) -> finish(ForegroundFrame.decodeFinishMessage(bytes))
-                    ForegroundFrame.isSessionAckMessage(bytes) -> acknowledge(ForegroundFrame.decodeSessionAckMessage(bytes))
-                    else -> receive(ForegroundFrame.decodeSessionDataMessage(bytes))
+                    ForegroundFrame.isHelloMessage(bytes) -> hello(link, ForegroundFrame.decodeHelloMessage(bytes))
+                    ForegroundFrame.isFinishMessage(bytes) -> finish(link, ForegroundFrame.decodeFinishMessage(bytes))
+                    ForegroundFrame.isSessionAckMessage(bytes) -> acknowledge(link, ForegroundFrame.decodeSessionAckMessage(bytes))
+                    else -> receive(link, ForegroundFrame.decodeSessionDataMessage(bytes))
                 }
-            } catch (_: IllegalArgumentException) { event("invalid_frame", "reason" to "validation_failed") }
+            } catch (_: IllegalArgumentException) { event(link, "invalid_frame", "reason" to "validation_failed") }
         }
-        override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) = onMain {
-            if (!scope.accepts(token, endpointId)) return@onMain
-            if (update.status == PayloadTransferUpdate.Status.IN_PROGRESS) return@onMain
-            val transfer = transfers.remove(update.payloadId) ?: return@onMain
-            if (!scope.accepts(transfer.token, endpointId)) return@onMain
+        override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) = onLinkMain(link) {
+            if (!current(link) || endpointId != link.endpoint) return@onLinkMain
+            if (update.status == PayloadTransferUpdate.Status.IN_PROGRESS) return@onLinkMain
+            val transfer = link.transfers.remove(update.payloadId) ?: return@onLinkMain
+            if (!scope.accepts(transfer.token, endpointId)) return@onLinkMain
             if (update.status == PayloadTransferUpdate.Status.SUCCESS) {
-                if (transfer.purpose == "finish_ack") { exchange.finishAckDelivered(); maybeCompletePeer() }
+                if (transfer.purpose == "finish_ack") { link.exchange.finishAckDelivered(); maybeCompletePeer(link) }
             } else if (transfer.purpose == "data") {
-                if (pendingSend?.serial == transfer.sendSerial) retryAttempt("payload_transfer_failed")
+                if (link.pendingSend?.serial == transfer.sendSerial) retryAttempt(link, "payload_transfer_failed")
             } else if (transfer.purpose == "hello" || transfer.purpose == "finish") {
-                recover("control_transfer_failed")
-            } else event("acknowledgement_transfer_failed")
+                recover(link, "control_transfer_failed")
+            } else event(link, "acknowledgement_transfer_failed")
         }
     }
 
-    private fun hello(value: ForegroundFrame.HelloMessage) {
-        if (helloReceived) return
-        exchange.hello(value, localContext(), selectedPeer!!)
-        cancel("hello")
-        event("hello_validated")
-        if (connected) sendNext()
+    private fun hello(link: ProbeLink, value: ForegroundFrame.HelloMessage) {
+        if (link.helloReceived) return
+        link.exchange.hello(value, localContext(), link.peer)
+        cancel(link, "hello")
+        event(link, "hello_validated")
+        if (link.connected) sendNext(link)
     }
 
-    private fun receive(value: ForegroundFrame.SessionDataMessage) {
-        require(helloReceived && value.sessionID == selectedPeer!!.sessionID &&
+    private fun receive(link: ProbeLink, value: ForegroundFrame.SessionDataMessage) {
+        require(link.helloReceived && value.sessionID == link.peer.sessionID &&
             value.attemptIndex in 0 until SessionLedger.ATTEMPTS && value.frame.payload.size == localContext().payloadSize)
         val expected = ForegroundFrame.makeTestPayload(localContext().payloadSize, value.attemptIndex)
         val matches = expected.contentEquals(value.frame.payload)
         val previous = ledger!!.peer(value.sessionID)!!.incoming[value.attemptIndex]
         val accepted = if (previous != 0) previous == 1 else matches
-        val evidence = evidence(if (previous != 0) "payload_duplicate" else "payload_received", "attempt_index" to "${value.attemptIndex}",
+        val evidence = evidence(link, if (previous != 0) "payload_duplicate" else "payload_received", "attempt_index" to "${value.attemptIndex}",
             "payload_size_bytes" to "${value.frame.payload.size}", "success" to "$accepted",
-            "direction" to direction(false), "expected_sha256" to ForegroundFrame.sha256Hex(expected),
+            "direction" to direction(link, false), "expected_sha256" to ForegroundFrame.sha256Hex(expected),
             "received_sha256" to ForegroundFrame.hex(value.frame.digest))
         if (!durable { ledger!!.receive(value.sessionID, value.attemptIndex, matches, evidence) }) return
-        if (previous == 0 && accepted && timers.containsKey("finish_wait")) {
-            schedule("finish_wait", 60_000) { recover("reciprocal_progress_timeout") }
+        if (previous == 0 && accepted && link.timers.containsKey("finish_wait")) {
+            schedule(link, "finish_wait", 60_000) { recover(link, "reciprocal_progress_timeout") }
         }
-        if (!active) return
-        sendControl(ForegroundFrame.encodeSessionAckMessage(value.sessionID, value.attemptIndex,
+        if (!current(link)) return
+        sendControl(link, ForegroundFrame.encodeSessionAckMessage(value.sessionID, value.attemptIndex,
             accepted, value.frame.digest), "ack")
         publish()
     }
 
-    private fun acknowledge(value: ForegroundFrame.SessionAckMessage) {
-        if (pendingSend == null) return
-        if (!exchange.matchesAck(value, localContext().sessionID)) {
-            event("stale_acknowledgement_ignored")
+    private fun acknowledge(link: ProbeLink, value: ForegroundFrame.SessionAckMessage) {
+        if (link.pendingSend == null) return
+        if (!link.exchange.matchesAck(value, localContext().sessionID)) {
+            event(link, "stale_acknowledgement_ignored")
             return
         }
-        completeAttempt(value.accepted, if (value.accepted) "acknowledged" else "peer_rejected", value.digest)
+        completeAttempt(link, value.accepted, if (value.accepted) "acknowledged" else "peer_rejected", value.digest)
     }
 
-    private fun sendNext() {
-        if (!active || !connected || !helloReceived || pendingSend != null) return
-        val peer = ledger!!.peer(selectedPeer!!.sessionID)!!
-        if (peer.nextOutgoing >= SessionLedger.ATTEMPTS) { sendFinish(); return }
-        if (peer.transmissions >= SessionLedger.MAX_TRANSMISSIONS) { completeAttempt(false, "transmission_limit"); return }
+    private fun sendNext(link: ProbeLink) {
+        if (!current(link) || !link.connected || !link.helloReceived || link.pendingSend != null) return
+        val peer = ledger!!.peer(link.peer.sessionID)!!
+        if (peer.nextOutgoing >= SessionLedger.ATTEMPTS) { sendFinish(link); return }
+        if (peer.transmissions >= SessionLedger.MAX_TRANSMISSIONS) { completeAttempt(link, false, "transmission_limit"); return }
         if (!durable { ledger!!.beginTransmission(peer.sessionID) }) return
         val bytes = ForegroundFrame.makeTestPayload(localContext().payloadSize, peer.nextOutgoing)
-        val pending = exchange.beginSend(peer.nextOutgoing, ForegroundFrame.sha256(bytes))
-        event("payload_sent", "attempt_index" to "${pending.index}", "transmission" to "${peer.transmissions + 1}",
-            "payload_size_bytes" to "${bytes.size}", "direction" to direction(true), "expected_sha256" to ForegroundFrame.hex(pending.digest))
-        if (!active) return
-        sendBytes(ForegroundFrame.encodeSessionDataMessage(localContext().sessionID, pending.index, bytes), "data", pending.serial)
-        schedule("ack", ACK_TIMEOUT) { if (pendingSend?.serial == pending.serial) retryAttempt("acknowledgement_timeout") }
+        val pending = link.exchange.beginSend(peer.nextOutgoing, ForegroundFrame.sha256(bytes))
+        event(link, "payload_sent", "attempt_index" to "${pending.index}", "transmission" to "${peer.transmissions + 1}",
+            "payload_size_bytes" to "${bytes.size}", "direction" to direction(link, true), "expected_sha256" to ForegroundFrame.hex(pending.digest))
+        if (!current(link)) return
+        sendBytes(link, ForegroundFrame.encodeSessionDataMessage(localContext().sessionID, pending.index, bytes), "data", pending.serial)
+        schedule(link, "ack", ACK_TIMEOUT) { if (link.pendingSend?.serial == pending.serial) retryAttempt(link, "acknowledgement_timeout") }
     }
 
-    private fun retryAttempt(reason: String) {
-        if (!active || pendingSend == null) return
-        val peer = ledger!!.peer(selectedPeer!!.sessionID)!!
-        if (peer.transmissions >= SessionLedger.MAX_TRANSMISSIONS) completeAttempt(false, reason)
+    private fun retryAttempt(link: ProbeLink, reason: String) {
+        if (!current(link) || link.pendingSend == null) return
+        val peer = ledger!!.peer(link.peer.sessionID)!!
+        if (peer.transmissions >= SessionLedger.MAX_TRANSMISSIONS) completeAttempt(link, false, reason)
         else {
-            cancel("ack")
-            exchange.clearPending()
-            event("attempt_retry", "reason" to reason)
-            schedule("next_send", 300) { sendNext() }
+            cancel(link, "ack")
+            link.exchange.clearPending()
+            event(link, "attempt_retry", "reason" to reason)
+            schedule(link, "next_send", 300) { sendNext(link) }
         }
     }
 
-    private fun completeAttempt(success: Boolean, reason: String, receivedDigest: ByteArray? = null) {
-        val peer = selectedPeer ?: return
+    private fun completeAttempt(link: ProbeLink, success: Boolean, reason: String, receivedDigest: ByteArray? = null) {
+        val peer = link.peer
         val index = ledger!!.peer(peer.sessionID)!!.nextOutgoing
-        cancel("ack")
+        cancel(link, "ack")
         val digest = ForegroundFrame.sha256(ForegroundFrame.makeTestPayload(localContext().payloadSize, index))
-        val result = evidence("attempt_result", "attempt_index" to "$index", "payload_size_bytes" to "${localContext().payloadSize}",
-            "direction" to direction(true), "success" to "$success", "failure_reason" to if (success) "none" else reason,
+        val result = evidence(link, "attempt_result", "attempt_index" to "$index", "payload_size_bytes" to "${localContext().payloadSize}",
+            "direction" to direction(link, true), "success" to "$success", "failure_reason" to if (success) "none" else reason,
             "expected_sha256" to ForegroundFrame.hex(digest), "received_sha256" to (receivedDigest?.let(ForegroundFrame::hex) ?: "unavailable"))
         if (!durable { ledger!!.completeOutgoing(peer.sessionID, success, result) }) return
-        exchange.clearPending()
-        transfers.entries.removeAll { it.value.purpose == "data" }
-        schedule("next_send", 100) { sendNext() }
+        link.exchange.clearPending()
+        link.transfers.entries.removeAll { it.value.purpose == "data" }
+        schedule(link, "next_send", 100) { sendNext(link) }
         publish()
     }
 
-    private fun sendFinish() {
-        if (!active || localFinishAcknowledged || timers.containsKey("finish")) { maybeCompletePeer(); return }
-        if (finishTransmissions >= SessionLedger.MAX_TRANSMISSIONS) { recover("finish_timeout"); return }
-        val peer = ledger!!.peer(selectedPeer!!.sessionID)!!
+    private fun sendFinish(link: ProbeLink) {
+        if (!active || link.localFinishAcknowledged || link.timers.containsKey("finish")) { maybeCompletePeer(link); return }
+        if (link.finishTransmissions >= SessionLedger.MAX_TRANSMISSIONS) { recover(link, "finish_timeout"); return }
+        val peer = ledger!!.peer(link.peer.sessionID)!!
         if (peer.nextOutgoing != SessionLedger.ATTEMPTS) return
-        finishTransmissions++
-        sendControl(ForegroundFrame.encodeFinishMessage(localContext().sessionID, peer.sessionID, false,
+        link.finishTransmissions++
+        sendControl(link, ForegroundFrame.encodeFinishMessage(localContext().sessionID, peer.sessionID, false,
             peer.successfulOutgoing, peer.failedOutgoing), "finish")
-        schedule("finish", FINISH_TIMEOUT) { sendFinish() }
+        schedule(link, "finish", FINISH_TIMEOUT) { sendFinish(link) }
     }
 
-    private fun finish(value: ForegroundFrame.FinishMessage) {
-        require(helloReceived && value.sessionID == selectedPeer!!.sessionID && value.peerSessionID == localContext().sessionID)
-        val peer = ledger!!.peer(selectedPeer!!.sessionID)!!
+    private fun finish(link: ProbeLink, value: ForegroundFrame.FinishMessage) {
+        require(link.helloReceived && value.sessionID == link.peer.sessionID && value.peerSessionID == localContext().sessionID)
+        val peer = ledger!!.peer(link.peer.sessionID)!!
         if (value.acknowledgement) {
-            exchange.finishAck(value, localContext().sessionID, peer)
-            cancel("finish")
-            event("finish_acknowledged")
+            link.exchange.finishAck(value, localContext().sessionID, peer)
+            cancel(link, "finish")
+            event(link, "finish_acknowledged")
         } else {
             if (!durable { ledger!!.remoteFinished(peer.sessionID, value.successfulAttempts, value.failedAttempts) }) return
-            cancel("departure")
-            finishingGrace = false
-            exchange.remoteFinished()
-            event("remote_finished", "successful_attempts" to "${value.successfulAttempts}", "failed_attempts" to "${value.failedAttempts}")
-            if (!active) return
-            sendControl(ForegroundFrame.encodeFinishMessage(localContext().sessionID, peer.sessionID, true,
+            cancel(link, "departure")
+            link.finishingGrace = false
+            link.exchange.remoteFinished()
+            event(link, "remote_finished", "successful_attempts" to "${value.successfulAttempts}", "failed_attempts" to "${value.failedAttempts}")
+            if (!current(link)) return
+            sendControl(link, ForegroundFrame.encodeFinishMessage(localContext().sessionID, peer.sessionID, true,
                 value.successfulAttempts, value.failedAttempts), "finish_ack")
         }
-        maybeCompletePeer()
+        maybeCompletePeer(link)
     }
 
-    private fun maybeCompletePeer() {
-        if (!active || !connected || finishingGrace) return
-        val complete = ledger!!.peer(selectedPeer!!.sessionID)!!.nextOutgoing == SessionLedger.ATTEMPTS
-        if (!exchange.canDepart(complete) || transfers.values.any { it.purpose == "finish_ack" }) {
-            if (complete && !timers.containsKey("finish_wait")) schedule("finish_wait", 60_000) { recover("reciprocal_progress_timeout") }
+    private fun maybeCompletePeer(link: ProbeLink) {
+        if (!current(link) || !link.connected || link.finishingGrace) return
+        val complete = ledger!!.peer(link.peer.sessionID)!!.nextOutgoing == SessionLedger.ATTEMPTS
+        if (!link.exchange.canDepart(complete) || link.transfers.values.any { it.purpose == "finish_ack" }) {
+            if (complete && !link.timers.containsKey("finish_wait")) schedule(link, "finish_wait", 60_000) { recover(link, "reciprocal_progress_timeout") }
             return
         }
-        cancel("finish_wait")
-        finishingGrace = true
-        schedule("departure", 2_000) {
-            val peer = selectedPeer ?: return@schedule
-            if (!exchange.canDepart(ledger!!.peer(peer.sessionID)!!.nextOutgoing == SessionLedger.ATTEMPTS) ||
-                transfers.values.any { it.purpose == "finish_ack" }) {
-                finishingGrace = false
-                maybeCompletePeer()
+        cancel(link, "finish_wait")
+        link.finishingGrace = true
+        schedule(link, "departure", 2_000) {
+            val peer = link.peer
+            if (!link.exchange.canDepart(ledger!!.peer(peer.sessionID)!!.nextOutgoing == SessionLedger.ATTEMPTS) ||
+                link.transfers.values.any { it.purpose == "finish_ack" }) {
+                link.finishingGrace = false
+                maybeCompletePeer(link)
                 return@schedule
             }
             if (!durable { ledger!!.markComplete(peer.sessionID) }) return@schedule
-            event("peer_batch_complete", "sent_successes" to "${ledger!!.peer(peer.sessionID)!!.successfulOutgoing}",
+            event(link, "peer_batch_complete", "sent_successes" to "${ledger!!.peer(peer.sessionID)!!.successfulOutgoing}",
                 "sent_failures" to "${ledger!!.peer(peer.sessionID)!!.failedOutgoing}",
                 "received_unique" to "${ledger!!.peer(peer.sessionID)!!.receivedAccepted}")
-            status("Both directions finished. Finding the next compatible peer.")
-            startRadio()
+            if (!current(link)) return@schedule
+            status("Peer finished. Other cluster links continue; finding the next compatible peer.")
+            depart(link)
         }
     }
 
-    private fun sendControl(bytes: ByteArray, purpose: String) { if (active) sendBytes(bytes, purpose) }
-    private fun sendBytes(bytes: ByteArray, purpose: String, serial: Long? = null) {
-        val endpoint = selectedEndpoint ?: return
-        val token = scope.capture()
+    private fun sendControl(link: ProbeLink, bytes: ByteArray, purpose: String) { if (current(link)) sendBytes(link, bytes, purpose) }
+    private fun sendBytes(link: ProbeLink, bytes: ByteArray, purpose: String, serial: Long? = null) {
+        if (!current(link)) return
+        if (link.transfers.size >= 64) { recover(link, "pending_payload_limit"); return }
+        val endpoint = link.endpoint
+        val token = link.token
         val payload = Payload.fromBytes(bytes)
-        transfers[payload.id] = Transfer(token, purpose, serial)
+        link.transfers[payload.id] = ProbeTransfer(token, purpose, serial)
         client.sendPayload(endpoint, payload).addOnFailureListener { onMain {
-            val transfer = transfers.remove(payload.id) ?: return@onMain
+            val transfer = link.transfers.remove(payload.id) ?: return@onMain
             if (!scope.accepts(transfer.token, endpoint)) return@onMain
-            event("payload_send_failed", "kind" to purpose)
-            if (purpose == "data" && pendingSend?.serial == serial) retryAttempt("payload_send_failed")
-            else if (purpose == "hello" || purpose == "finish") recover("control_send_failed")
+            event(link, "payload_send_failed", "kind" to purpose)
+            if (purpose == "data" && link.pendingSend?.serial == serial) retryAttempt(link, "payload_send_failed")
+            else if (purpose == "hello" || purpose == "finish") recover(link, "control_send_failed")
         } }
     }
 
-    private fun recover(reason: String) {
-        if (!active) return
-        val peer = selectedPeer
-        event("connection_recovery", "reason" to reason)
-        if (peer != null && ledger!!.peer(peer.sessionID)?.complete == true) {
-            resetRadio()
-            schedule("recovery", 1_000) { startRadio() }
+    private fun depart(link: ProbeLink, retryAt: Long? = null) {
+        if (!current(link)) return
+        registry.retire(link)
+        link.cancelTimers(handler)
+        link.transfers.clear()
+        scheduler.release(link.endpoint, retryAt)
+        try { client.disconnectFromEndpoint(link.endpoint) } catch (_: Exception) { }
+        if (retryAt != null) restartWhenIdle = true
+        chooseCandidates()
+    }
+
+    private fun recover(link: ProbeLink, reason: String) {
+        if (!current(link)) return
+        event(link, "connection_recovery", "reason" to reason)
+        if (!current(link)) return
+        if (ledger!!.peer(link.peer.sessionID)?.complete == true) {
+            depart(link)
             return
         }
         var delay: Long? = null
-        if (peer != null && !durable { delay = ledger!!.nextRecovery(peer.sessionID) }) return
-        resetRadio()
-        if (!active) return
-        if (peer != null && delay == null) {
-            if (!durable { ledger!!.abandon(peer.sessionID) }) return
-            event("peer_recovery_exhausted")
-            status("Peer recovery limit reached. Progress is saved; finding other peers.")
-            schedule("recovery", 1_000) { startRadio() }
+        if (!durable { delay = ledger!!.nextRecovery(link.peer.sessionID) }) return
+        if (delay == null) {
+            if (!durable { ledger!!.abandon(link.peer.sessionID) }) return
+            event(link, "peer_recovery_exhausted")
+            if (!current(link)) return
+            depart(link)
+            if (!active) return
+            status("A peer exhausted recovery. Other cluster links continue; progress is saved.")
         } else {
-            val wait = (delay ?: 1_000L) + Random.nextLong(0, 501)
-            status("Connection interrupted. Retrying automatically with saved progress.")
-            schedule("recovery", wait) { startRadio() }
+            val readyAt = SystemClock.elapsedRealtime() + delay!! + Random.nextLong(0, 501)
+            cooldowns[link.peer.sessionID] = readyAt
+            depart(link, readyAt)
+            if (!active) return
+            status("One peer interrupted. Healthy links continue; its retry waits for a safe radio cycle.")
         }
     }
 
-    private fun nearbyFailure(operation: String, exception: Exception) {
+    private fun nearbyFailure(operation: String, exception: Exception, link: ProbeLink? = null) {
         val code = (exception as? ApiException)?.statusCode
         val granted = listOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
             .filter { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }.toSet()
@@ -593,8 +650,11 @@ class ProbeSessionService : Service() {
         if (!active) return
         val compatibility = NearbyPermissionPolicy.permissionsForCompatibilityFailure(Build.VERSION.SDK_INT, operation, code, granted)
         if (compatibility.isNotEmpty()) { askPermissions(compatibility); return }
-        if (selectedPeer != null) recover("nearby_operation_failed")
-        else if (++radioFailures <= SessionLedger.MAX_RECOVERIES) {
+        if (link != null) recover(link, "nearby_operation_failed")
+        else if (links.isNotEmpty()) {
+            restartWhenIdle = true
+            status("Nearby discovery or advertising failed. Existing links continue; recovery waits for them.")
+        } else if (++radioFailures <= SessionLedger.MAX_RECOVERIES) {
             resetRadio()
             status("Nearby could not start. Retrying automatically; see the redacted log for its status code.")
             schedule("recovery", (1_000L shl (radioFailures - 1)) + Random.nextLong(0, 501)) { startRadio() }
@@ -612,17 +672,11 @@ class ProbeSessionService : Service() {
     private fun resetRadio() {
         scope.restartRadio()
         cancelTimers()
+        links.values.forEach { it.cancelTimers(handler); it.transfers.clear() }
+        registry.clear()
+        scheduler.clear()
+        restartWhenIdle = false
         stopSdk()
-        candidates.clear()
-        selectedEndpoint = null
-        selectedPeer = null
-        linkToken = null
-        accepted = false
-        connected = false
-        exchange = LinkExchange()
-        transfers.clear()
-        finishingGrace = false
-        finishTransmissions = 0
     }
 
     private fun stopSdk() {
@@ -633,6 +687,9 @@ class ProbeSessionService : Service() {
         active = false
         scope.stop()
         cancelTimers()
+        links.values.forEach { it.cancelTimers(handler); it.transfers.clear() }
+        registry.clear()
+        scheduler.clear()
         stopSdk()
         unregisterMonitoring()
         permissionsNeeded = emptyList()
@@ -649,18 +706,20 @@ class ProbeSessionService : Service() {
         true
     } catch (_: IOException) { freezeStorage(); false }
 
-    private fun evidence(name: String, vararg fields: Pair<String, String>): ProbeEvent =
+    private fun evidence(link: ProbeLink?, name: String, vararg fields: Pair<String, String>): ProbeEvent =
         ProbeEvent(name, Instant.now().toString(), mapOf(*fields) +
-            (selectedPeer?.let { mapOf("peer_session_id" to it.sessionID) } ?: emptyMap()))
+            (link?.let { mapOf("peer_session_id" to it.peer.sessionID) } ?: emptyMap()))
 
-    private fun direction(outgoing: Boolean): String {
-        val peer = if (selectedPeer?.platform == ProbePlatform.IOS) "iphone" else "android"
+    private fun direction(link: ProbeLink, outgoing: Boolean): String {
+        val peer = if (link.peer.platform == ProbePlatform.IOS) "iphone" else "android"
         return if (outgoing) "android-to-$peer" else "$peer-to-android"
     }
 
-    private fun event(name: String, vararg fields: Pair<String, String>) {
+    private fun event(name: String, vararg fields: Pair<String, String>) = recordEvent(null, name, fields)
+    private fun event(link: ProbeLink, name: String, vararg fields: Pair<String, String>) = recordEvent(link, name, fields)
+    private fun recordEvent(link: ProbeLink?, name: String, fields: Array<out Pair<String, String>>) {
         if (ledger == null) return
-        durable { ledger!!.record(evidence(name, *fields)) }
+        durable { ledger!!.record(evidence(link, name, *fields)) }
     }
 
     private fun localContext() = ProbePeerContext(ProbePlatform.ANDROID, ledger!!.checkpoint.sessionID, ledger!!.checkpoint.payloadSize)
@@ -680,13 +739,36 @@ class ProbeSessionService : Service() {
         val token = scope.capture()
         val callback = Runnable {
             timers.remove(name)
-            if (scope.accepts(token)) block()
+            if (scope.acceptsRadio(token)) block()
         }
         timers[name] = callback
         handler.postDelayed(callback, delay)
     }
+    private fun schedule(link: ProbeLink, name: String, delay: Long, block: () -> Unit) {
+        if (!current(link)) return
+        cancel(link, name)
+        val callback = Runnable {
+            link.timers.remove(name)
+            if (current(link)) block()
+        }
+        link.timers[name] = callback
+        handler.postDelayed(callback, delay)
+    }
+    private fun cancel(link: ProbeLink, name: String) { link.timers.remove(name)?.let(handler::removeCallbacks) }
     private fun cancel(name: String) { timers.remove(name)?.let(handler::removeCallbacks) }
     private fun cancelTimers() { timers.values.forEach(handler::removeCallbacks); timers.clear() }
+    private fun onLinkMain(link: ProbeLink, block: () -> Unit) {
+        if (!link.ingress.acquire()) {
+            if (link.ingress.claimOverflowNotice()) onMain {
+                if (current(link)) recover(link, "callback_queue_limit")
+            }
+            return
+        }
+        onMain {
+            try { if (current(link)) block() }
+            finally { link.ingress.release() }
+        }
+    }
     private fun onMain(block: () -> Unit) { if (Looper.myLooper() == Looper.getMainLooper()) block() else handler.post(block) }
 
     private fun recordNetwork(present: Boolean) = onMain {
@@ -733,7 +815,9 @@ class ProbeSessionService : Service() {
             .put("platform", "android").put("device", JSONObject().put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
                 .put("os_version", Build.VERSION.RELEASE).put("sdk_int", Build.VERSION.SDK_INT)
                 .put("app_version", info.versionName).put("app_build", if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else 2))
-            .put("transport", "Google Nearby Connections 19.5.0").put("strategy", "P2P_POINT_TO_POINT")
+            .put("transport", "Google Nearby Connections 19.5.1").put("strategy", "P2P_CLUSTER")
+            .put("max_concurrent_peers", PeerScheduler.MAX_LINKS).put("max_candidates", PeerScheduler.MAX_CANDIDATES)
+            .put("max_test_run_peers", SessionLedger.MAX_PEERS)
             .put("probe_protocol", 2).put("session_id", state.checkpoint?.sessionID ?: JSONObject.NULL)
             .put("pairing_mode", "automatic").put("connection_policy", "non_disruptive")
             .put("underlying_medium", "SDK selected; quality is not a medium identifier")
@@ -747,7 +831,7 @@ class ProbeSessionService : Service() {
         const val ACTION_RESUME = "org.trailmesh.foregroundprobe.RESUME"
         const val ACTION_STOP = "org.trailmesh.foregroundprobe.STOP"
         const val EXTRA_SIZE = "payload_size"
-        private const val SERVICE_ID = "org.trailmesh.foregroundprobe"
+        private const val SERVICE_ID = "org.trailmesh.clusterprobe"
         private const val CHANNEL = "active_transport_test"
         private const val NOTIFICATION_ID = 24
         private const val CONNECTION_TIMEOUT = 20_000L
