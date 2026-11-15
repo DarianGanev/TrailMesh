@@ -45,3 +45,19 @@ class RepositoryExchangeStore(private val repository: ReportRepository) : Report
     override suspend fun ingest(wire: ByteArray, remainingHops: Int, clock: () -> Long) =
         repository.ingestTransferred(wire, remainingHops, clock)
 }
+
+/** One immutable local context per encounter; cancel the encounter when configuration changes. */
+class SelectedRepositoryExchangeStore(
+    private val repository: ReportRepository,
+    private val context: org.trailmesh.app.relevance.RelevanceContext?,
+) : ReportExchangeStore {
+    override suspend fun initialCursor(now: Long) = repository.exchangeInventoryCursor(now)
+    override suspend fun inventoryPage(afterID: String?, limit: Int, now: Long): InventoryPage {
+        val page = repository.selectedInventoryPage(afterID,limit,now,context)
+        repository.recordExchangeInventoryProgress(page.nextCursor,page.hasMore,now)
+        return page
+    }
+    override suspend fun currentIDs(ids: List<String>, now: Long) = repository.currentIDs(ids,now)
+    override suspend fun load(id: String, now: Long) = repository.loadSelectedForExchange(id,now,context)
+    override suspend fun ingest(wire: ByteArray, remainingHops: Int, clock: () -> Long) = repository.ingestTransferred(wire,remainingHops,clock)
+}

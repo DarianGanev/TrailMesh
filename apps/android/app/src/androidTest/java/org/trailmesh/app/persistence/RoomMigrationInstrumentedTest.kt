@@ -14,16 +14,17 @@ class RoomMigrationInstrumentedTest {
         )
 
     @Test
-    fun roomValidatesTheFullV1ToV4MigrationSchema() {
+    fun roomValidatesTheFullV1ToV5MigrationSchema() {
         helper.createDatabase("room-migration-helper.sqlite", 1).close()
         helper
             .runMigrationsAndValidate(
                 "room-migration-helper.sqlite",
-                4,
+                5,
                 true,
                 ReportDatabase.MIGRATION_1_2,
                 ReportDatabase.MIGRATION_2_3,
                 ReportDatabase.MIGRATION_3_4,
+                ReportDatabase.MIGRATION_4_5,
             )
             .close()
     }

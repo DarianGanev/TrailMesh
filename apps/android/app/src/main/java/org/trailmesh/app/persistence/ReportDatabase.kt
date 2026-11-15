@@ -40,6 +40,7 @@ internal data class BundleRow(
         [
             Index(value = ["event_id"], name = "reports_event"),
             Index(value = ["lat_e7", "lon_e7"], name = "reports_location"),
+            Index(value = ["observed_at_ms", "bundle_id"], orders = [Index.Order.DESC, Index.Order.ASC], name = "reports_observation_page"),
         ],
 )
 internal data class ProjectionRow(
@@ -143,7 +144,7 @@ internal interface ReportDao {
             ForwardingRow::class,
             ExchangeCursorRow::class,
         ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 internal abstract class ReportDatabase : RoomDatabase() {
@@ -182,13 +183,19 @@ internal abstract class ReportDatabase : RoomDatabase() {
                 }
             }
 
+        val MIGRATION_4_5 = object : Migration(4,5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS reports_observation_page ON reports(observed_at_ms DESC,bundle_id ASC)")
+            }
+        }
+
         fun open(context: Context, name: String): ReportDatabase {
             return Room.databaseBuilder(
                     context.applicationContext,
                     ReportDatabase::class.java,
                     name,
                 )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .addCallback(
                     object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {

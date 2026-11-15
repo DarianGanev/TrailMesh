@@ -1,0 +1,110 @@
+{
+  "evidence_version": 2,
+  "kind": "emulator-measurement",
+  "date": "2026-11-15",
+  "source_base_commit": "2653a1a821af26edbd3d7284f843cf2f2aa8ae51",
+  "source_note": "Measured Android runtime/test implementation is identified by the normalized source manifest below, including the uncommitted Android changes atop source_base_commit. Documentation changes are excluded. Only trailing blank line cleanup followed the measured build.",
+  "source_fingerprint": {
+    "sha256": "158d218bd0605ff1102e1a0e84566334c2d000d857b08f6b4f1aedf59437c6de",
+    "algorithm": "Files under app/src, app/schemas and text gradle files plus root/app build files and wrappers. Remove UTF-8 BOM, normalize CRLF to LF, normalize final newlines to one LF. SHA256 each file; SHA256 UTF-8 manifest of sorted path + NUL + lowercase digest + LF.",
+    "files": {
+      "app/build.gradle.kts": "13558a71a929feb62a58711663f00f9cf410bb014ebe997e623a45ee3dabeaea",
+      "app/schemas/org.trailmesh.app.persistence.ReportDatabase/1.json": "6a880ea1182d1e9b3b5b56119e2009c9ee93af34b458178a5f22869202bd2ca5",
+      "app/schemas/org.trailmesh.app.persistence.ReportDatabase/2.json": "cc080d559e245587e48b53ab3673b7df0f446dec15706ca4d711527af5bc4afe",
+      "app/schemas/org.trailmesh.app.persistence.ReportDatabase/3.json": "9eca660f797d1d7ce61ef955e2572c50b16464d48e0151ac5c6075655bd06808",
+      "app/schemas/org.trailmesh.app.persistence.ReportDatabase/4.json": "01bfa8396e718621d2dc6751d5e8f775aa07b7a75e316de8d75403b7ecf3b6e6",
+      "app/schemas/org.trailmesh.app.persistence.ReportDatabase/5.json": "19107161c41706d5fcd1eb57e19e3f4e6d476547bb0d138e4d07255ba09bfd47",
+      "app/src/androidTest/java/org/trailmesh/app/exchange/ExchangeInstrumentedTest.kt": "bc410f2829fd77cde3ec76adf9b3d3fff61adaf6e047dce91033bdbc69fa6584",
+      "app/src/androidTest/java/org/trailmesh/app/persistence/ExchangePerformanceInstrumentedTest.kt": "b09868b47c3c62e578972c329e7510bc9ba01a388312140623b450e516c0338e",
+      "app/src/androidTest/java/org/trailmesh/app/persistence/ProcessRestartInstrumentedTest.kt": "c099d8c9db5fc52e7333bdd89da2cbf6788dd7d32ed5cadd8aee5728389bd8e0",
+      "app/src/androidTest/java/org/trailmesh/app/persistence/ReportRepositoryInstrumentedTest.kt": "88eaa142ff0a5a80ecc5000878947fcabd0202735ec37becd50dde9dc6f74b04",
+      "app/src/androidTest/java/org/trailmesh/app/persistence/RoomMigrationInstrumentedTest.kt": "8979e90e2a1492c2281aa25653152ea69753e31b879b1f9c80629cba46e9ebf5",
+      "app/src/androidTest/java/org/trailmesh/app/protocol/ReportAdmissionInstrumentedTest.kt": "a671777d0cb1695d60df64d6fbdc76e0a6ad9fb04ae39fe9c57e7e33f8e6b9c8",
+      "app/src/androidTest/java/org/trailmesh/app/relevance/RelevanceVectorsInstrumentedTest.kt": "768827bdafe34f5b825c3d6b38afe0f83e533f3b0e64b49ff3903e06f9d1f52e",
+      "app/src/androidTest/java/org/trailmesh/app/security/AndroidIdentityTest.kt": "e1851e4b84537f28e67c9bf00592b8af846ef3605573f67b486351b68d78f06c",
+      "app/src/main/AndroidManifest.xml": "faab4557eb1550c8fbd2c57f64d68e5ff581673ce659e16694e013c433a953a5",
+      "app/src/main/java/org/trailmesh/app/MainActivity.kt": "9663c28f6bd4587367fce27b9f825fc2f48702e2d57839042a9fad6d2e0f46d9",
+      "app/src/main/java/org/trailmesh/app/exchange/ExchangeSession.kt": "80d58d5ca2d8e402d41f2bf482fde589800d0e428366ea5a100f004a87e9e49f",
+      "app/src/main/java/org/trailmesh/app/exchange/ExchangeWire.kt": "fc542632e7cde8cd4546279bdbdf57c6c302fc768673f6c963ffe97a3f39d250",
+      "app/src/main/java/org/trailmesh/app/exchange/ReportExchangeStore.kt": "cc7fea06811ca4509127f8486a067c77055574ecad51b93e062dfbb97403e54f",
+      "app/src/main/java/org/trailmesh/app/persistence/ReportDatabase.kt": "b8b186f55e24aae08f40293d27051a18fcb74d6fcdc1510a2cc7e880b357d67c",
+      "app/src/main/java/org/trailmesh/app/persistence/ReportRepository.kt": "99b3d7968c0febd7e8db173af947a555c5d4a712c67fec95402de12b960f4458",
+      "app/src/main/java/org/trailmesh/app/protocol/ReportAdmission.kt": "2d786ad83b1f6e446362e5529f99207a04b2f8b7965cc5ed6b1a219641d1832b",
+      "app/src/main/java/org/trailmesh/app/protocol/StrictJSON.kt": "101f496fe3357b7580a9fd1907ce3d53d341d30df635a4e9d3a13d30a824ad30",
+      "app/src/main/java/org/trailmesh/app/relevance/RelevancePolicy.kt": "b55b448bfb68b4d4c4ee828250301b1466365fc58477fe7b1d3f3dcf7877b2f4",
+      "app/src/main/java/org/trailmesh/app/security/ProtectedSigningIdentityStore.kt": "5b8bdecf2b750b112321c426078fc91a3cfc0e9bae5e59f48c1c85f5d4cfcce0",
+      "app/src/main/res/xml/data_extraction_rules.xml": "cb029b35db0e976c087100424e16e14a6256b46962398887520e51508c3b5842",
+      "app/src/sharedTest/java/org/trailmesh/app/exchange/ExchangeContract.kt": "a4b48460598ff0e5238c1e47cad2ae9d0aaece5df547c1fb90acf10022039da4",
+      "app/src/sharedTest/java/org/trailmesh/app/persistence/RepositoryContract.kt": "36d5423ace289141d0604289507ef4a76b40ef4c536ab0c871c5f33e9b8a7627",
+      "app/src/sharedTest/java/org/trailmesh/app/relevance/RelevanceVectorContract.kt": "f334e43af37eabe380b05140ef798681cc798689d8558f471dd90308a152bab8",
+      "app/src/test/java/org/trailmesh/app/exchange/ExchangeTest.kt": "0624cf2e3668b1257133482cbc9dd3e15c26c1cebc0dce67ab3b95f0bb51faed",
+      "app/src/test/java/org/trailmesh/app/persistence/AndroidInteropTest.kt": "b35553469f169c1d3f767a849229b62a0ebc4df6ed1638ead39811004b30415e",
+      "app/src/test/java/org/trailmesh/app/persistence/ReportRepositoryTest.kt": "90e8bbf1b9595a80457b01c18b14da8ce84b568a0edd27b55fa73a1f0ea8bcea",
+      "app/src/test/java/org/trailmesh/app/protocol/ReportAdmissionTest.kt": "49f7ce94708df1f46f994477ffdcb475b5ab1ef9b64033268c952161d45db3bc",
+      "app/src/test/java/org/trailmesh/app/protocol/StrictJSONTest.kt": "957f42239abac5e8588c7dcf339c3486fa3fe47820a3a16a7a8b1fad6d4405a3",
+      "app/src/test/java/org/trailmesh/app/relevance/RelevancePolicyTest.kt": "2a423118202122d6e35b61b0e0bfc28f14086fefba8a2a0aaf3eeaba37b7c76b",
+      "app/src/test/java/org/trailmesh/app/relevance/RelevanceVectorsTest.kt": "eb90e041393f73b53dd7dd760cbad348f0566c7c187866140055415264331c27",
+      "app/src/test/java/org/trailmesh/app/security/ProtectedSigningIdentityStoreTest.kt": "fae51ae940ad9da907cc986a2dd816000b7603298144586e223d2d9eaf7f50b0",
+      "build.gradle.kts": "8804fb891cdbe5e569093fbedd582808f7993fe793c0241da9fdd0226bf7602a",
+      "gradle.properties": "9d0ff51667f9413b166e208c27d5b9ba55211f76b1ef8506d9994f7e022deb88",
+      "gradle/wrapper/gradle-wrapper.properties": "03e759961c8cfd784481123c7d328fbc9d5e4ecdbb3c83ef563f90ef84ee3000",
+      "gradlew": "a5a5c199ba02189ae8c46a334223371a20599d9c298ef65e7540ede4a3f72d59",
+      "gradlew.bat": "31ec098bd961c460b62875950c3eff5c8213bcb0bbde38d769b88512877fd21f",
+      "settings.gradle.kts": "8fd1f23d3d110fc8c8abc997df61708a91dbaeaa12b654b744b7bf2b23a003d3"
+    }
+  },
+  "device": {
+    "avd": "TrailMesh_API26",
+    "os": "Android 8.0.0",
+    "sdk": 26,
+    "abi": "x86_64",
+    "acceleration": "WHPX",
+    "radio_exchange": false
+  },
+  "apk_sha256": {
+    "product": "80d5f4c0e3e1b12127a3b13a44934a3f49794fbafc84188eecdd1c47730e3ef8",
+    "instrumentation": "11eabc429b5e08a48a2e184d1c1894ce79e7f0b45034dc970b35aa9490e2ff20"
+  },
+  "verification": {
+    "host_unit_tests": 82,
+    "api26_instrumentation_tests": 58,
+    "benchmark_tests": 1,
+    "failures": 0,
+    "installation": "Explicit adb install -r of both APKs, followed by direct instrumentation. Gradle connected task reported success despite an APK reinstall failure; its empty run is not counted."
+  },
+  "method": {
+    "test_class": "org.trailmesh.app.persistence.ExchangePerformanceInstrumentedTest",
+    "argument": "mode=benchmark",
+    "data": "5,154 validated real Ed25519-signed synthetic reports with 500-codepoint notes and unique event IDs/nonces, locally seeded in one background transaction near the 25 MiB logical budget; SQLite overhead is additional.",
+    "measurements": "One run: full map/history/forwarding, bounded eight-candidate inventory, full-history/concurrent-ingest, bounded64 report page, late equal-observation cursor, bounded report page/concurrent-ingest. Concurrent jobs are launched with a scheduler handoff and one millisecond delay; latency includes validation/scheduling and is not an isolated lock-wait measurement.",
+    "reproduce": "Build/install product and test APKs; adb -s emulator-5554 shell am instrument -w -r -e class org.trailmesh.app.persistence.ExchangePerformanceInstrumentedTest -e mode benchmark org.trailmesh.app.test/androidx.test.runner.AndroidJUnitRunner"
+  },
+  "metrics": {
+    "rows": 5154,
+    "logical_bytes": 26146242,
+    "seed_ms": 34833.665,
+    "map_ms": 17628.4274,
+    "history_ms": 18407.9125,
+    "forwarding_ms": 17468.8871,
+    "bounded_page_ms": 31.0158,
+    "concurrent_history_ms": 18281.1594,
+    "concurrent_ingest_ms": 18272.4754,
+    "bounded_report_page_ms": 269.7605,
+    "late_report_page_ms": 268.2897,
+    "bounded_concurrent_report_page_ms": 265.7075,
+    "bounded_concurrent_ingest_ms": 283.1665,
+    "report_page_raw_limit": 64,
+    "sdk": 26,
+    "timing": "elapsedRealtimeNanos"
+  },
+  "interpretation": {
+    "bounded_report_page": "The 64-row verified page took about 270 ms; a late cursor took about 268 ms. Two indexed seeks bound candidate reads to 65 and verify at most 64 signed rows, without rescanning preceding cursor prefixes or filtering bounds in an unbounded index scan.",
+    "concurrency": "In this run concurrent ingest completed in about 283 ms alongside a bounded report page, compared with about 18.3 seconds alongside the retained full-history query.",
+    "limitations": [
+      "One emulator sample, no percentiles or physical-device guarantee.",
+      "Host load, JIT/GC, virtualization and colocated synthetic reports affect timing.",
+      "Storage/CPU evidence only; no physical radio, lifecycle, battery or screen-off discovery/delivery evidence.",
+      "The first page and late-cursor tests use a synthetic equal-observation group. Bounds filter after raw verification, so empty pages can require continuation."
+    ]
+  }
+}

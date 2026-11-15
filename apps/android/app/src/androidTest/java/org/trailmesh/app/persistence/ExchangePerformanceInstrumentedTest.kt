@@ -164,8 +164,37 @@ class ExchangePerformanceInstrumentedTest {
         assertTrue(repo.ingest(extra, now) is StoreOutcome.Stored)
         val concurrentIngestMs = ms(t)
         val concurrentQueryMs = query.await()
+        t = SystemClock.elapsedRealtimeNanos()
+        val reportPage = repo.reportPage(now,includeExpired=true)
+        assertEquals(64,reportPage.reports.size)
+        assertEquals(64,reportPage.inspectedCount)
+        assertTrue(reportPage.hasMore)
+        val boundedReportMs = ms(t)
+        // A cursor near the end of an equal-observation group exercises an actual indexed seek.
+        val lateCursor = withContext(Dispatchers.IO) {
+            repo.database.openHelper.readableDatabase.query("SELECT observed_at_ms,bundle_id FROM reports ORDER BY observed_at_ms DESC,bundle_id ASC LIMIT 1 OFFSET ?",arrayOf<Any?>(count-100)).use { c ->
+                check(c.moveToFirst()); ReportPageCursor(c.getLong(0),c.getString(1))
+            }
+        }
+        t = SystemClock.elapsedRealtimeNanos()
+        assertEquals(64,repo.reportPage(now,after=lateCursor,includeExpired=true).reports.size)
+        val lateReportMs = ms(t)
+        val boundedExtra = withContext(Dispatchers.Default) { signed(count+2).originalWire }
+        val boundedStarted = CompletableDeferred<Unit>()
+        val boundedQuery = async(Dispatchers.Default) {
+            val start = SystemClock.elapsedRealtimeNanos()
+            boundedStarted.complete(Unit)
+            assertEquals(64,repo.reportPage(now,includeExpired=true).reports.size)
+            ms(start)
+        }
+        boundedStarted.await()
+        delay(1)
+        t = SystemClock.elapsedRealtimeNanos()
+        assertTrue(repo.ingest(boundedExtra,now) is StoreOutcome.Stored)
+        val boundedConcurrentIngestMs = ms(t)
+        val boundedConcurrentQueryMs = boundedQuery.await()
         val output =
-            "{\"rows\":$count,\"logical_bytes\":$logicalBytes,\"seed_ms\":$seedMs,\"map_ms\":$mapMs,\"history_ms\":$historyMs,\"forwarding_ms\":$forwardingMs,\"bounded_page_ms\":$pageMs,\"concurrent_history_ms\":$concurrentQueryMs,\"concurrent_ingest_ms\":$concurrentIngestMs,\"sdk\":${android.os.Build.VERSION.SDK_INT},\"timing\":\"elapsedRealtimeNanos\"}"
+            "{\"rows\":$count,\"logical_bytes\":$logicalBytes,\"seed_ms\":$seedMs,\"map_ms\":$mapMs,\"history_ms\":$historyMs,\"forwarding_ms\":$forwardingMs,\"bounded_page_ms\":$pageMs,\"concurrent_history_ms\":$concurrentQueryMs,\"concurrent_ingest_ms\":$concurrentIngestMs,\"bounded_report_page_ms\":$boundedReportMs,\"late_report_page_ms\":$lateReportMs,\"bounded_concurrent_report_page_ms\":$boundedConcurrentQueryMs,\"bounded_concurrent_ingest_ms\":$boundedConcurrentIngestMs,\"report_page_raw_limit\":64,\"sdk\":${android.os.Build.VERSION.SDK_INT},\"timing\":\"elapsedRealtimeNanos\"}"
         instrumentation.sendStatus(
             0,
             Bundle().apply { putString("stream", "\nTrailMeshBenchmark $output\n") },
