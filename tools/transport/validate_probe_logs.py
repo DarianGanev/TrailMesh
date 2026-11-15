@@ -1,4 +1,4 @@
-"""Corroborate logical v2 probe results across two redacted device exports."""
+"""Corroborate logical v2 probe results across redacted device exports."""
 
 import argparse
 import json
@@ -10,6 +10,7 @@ from tools.transport.foreground_exchange import ExchangeError, make_test_payload
 SESSION_PATTERN = re.compile(r"[0-9a-f]{32}\Z")
 MAX_LOG_BYTES = 1024 * 1024
 MAX_RECORDS = 512
+MAX_GROUP_LOGS = 9  # One phone and the eight peers allowed by its controlled test journal.
 
 
 def _header(log: dict) -> None:
@@ -88,6 +89,62 @@ def validate_pair(first: dict, second: dict, *, payload_size: int = 2048,
     return results
 
 
+def validate_group(logs: list[dict], *, payload_size: int = 2048,
+                   minimum_successes: int = 18) -> dict[str, int]:
+    """Corroborate every observed pair in a bounded, connected group of exports.
+
+    Results describe logical deliveries. They cannot establish that links were
+    simultaneous, or that the phones used particular radios or lifecycle states.
+    """
+
+    if not 2 <= len(logs) <= MAX_GROUP_LOGS:
+        raise ExchangeError("A group requires two through nine device exports")
+    if (type(payload_size) is not int or payload_size not in (256, 2048, 8192)
+            or type(minimum_successes) is not int or not 0 <= minimum_successes <= 20):
+        raise ExchangeError("Invalid validation gate")
+    sessions = {}
+    for index, log in enumerate(logs):
+        _header(log)
+        if log["session_id"] in sessions:
+            raise ExchangeError("Every device export must have a distinct session")
+        sessions[log["session_id"]] = index
+
+    pairs = set()
+    neighbors = [set() for _ in logs]
+    for index, log in enumerate(logs):
+        for record in log["attempts"]:
+            if record.get("event") not in ("attempt_result", "payload_received"):
+                continue
+            peer = record.get("peer_session_id")
+            if not isinstance(peer, str) or peer not in sessions or sessions[peer] == index:
+                raise ExchangeError("Every observed peer requires a distinct device export")
+            other = sessions[peer]
+            pairs.add((min(index, other), max(index, other)))
+            neighbors[index].add(other)
+            neighbors[other].add(index)
+
+    reached = {0}
+    pending = [0]
+    while pending:
+        for other in neighbors[pending.pop()] - reached:
+            reached.add(other)
+            pending.append(other)
+    if len(reached) != len(logs):
+        raise ExchangeError("Device exports must describe one connected group")
+
+    results = {}
+    for first, second in sorted(pairs):
+        forward, reverse = validate_pair(
+            logs[first], logs[second], payload_size=payload_size,
+            minimum_successes=minimum_successes,
+        ).values()
+        first_label = f'{logs[first]["platform"]}[{first + 1}]'
+        second_label = f'{logs[second]["platform"]}[{second + 1}]'
+        results[f"{first_label}-to-{second_label}"] = forward
+        results[f"{second_label}-to-{first_label}"] = reverse
+    return results
+
+
 def _load(path: Path) -> dict:
     # Limit the read itself, including when the file grows after a stat check.
     with path.open("rb") as stream:
@@ -116,18 +173,23 @@ def _unique_object(pairs: list) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("first", type=Path)
-    parser.add_argument("second", type=Path)
+    parser.add_argument("exports", type=Path, nargs="+", help="Two through nine device exports")
     parser.add_argument("--payload-size", type=int, choices=(256, 2048, 8192), default=2048)
     args = parser.parse_args()
     try:
-        results = validate_pair(_load(args.first), _load(args.second), payload_size=args.payload_size)
+        if not 2 <= len(args.exports) <= MAX_GROUP_LOGS:
+            raise ExchangeError("A group requires two through nine device exports")
+        logs = [_load(path) for path in args.exports]
+        if len(logs) == 2:
+            results = validate_pair(logs[0], logs[1], payload_size=args.payload_size)
+        else:
+            results = validate_group(logs, payload_size=args.payload_size)
     except (ExchangeError, OSError):
         print("FAIL: exports are invalid, incomplete or lack matching delivery evidence.")
         return 1
     for direction, count in results.items():
         print(f"{direction}: {count}/20 corroborated successful attempts")
-    print("Record radio settings and interruption conditions separately; logs alone do not prove them.")
+    print("Record concurrency, radio settings and interruption conditions separately; logs alone do not prove them.")
     return 0
 
 
