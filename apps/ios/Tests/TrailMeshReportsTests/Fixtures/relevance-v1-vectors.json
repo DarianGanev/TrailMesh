@@ -1,0 +1,1295 @@
+{
+  "schema": "trailmesh.local-relevance-vectors",
+  "version": 1,
+  "cases": [
+    {
+      "name": "manual_center",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "manual_area_inside_1000m",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 89932,
+        "lon_e7": 0
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "manual_area_outside_1000m",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 89933,
+        "lon_e7": 0
+      },
+      "expected": "notRelevant"
+    },
+    {
+      "name": "manual_minimum_radius_inside",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 100
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 8993,
+        "lon_e7": 0
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "manual_minimum_radius_outside",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 100
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 8994,
+        "lon_e7": 0
+      },
+      "expected": "notRelevant"
+    },
+    {
+      "name": "area_date_line",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 1799990000
+          },
+          "radius_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": -1799990000
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "area_north_pole_longitude",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 900000000,
+            "lon_e7": 0
+          },
+          "radius_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 900000000,
+        "lon_e7": 1800000000
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "area_far_away",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 10000000,
+        "lon_e7": 10000000
+      },
+      "expected": "notRelevant"
+    },
+    {
+      "name": "missing_context",
+      "now_ms": 1000000,
+      "context": null,
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "configurationRequired"
+    },
+    {
+      "name": "empty_context",
+      "now_ms": 1000000,
+      "context": {},
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "configurationRequired"
+    },
+    {
+      "name": "gps_good",
+      "now_ms": 1000000,
+      "context": {
+        "gps_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000,
+          "accuracy_m": 10,
+          "fix_at_ms": 1000000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "gps_accuracy_boundary",
+      "now_ms": 1000000,
+      "context": {
+        "gps_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000,
+          "accuracy_m": 1000,
+          "fix_at_ms": 1000000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "gps_poor",
+      "now_ms": 1000000,
+      "context": {
+        "gps_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000,
+          "accuracy_m": 1000.1,
+          "fix_at_ms": 1000000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "configurationRequired"
+    },
+    {
+      "name": "gps_age_boundary",
+      "now_ms": 1000000,
+      "context": {
+        "gps_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000,
+          "accuracy_m": 10,
+          "fix_at_ms": 700000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "gps_stale",
+      "now_ms": 1000000,
+      "context": {
+        "gps_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000,
+          "accuracy_m": 10,
+          "fix_at_ms": 699999
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "configurationRequired"
+    },
+    {
+      "name": "gps_future_after_clock_change",
+      "now_ms": 999999,
+      "context": {
+        "gps_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000,
+          "accuracy_m": 10,
+          "fix_at_ms": 1000000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "configurationRequired"
+    },
+    {
+      "name": "gps_negative_accuracy",
+      "now_ms": 1000000,
+      "context": {
+        "gps_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000,
+          "accuracy_m": -1,
+          "fix_at_ms": 1000000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "gps_boolean_accuracy",
+      "now_ms": 1000000,
+      "context": {
+        "gps_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000,
+          "accuracy_m": true,
+          "fix_at_ms": 1000000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "manual_with_stale_gps",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000
+        },
+        "gps_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000,
+          "accuracy_m": 10,
+          "fix_at_ms": 0
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "manual_with_poor_gps",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000
+        },
+        "gps_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000,
+          "accuracy_m": 3000,
+          "fix_at_ms": 1000000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "manual_with_invalid_gps",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000
+        },
+        "gps_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000,
+          "accuracy_m": -1,
+          "fix_at_ms": 1000000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "route_equator_inside",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [
+            {
+              "lat_e7": 0,
+              "lon_e7": -100000000
+            },
+            {
+              "lat_e7": 0,
+              "lon_e7": 100000000
+            }
+          ],
+          "corridor_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 89932,
+        "lon_e7": 0
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "route_equator_outside",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [
+            {
+              "lat_e7": 0,
+              "lon_e7": -100000000
+            },
+            {
+              "lat_e7": 0,
+              "lon_e7": 100000000
+            }
+          ],
+          "corridor_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 89933,
+        "lon_e7": 0
+      },
+      "expected": "notRelevant"
+    },
+    {
+      "name": "route_endpoint_inside",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [
+            {
+              "lat_e7": 0,
+              "lon_e7": 0
+            },
+            {
+              "lat_e7": 0,
+              "lon_e7": 100000000
+            }
+          ],
+          "corridor_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": -89932
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "route_endpoint_outside",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [
+            {
+              "lat_e7": 0,
+              "lon_e7": 0
+            },
+            {
+              "lat_e7": 0,
+              "lon_e7": 100000000
+            }
+          ],
+          "corridor_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": -89933
+      },
+      "expected": "notRelevant"
+    },
+    {
+      "name": "route_date_line",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [
+            {
+              "lat_e7": 0,
+              "lon_e7": 1790000000
+            },
+            {
+              "lat_e7": 0,
+              "lon_e7": -1790000000
+            }
+          ],
+          "corridor_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 1800000000
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "route_long_arc_excluded",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [
+            {
+              "lat_e7": 0,
+              "lon_e7": 1790000000
+            },
+            {
+              "lat_e7": 0,
+              "lon_e7": -1790000000
+            }
+          ],
+          "corridor_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "notRelevant"
+    },
+    {
+      "name": "route_over_north_pole",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [
+            {
+              "lat_e7": 890000000,
+              "lon_e7": 0
+            },
+            {
+              "lat_e7": 890000000,
+              "lon_e7": 1800000000
+            }
+          ],
+          "corridor_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 900000000,
+        "lon_e7": 900000000
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "route_one_point",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [
+            {
+              "lat_e7": 0,
+              "lon_e7": 0
+            }
+          ],
+          "corridor_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 89932,
+        "lon_e7": 0
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "route_duplicate_vertices",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [
+            {
+              "lat_e7": 0,
+              "lon_e7": 0
+            },
+            {
+              "lat_e7": 0,
+              "lon_e7": 0
+            },
+            {
+              "lat_e7": 0,
+              "lon_e7": 100000000
+            }
+          ],
+          "corridor_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 50000000
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "route_default_corridor",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [
+            {
+              "lat_e7": 0,
+              "lon_e7": 0
+            },
+            {
+              "lat_e7": 0,
+              "lon_e7": 100000000
+            }
+          ]
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 89932,
+        "lon_e7": 50000000
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "area_route_union_area",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000
+        },
+        "route": {
+          "points": [
+            {
+              "lat_e7": 100000000,
+              "lon_e7": 100000000
+            }
+          ],
+          "corridor_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "area_route_union_route",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 100000000,
+            "lon_e7": 100000000
+          },
+          "radius_m": 1000
+        },
+        "route": {
+          "points": [
+            {
+              "lat_e7": 0,
+              "lon_e7": 0
+            }
+          ],
+          "corridor_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "route_with_stale_gps",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [
+            {
+              "lat_e7": 0,
+              "lon_e7": 0
+            }
+          ],
+          "corridor_m": 1000
+        },
+        "gps_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000,
+          "accuracy_m": 10,
+          "fix_at_ms": 0
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "eligible"
+    },
+    {
+      "name": "route_empty",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [],
+          "corridor_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "route_antipodal",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [
+            {
+              "lat_e7": 0,
+              "lon_e7": 0
+            },
+            {
+              "lat_e7": 0,
+              "lon_e7": 1800000000
+            }
+          ],
+          "corridor_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "route_near_antipodal",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [
+            {
+              "lat_e7": 0,
+              "lon_e7": 0
+            },
+            {
+              "lat_e7": 0,
+              "lon_e7": 1799999999
+            }
+          ],
+          "corridor_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "radius_too_small",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 99
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "radius_too_large",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 50001
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "radius_boolean",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": true
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "coordinate_fractional",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0.5,
+            "lon_e7": 0
+          },
+          "radius_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "coordinate_latitude_out_of_range",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 900000001,
+            "lon_e7": 0
+          },
+          "radius_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "coordinate_longitude_out_of_range",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 1800000001
+          },
+          "radius_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "corridor_too_small",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [
+            {
+              "lat_e7": 0,
+              "lon_e7": 0
+            }
+          ],
+          "corridor_m": 99
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "corridor_too_large",
+      "now_ms": 1000000,
+      "context": {
+        "route": {
+          "points": [
+            {
+              "lat_e7": 0,
+              "lon_e7": 0
+            }
+          ],
+          "corridor_m": 10001
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "context_wrong_type",
+      "now_ms": 1000000,
+      "context": [],
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "context_unknown_key",
+      "now_ms": 1000000,
+      "context": {
+        "location": {
+          "lat_e7": 0,
+          "lon_e7": 0
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "null_area",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": null
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "expiry_equal_now",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 1000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "expired"
+    },
+    {
+      "name": "expiry_past",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 999999,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "expired"
+    },
+    {
+      "name": "expiry_before_missing_context",
+      "now_ms": 1000000,
+      "context": null,
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 999999,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "expired"
+    },
+    {
+      "name": "invalid_context_precedes_expiry",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": null
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 999999,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    },
+    {
+      "name": "negative_now",
+      "now_ms": -1,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000
+        }
+      },
+      "report": {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed_at_ms": 900000,
+        "expires_at_ms": 2000000,
+        "lat_e7": 0,
+        "lon_e7": 0
+      },
+      "expected": "invalidConfiguration"
+    }
+  ],
+  "selection_cases": [
+    {
+      "name": "newest_then_id_deduplicated",
+      "now_ms": 1000000,
+      "context": {
+        "manual_area": {
+          "center": {
+            "lat_e7": 0,
+            "lon_e7": 0
+          },
+          "radius_m": 1000
+        }
+      },
+      "reports": [
+        {
+          "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "observed_at_ms": 900000,
+          "expires_at_ms": 2000000,
+          "lat_e7": 0,
+          "lon_e7": 0
+        },
+        {
+          "id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "observed_at_ms": 950000,
+          "expires_at_ms": 2000000,
+          "lat_e7": 0,
+          "lon_e7": 0
+        },
+        {
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "observed_at_ms": 900000,
+          "expires_at_ms": 2000000,
+          "lat_e7": 0,
+          "lon_e7": 0
+        },
+        {
+          "id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "observed_at_ms": 950000,
+          "expires_at_ms": 2000000,
+          "lat_e7": 0,
+          "lon_e7": 0
+        },
+        {
+          "id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "observed_at_ms": 900000,
+          "expires_at_ms": 999999,
+          "lat_e7": 0,
+          "lon_e7": 0
+        },
+        {
+          "id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "observed_at_ms": 900000,
+          "expires_at_ms": 2000000,
+          "lat_e7": 10000000,
+          "lon_e7": 0
+        }
+      ],
+      "expected_ids": [
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ]
+    },
+    {
+      "name": "unconfigured_selects_nothing",
+      "now_ms": 1000000,
+      "context": null,
+      "reports": [
+        {
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "observed_at_ms": 900000,
+          "expires_at_ms": 2000000,
+          "lat_e7": 0,
+          "lon_e7": 0
+        }
+      ],
+      "expected_ids": []
+    }
+  ]
+}

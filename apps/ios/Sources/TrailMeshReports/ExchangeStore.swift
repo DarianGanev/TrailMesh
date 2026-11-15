@@ -36,14 +36,18 @@ extension ReportRepository: ReportExchangeStore {
         let hops = try row.decode(Int.self, forColumn: "remaining_hops")
         guard (0...cap).contains(hops) else { throw ReportStoreError.conflictingStoredBundle }; return hops
     }
-    private static func exchangeRow(_ db: Database, row: Row, now: Int64) throws -> ExchangeOutgoing? {
+    static func exchangeRow(_ db: Database, row: Row, now: Int64, context: RelevanceContext? = nil) throws -> ExchangeOutgoing? {
         let checked = try verifyStoredRow(row, now: now)
         let cap = try row.decode(Int.self, forColumn: "max_hops")
         let hops = try remainingHops(db, id: checked.report.bundleID, cap: cap)
         guard !checked.report.isExpired, hops > 0 else { return nil }
+        if let context, RelevancePolicy.evaluate(RelevanceReport(checked.report), context: context, now: now) != .eligible { return nil }
         return ExchangeOutgoing(descriptor: ExchangeDescriptor(id: checked.report.bundleID, total: checked.wire.count, hops: hops), wire: checked.wire)
     }
     public func inventoryPage(after: String?, limit: Int = 8, now: Int64) throws -> ExchangeInventoryPage {
+        try selectedInventoryPage(after: after, limit: limit, now: now, context: nil)
+    }
+    func selectedInventoryPage(after: String?, limit: Int, now: Int64, context: RelevanceContext?) throws -> ExchangeInventoryPage {
         try Task.checkCancellation()
         guard (1...8).contains(limit), (0...9_007_199_254_740_991).contains(now) else { throw ReportStoreError.clock }
         if let after { _ = try ExchangeWire.idBytes(after) }
@@ -66,7 +70,7 @@ extension ReportRepository: ReportExchangeStore {
                 WHERE b.bundle_id > ? ORDER BY b.bundle_id LIMIT ?
                 """, arguments: [start ?? "", limit + 1])
             let scanned = rows.prefix(limit)
-            let entries = try scanned.compactMap { try Self.exchangeRow(db, row: $0, now: now)?.descriptor }
+            let entries = try scanned.compactMap { try Self.exchangeRow(db, row: $0, now: now, context: context)?.descriptor }
             let nextCursor = try scanned.last?.decode(String.self, forColumn: "bundle_id") ?? start
             try db.execute(sql: "UPDATE exchange_cursor SET last_scanned = ? WHERE singleton = 1", arguments: [rows.count > limit ? nextCursor : nil])
             return ExchangeInventoryPage(entries: entries, nextCursor: nextCursor, hasMore: rows.count > limit)
@@ -76,6 +80,9 @@ extension ReportRepository: ReportExchangeStore {
         try loadOutgoing(id, clock: { now })
     }
     public func loadOutgoing(_ id: String, clock: @Sendable () -> Int64) throws -> ExchangeOutgoing? {
+        try selectedLoadOutgoing(id, clock: clock, context: nil)
+    }
+    func selectedLoadOutgoing(_ id: String, clock: @Sendable () -> Int64, context: RelevanceContext?) throws -> ExchangeOutgoing? {
         try Task.checkCancellation()
         let validationNow = clock()
         _ = try ExchangeWire.idBytes(id)
@@ -90,7 +97,7 @@ extension ReportRepository: ReportExchangeStore {
                 LEFT JOIN relay_state s ON s.bundle_id = b.bundle_id
                 LEFT JOIN quarantined_ids q ON q.bundle_id = b.bundle_id WHERE b.bundle_id = ?
                 """, arguments: [id]) else { return nil }
-            return try Self.exchangeRow(db, row: row, now: now)
+            return try Self.exchangeRow(db, row: row, now: now, context: context)
         }
     }
     public func currentIDs(_ ids: [String], now: Int64) throws -> Set<String> {

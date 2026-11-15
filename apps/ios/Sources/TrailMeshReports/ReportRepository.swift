@@ -366,6 +366,7 @@ public actor ReportRepository {
 
 public enum ReportStoreError: Error {
     case clock
+    case invalidPage
     case invalidBounds
     case seenWithoutPayload
     case random(OSStatus)

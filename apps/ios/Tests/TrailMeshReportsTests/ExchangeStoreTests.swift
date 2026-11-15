@@ -60,7 +60,7 @@ extension ExchangeStoreTests {
         _ = try await before.ingest(wire, now: now)
         let database = try ReportDatabase.open(path: path)
         try await database.write { db in
-            try db.execute(sql: "DROP TABLE exchange_cursor; DROP TABLE report_forwarding; DELETE FROM grdb_migrations WHERE identifier = 'v4'")
+            try db.execute(sql: "DROP TABLE exchange_cursor; DROP TABLE report_forwarding; DELETE FROM grdb_migrations WHERE identifier IN ('v4', 'v5')")
         }
         let after = try ReportRepository(path: path)
         let loaded = try await after.loadOutgoing(id, now: now)
