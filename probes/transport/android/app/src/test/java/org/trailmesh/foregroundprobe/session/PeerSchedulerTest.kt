@@ -55,4 +55,26 @@ class PeerSchedulerTest {
         scheduler.clear()
         assertEquals(0, scheduler.activeCount)
     }
+
+    @Test fun refreshedEndpointKeepsItsWaitingTurnAndRetryDeadlineAtCapacity() {
+        val scheduler = PeerScheduler()
+        scheduler.discover("old", peer(1), 1000)
+        for (index in 2..32) scheduler.discover("endpoint-$index", peer(index), 1000)
+        assertTrue(scheduler.discover("new", peer(1)))
+        scheduler.lost("old")
+        assertEquals(32, scheduler.waitingCount)
+        assertNull(scheduler.takeNext(999) { true })
+        assertEquals("new", scheduler.takeNext(1000) { true }!!.endpoint)
+        assertEquals("endpoint-2", scheduler.takeNext(1000) { true }!!.endpoint)
+    }
+
+    @Test fun queuedPeerRefreshRejectsChangedContextAndAnotherPeersEndpoint() {
+        val scheduler = PeerScheduler()
+        scheduler.discover("original", peer(1), 1000)
+        scheduler.discover("occupied", peer(2), 1000)
+        assertFalse(scheduler.discover("changed", peer(1).copy(platform = ProbePlatform.IOS)))
+        assertFalse(scheduler.discover("occupied", peer(1)))
+        assertEquals("original", scheduler.takeNext(1000) { true }!!.endpoint)
+        assertEquals("occupied", scheduler.takeNext(1000) { true }!!.endpoint)
+    }
 }

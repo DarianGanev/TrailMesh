@@ -317,8 +317,8 @@ final class ProbeLink {
                 finishDeadline?.cancel(); finishDeadline = nil
                 if !wasAcknowledged { armReciprocalProgressDeadline() }
             } else {
-                completionWork?.cancel(); completionWork = nil
                 try next.recordRemoteFinish(from: remote, successful: message.successfulAttempts, failed: message.failedAttempts)
+                completionWork?.cancel(); completionWork = nil
                 host.append("remote_batch_finished", fields: ["peer_session_id": remote], to: &next)
                 guard host.commit(next), isLive else { return }
                 if peerProgressDeadline == nil { armReciprocalProgressDeadline() }

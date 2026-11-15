@@ -166,6 +166,37 @@ final class ProbeLinkTests: XCTestCase {
         }
     }
 
+    func testChangedFinishTotalsDuringGracePreserveCompletionAndOtherPeer() throws {
+        let host = try TestHost()
+        defer { host.stop() }
+        let link = try host.attach(1)
+        let other = try host.attach(2)
+        // Resume a saved outgoing batch through the normal FINISH handshake.
+        for attempt in 0..<20 {
+            _ = try host.state.beginTransmission(to: link.remote)
+            _ = try host.state.finishAttempt(to: link.remote, attempt: attempt, success: true)
+        }
+        try host.makeReady(link)
+        try host.makeReady(other)
+        link.receive(try ForegroundFrame.encodeFinishMessage(sessionID: link.remote, peerSessionID: host.state.sessionID,
+                                                            acknowledgement: false, successfulAttempts: 20, failedAttempts: 0))
+        let remoteAcknowledgement = try XCTUnwrap(host.sent.last)
+        link.receive(try ForegroundFrame.encodeFinishMessage(sessionID: link.remote, peerSessionID: host.state.sessionID,
+                                                            acknowledgement: true, successfulAttempts: 20, failedAttempts: 0))
+        link.transferUpdated(payloadID: remoteAcknowledgement.id, succeeded: true)
+        XCTAssertTrue(host.state.peer(link.remote)!.complete)
+        link.receive(try ForegroundFrame.encodeFinishMessage(sessionID: link.remote, peerSessionID: host.state.sessionID,
+                                                            acknowledgement: false, successfulAttempts: 19, failedAttempts: 1))
+        XCTAssertEqual(host.state.peer(link.remote)?.remoteSuccessful, 20)
+        XCTAssertEqual(host.state.records.last?.event, "invalid_finish")
+        let grace = expectation(description: "Invalid FINISH preserves completion grace")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { grace.fulfill() }
+        wait(for: [grace], timeout: 3)
+        XCTAssertFalse(link.isLive)
+        XCTAssertTrue(other.isLive)
+        XCTAssertEqual(host.pool.activeCount, 1)
+    }
+
     private final class TestHost: ProbeLinkHost {
         struct Sent {
             let endpoint: String

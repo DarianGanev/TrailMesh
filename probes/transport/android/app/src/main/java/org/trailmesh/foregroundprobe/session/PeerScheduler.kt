@@ -14,7 +14,12 @@ internal class PeerScheduler {
         if (active.containsKey(endpoint) || active.values.any { it.peer.sessionID == peer.sessionID }) return false
         if (waiting.values.any { it.endpoint == endpoint && it.peer.sessionID != peer.sessionID }) return false
         val existing = waiting[peer.sessionID]
-        if (existing != null || waiting.size >= MAX_CANDIDATES) return false
+        if (existing != null) {
+            if (existing.peer != peer) return false
+            waiting[peer.sessionID] = existing.copy(endpoint = endpoint)
+            return true
+        }
+        if (waiting.size >= MAX_CANDIDATES) return false
         waiting[peer.sessionID] = PeerCandidate(endpoint, peer, readyAt)
         return true
     }

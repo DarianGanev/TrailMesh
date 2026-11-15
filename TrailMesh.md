@@ -391,7 +391,7 @@ Run each condition separately on each selected Android model and the exact targe
 | iPhone locked/display on versus fully off for 1/5/15/30 minutes | Fresh discovery and transfers measured separately from existing connection retention. |
 | Advertiser starts after iPhone backgrounds; both phones background | New discovery proven by correlated transfer logs, not an active-session label. |
 | Cold launch; checkpoint corruption/storage failure | Explicit Resume/interrupted/error state; no invented durable acceptance. |
-| Three phones, sequential encounters; extra incoming endpoint | Fair bounded serial exchange or rejected busy peer; never simultaneous fan-out or claimed multi-hop relay. |
+| Three or more phones; concurrent encounters and extra incoming endpoints | Independent exchanges within the four-link bound; fair waiting-peer refill and isolated failure. Record simultaneous links separately from physical multi-hop relay evidence. |
 
 The final product requires signed report validation, transactional report storage, verified-contact encryption, relevance filtering and store-carry-forward routing. Probe session IDs/checksums and automatic Nearby verification do not implement those protections. Issue #36 delivers this hardened probe; #27 and the durable-exchange issues retain the production gates.
 
