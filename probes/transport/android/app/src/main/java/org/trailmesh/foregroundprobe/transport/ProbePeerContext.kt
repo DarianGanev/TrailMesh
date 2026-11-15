@@ -10,12 +10,10 @@ internal data class ProbePeerContext(val platform: ProbePlatform, val sessionID:
     }
 
     fun isCompatible(peer: ProbePeerContext): Boolean =
-        isValid() && peer.isValid() && sessionID != peer.sessionID && payloadSize == peer.payloadSize &&
-            !(platform == ProbePlatform.IOS && peer.platform == ProbePlatform.IOS)
+        isValid() && peer.isValid() && sessionID != peer.sessionID && payloadSize == peer.payloadSize
 
     fun canInitiate(peer: ProbePeerContext): Boolean = isCompatible(peer) && when {
-        platform == ProbePlatform.IOS -> true
-        peer.platform == ProbePlatform.IOS -> false
+        platform != peer.platform -> platform == ProbePlatform.IOS
         else -> sessionID < peer.sessionID
     }
 

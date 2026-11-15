@@ -16,14 +16,12 @@ struct ProbePeerContext: Equatable, Codable {
     var encoded: String { isValid ? "TM2|\(platform.rawValue)|\(sessionID)|\(payloadSize)" : "" }
 
     func isCompatible(with peer: ProbePeerContext) -> Bool {
-        isValid && peer.isValid && sessionID != peer.sessionID && payloadSize == peer.payloadSize &&
-            !(platform == .ios && peer.platform == .ios)
+        isValid && peer.isValid && sessionID != peer.sessionID && payloadSize == peer.payloadSize
     }
 
     func canInitiate(to peer: ProbePeerContext) -> Bool {
         guard isCompatible(with: peer) else { return false }
-        if platform == .ios { return true }
-        if peer.platform == .ios { return false }
+        if platform != peer.platform { return platform == .ios }
         return sessionID < peer.sessionID
     }
 

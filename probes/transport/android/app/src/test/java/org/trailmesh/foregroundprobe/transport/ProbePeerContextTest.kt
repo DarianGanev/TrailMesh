@@ -37,7 +37,7 @@ class ProbePeerContextTest {
         assertTrue(android.isCompatible(ProbePeerContext(ProbePlatform.IOS, second, 2048)))
         assertFalse(android.isCompatible(ProbePeerContext(ProbePlatform.IOS, first, 2048)))
         assertFalse(android.isCompatible(ProbePeerContext(ProbePlatform.IOS, second, 8192)))
-        assertFalse(ProbePeerContext(ProbePlatform.IOS, first, 2048).isCompatible(ProbePeerContext(ProbePlatform.IOS, second, 2048)))
+        assertTrue(ProbePeerContext(ProbePlatform.IOS, first, 2048).isCompatible(ProbePeerContext(ProbePlatform.IOS, second, 2048)))
     }
 
     @Test
@@ -49,6 +49,9 @@ class ProbePeerContextTest {
         assertFalse(otherAndroid.canInitiate(android))
         assertFalse(android.canInitiate(ios))
         assertTrue(ios.canInitiate(android))
+        val otherIOS = ProbePeerContext(ProbePlatform.IOS, first, 2048)
+        assertTrue(otherIOS.canInitiate(ios))
+        assertFalse(ios.canInitiate(otherIOS))
         assertFalse(android.canInitiate(android))
         assertFalse(android.canInitiate(ProbePeerContext(ProbePlatform.IOS, second, 8192)))
     }

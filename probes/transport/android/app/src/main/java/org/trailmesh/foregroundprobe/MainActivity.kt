@@ -106,7 +106,7 @@ class MainActivity : Activity() {
             setPadding(0, 12, 0, 12)
         })
         content.addView(TextView(this).apply {
-            text = "Start on both phones with the same size. Each pair sends 20 payloads in both directions. Android can exchange with Android or iPhone; iPhone pairs with Android. Internet access is not required. Keep Bluetooth enabled; Nearby selects the underlying link."
+            text = "Start matching cluster builds on every phone with the same size. Each pair sends 20 payloads in both directions. Android and iPhone support up to four simultaneous links, including same-platform pairs. A controlled test run records at most eight peers. Internet access is not required. Keep Bluetooth enabled; Nearby selects the underlying link."
             setPadding(0, 0, 0, 12)
         })
         sizePicker = Spinner(this).apply {
@@ -199,7 +199,8 @@ class MainActivity : Activity() {
         stopButton.isEnabled = snapshot.active || snapshot.canResume || pendingAction != null
         sizePicker.isEnabled = !snapshot.active
         progressView.text = snapshot.checkpoint?.let { checkpoint ->
-            "${checkpoint.payloadSize} bytes; ${checkpoint.peers.size}/8 peers recorded\n" +
+            "${checkpoint.payloadSize} bytes; ${snapshot.activePeers}/4 live links; ${snapshot.waitingPeers}/32 waiting\n" +
+                "${checkpoint.peers.size}/8 peers recorded in this controlled test run\n" +
                 checkpoint.peers.mapIndexed { index, peer ->
                     "Peer ${index + 1} (${peer.platform}): sent ${peer.successfulOutgoing} matched, ${peer.failedOutgoing} failed; " +
                         "received ${peer.receivedAccepted} unique matches" +

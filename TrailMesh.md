@@ -54,9 +54,9 @@ M1 transport feasibility is complete. The repository contains native SwiftUI and
 
 The [M1 physical evidence](probes/transport/evidence-physical-v1.json), recorded on 6 October 2026, documents an iPhone 17 and Redmi Note 11 Pro 5G running Android 13. Each direction achieved 20/20 matching exchanges for 256-byte, 2-KiB, and 8-KiB payloads with Wi-Fi and mobile data disabled and Bluetooth enabled. A separate 2-KiB run achieved 20/20 in both directions after backgrounding; the owner reported both screens were off. The record distinguishes these observed results from lifecycle states and device combinations still to test.
 
-Both probes start a bidirectional session with one control. iPhone discovers Android advertisers using the selected BLE path; Android pairs elect an initiator. Encounters are sequential point-to-point links. The probe automatically accepts connections for synthetic test bytes; production public-report validation and private-message authentication are separate work.
+Both probes start a bidirectional session with one control. Current builds advertise and discover with Nearby's cluster strategy and keep up to four connecting or active neighboring links per phone. iPhone initiates mixed-platform links; same-platform peers elect an initiator using temporary session IDs. Each endpoint owns independent exchange state, callbacks and deadlines. Discovery continues while links are active, and waiting candidates fill released slots. The probe automatically accepts connections for synthetic test bytes; production public-report validation and private-message authentication remain separate work. Physical cluster behavior is pending measurement with the matching new builds.
 
-**Next milestone: M2 Durable exchange.** Implement persistent signed-report ingest, deduplication and expiry, durable acknowledgements, physical A → B → C relaying, the map/report interface, and integration with the one-start public-report session. Report persistence, report routing, offline maps, and encrypted private messaging are not implemented by the generated-byte probe. This specification and GitHub issues provide the implementation context.
+**Current milestone: M2 Durable exchange.** Native products implement persistent signed-report ingest, deduplication, expiry and transport-independent durable-acknowledgement engines. Remaining work includes physical A → B → C relaying, the map/report interface, relevance selection and integration with the one-start public-report session. The generated-byte probes provide radio testing independently of the product repositories. This specification and GitHub issues provide the implementation context.
 
 Use these terms consistently:
 
@@ -354,6 +354,26 @@ python -m tools.transport.validate_probe_logs path/to/first-log.json path/to/sec
 
 The validator checks both complete 20-attempt batches, unique logical indices, current peer/session correlation, generated-byte digests and corresponding receiver evidence. Use `--payload-size 256` or `--payload-size 8192` for the optional sizes. Logs cannot establish radio settings, lack of internet or screen/background conditions; record those observations separately. Keep raw device exports in an ignored `device-logs/` folder.
 
+#### Multi-phone cluster probe procedure
+
+The cluster probes use service ID `org.trailmesh.clusterprobe`, distinct from older point-to-point builds. Install matching new artifacts on every test phone. Both platforms advertise and discover. iPhone-to-iPhone and Android-to-Android peers elect the lower temporary session ID as initiator; iPhone initiates a mixed-platform link. Cluster provides an M-to-N topology with lower bandwidth than point-to-point. Hardware, SDK and lifecycle constraints determine the usable physical connection count. [Nearby strategies](https://developers.google.com/nearby/connections/strategies)
+
+Each phone admits up to four connecting or active links, including completion reconciliation. It retains at most 32 discovery candidates. Its checkpoint records at most eight distinct peers in one controlled synthetic test run. These bounds limit resource use and retained evidence. Start a new test session after the eight-peer journal fills. Production session integration in #27 must define its own retention policy for long-running encounters.
+
+1. Start with three physical phones, including the target iPhone and Android. Record their models, OS and SDK versions, build artifacts, radios, permissions and lifecycle states. Select 2 KiB and start a test session on each.
+2. Observe a phone exchanging with at least two neighbors concurrently. Record overlapping connection times and the observed active-link count. Export every phone's redacted log after the run.
+3. Repeat with a departing or stalled peer. Verify the other links continue and a waiting compatible phone receives a free slot. With more phones, check the four-link bound and queue refill.
+4. Interrupt a phone's process while acknowledgements are pending, then reopen and Resume explicitly. Verify committed progress, isolated retries and absence of stale acknowledgements. Separately use Stop and verify every link closes, then Start a new test session. Late callbacks for a retired endpoint remain excluded from the current radio generation. Reconnection of that endpoint waits for healthy links to drain before the radio generation rotates.
+5. Repeat same-platform pairs and each selected lifecycle condition. Preserve failed and inconclusive runs. The existing M1 evidence remains evidence of the earlier two-phone point-to-point configuration.
+
+Corroborate a connected group using three through nine exports. Every observed peer needs its own export, and every observed pair needs both complete 20-attempt batches. Passing exactly two exports preserves selected-pair validation and ignores encounters with other peers.
+
+```text
+python -m tools.transport.validate_probe_logs path/to/phone-a.json path/to/phone-b.json path/to/phone-c.json
+```
+
+Group validation checks logical deliveries independently for each peer pair. Physical notes and overlapping link observations establish concurrency, radio settings and lifecycle conditions. The probe's automatic code acceptance is confined to generated-byte testing. Production trust and metadata privacy require explicit review during #27 integration. [Nearby verification](https://developers.google.com/nearby/connections/swift/manage-connections)
+
 #### Interruption and lifecycle matrix
 
 Run each condition separately on each selected Android model and the exact target iPhone/iOS build. Use a separate evidence record for each Android device, identifying its model, OS version, and app build. Preserve failures and inconclusive results.
@@ -371,7 +391,7 @@ Run each condition separately on each selected Android model and the exact targe
 | iPhone locked/display on versus fully off for 1/5/15/30 minutes | Fresh discovery and transfers measured separately from existing connection retention. |
 | Advertiser starts after iPhone backgrounds; both phones background | New discovery proven by correlated transfer logs, not an active-session label. |
 | Cold launch; checkpoint corruption/storage failure | Explicit Resume/interrupted/error state; no invented durable acceptance. |
-| Three phones, sequential encounters; extra incoming endpoint | Fair bounded serial exchange or rejected busy peer; never simultaneous fan-out or claimed multi-hop relay. |
+| Three or more phones; concurrent encounters and extra incoming endpoints | Independent exchanges within the four-link bound; fair waiting-peer refill and isolated failure. Record simultaneous links separately from physical multi-hop relay evidence. |
 
 The final product requires signed report validation, transactional report storage, verified-contact encryption, relevance filtering and store-carry-forward routing. Probe session IDs/checksums and automatic Nearby verification do not implement those protections. Issue #36 delivers this hardened probe; #27 and the durable-exchange issues retain the production gates.
 
