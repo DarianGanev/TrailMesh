@@ -3,8 +3,8 @@ import Combine
 import NearbyConnections
 import UIKit
 
-/// App-owned session intention and progress; SDK objects belong to one disposable transport link.
-final class ProbeModel: ObservableObject {
+/// Main-queue owner of the shared durable journal and a bounded cluster of links.
+final class ProbeModel: ObservableObject, ProbeLinkHost {
     @Published private(set) var status = "Ready to start"
     @Published private(set) var sessionActive = false
     @Published private(set) var awaitingResume = false
@@ -13,44 +13,34 @@ final class ProbeModel: ObservableObject {
     @Published private(set) var receivedAttempts = 0
     @Published private(set) var duplicateAttempts = 0
     @Published private(set) var completedPeers = 0
+    @Published private(set) var activePeers = 0
+    @Published private(set) var waitingPeers = 0
     @Published private(set) var logs: [String] = []
     @Published private(set) var backgroundPolicy = "Saved progress and automatic foreground recovery"
 
     private var state: ProbeSessionState?
+    var sessionState: ProbeSessionState? { state }
     private let store: ProbeCheckpointStore
-    private let serviceID = "org.trailmesh.foregroundprobe"
+    private let serviceID = "org.trailmesh.clusterprobe"
     private var connectionManager: ConnectionManager?
     private var discoverer: Discoverer?
-    private var endpointID: EndpointID?
-    private var peerSessionID: String?
-    private var sessionGeneration = 0
-    private var linkGeneration = 0
-    private var foreground = UIApplication.shared.applicationState != .background
-    private var connected = false
-    private var ready = false
-    private var helloReceived = false
-    private var helloSent = false
-    private var helloTransmissions = 0
-    private var finishTransmissions = 0
-    private var connectionRetries = 0
-    private var inboundFrames = 0
+    private var advertiser: Advertiser?
+    private var discoveryRunning = false
+    private var advertisingRunning = false
+    private var pool = ProbePeerPool()
+    private var links: [String: ProbeLink] = [:]
+    private var retryCounts: [String: Int] = [:]
+    private var eligibleAfter: [String: TimeInterval] = [:]
     private var catchUpLinks: [String: Int] = [:]
     private var catchUpRequests: [String: Int] = [:]
-    private var currentLinkIsCatchUp = false
-    private var pendingAttempt: Int?
-    private var pendingDigest: Data?
-    private var pendingPayloadID: PayloadID?
-    private var finishAckPayloads: [PayloadID: String] = [:]
-    private var connectionDeadline: DispatchWorkItem?
-    private var helloDeadline: DispatchWorkItem?
-    private var ackDeadline: DispatchWorkItem?
-    private var finishDeadline: DispatchWorkItem?
-    private var peerProgressDeadline: DispatchWorkItem?
-    private var retryWork: DispatchWorkItem?
-    private var completionWork: DispatchWorkItem?
+    private var refillWork: DispatchWorkItem?
+    private var restartWork: DispatchWorkItem?
+    private var sessionGeneration = 0
+    private var transportGeneration = 0
+    private var foreground = UIApplication.shared.applicationState != .background
+    private(set) var finishingInBackground = false
     private var backgroundTask = UIBackgroundTaskIdentifier.invalid
     private var backgroundTaskGeneration = 0
-    private var finishingInBackground = false
     private var activityObject: AnyObject?
     private var activitySuppressed = false
 
@@ -71,6 +61,9 @@ final class ProbeModel: ObservableObject {
     }
 
     var selectedPayloadSize: Int { state?.payloadSize ?? 2048 }
+    private var localContext: ProbePeerContext? {
+        state.map { ProbePeerContext(platform: .ios, sessionID: $0.sessionID, payloadSize: $0.payloadSize) }
+    }
 
     var exportJSON: String {
         let device = UIDevice.current
@@ -80,15 +73,16 @@ final class ProbeModel: ObservableObject {
             "device": ["model": device.model, "os_version": device.systemVersion,
                        "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
                        "build": Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"],
-            "transport": "Google Nearby Connections", "strategy": "pointToPoint",
-            "pairing_mode": "automatic", "transport_role": "discoverer", "requested_medium": "ble",
+            "transport": "Google Nearby Connections", "strategy": "cluster",
+            "pairing_mode": "automatic", "transport_role": "advertiser-and-discoverer", "requested_medium": "ble",
             "underlying_medium": "SDK selected within BLE policy; physical validation required",
+            "maximum_active_peers": ProbePeerPool.maximumLinks, "maximum_candidates": ProbePeerPool.maximumCandidates,
+            "maximum_journal_peers": 8, "active_peers": activePeers, "waiting_peers": waitingPeers,
             "automatic_test_acceptance": true, "internet_disabled": NSNull(),
             "session_intended_active": state?.intendedActive ?? false, "background_policy": backgroundPolicy,
             "completed_peers": completedPeers, "sent_successful": successfulAttempts, "sent_failed": failedAttempts,
             "received_unique": receivedAttempts, "received_duplicates": duplicateAttempts,
-            "evicted_records": state?.evictedRecords ?? 0,
-            "attempts": state?.records.map(\.exported) ?? []
+            "evicted_records": state?.evictedRecords ?? 0, "attempts": state?.records.map(\.exported) ?? []
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys]),
               let text = String(data: data, encoding: .utf8) else { return "{\"error\":\"Log export failed\"}" }
@@ -101,14 +95,13 @@ final class ProbeModel: ObservableObject {
         tearDownTransport()
         endActivity()
         activitySuppressed = false
-        catchUpLinks.removeAll()
-        catchUpRequests.removeAll()
+        retryCounts.removeAll(); eligibleAfter.removeAll()
+        catchUpLinks.removeAll(); catchUpRequests.removeAll()
         let id = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         var next = ProbeSessionState(sessionID: id, payloadSize: payloadSize)
         append("session_started", fields: ["payload_size_bytes": "\(payloadSize)", "pairing_mode": "automatic"], to: &next)
         guard commit(next) else { return }
         awaitingResume = false
-        connectionRetries = 0
         if foreground { startTransport() }
         else { pauseTransport(reason: "Session saved; return to TrailMesh to connect.") }
     }
@@ -116,9 +109,10 @@ final class ProbeModel: ObservableObject {
     func resume() {
         guard state?.intendedActive == true, foreground else { return }
         awaitingResume = false
-        connectionRetries = 0
+        retryCounts.removeAll(); eligibleAfter.removeAll()
         guard record("session_resumed") else { return }
         if connectionManager == nil { startTransport() }
+        else { fillSlots() }
     }
 
     func stop() {
@@ -148,14 +142,14 @@ final class ProbeModel: ObservableObject {
         finishingInBackground = false
         endBackgroundTask()
         guard state?.intendedActive == true, !awaitingResume else { return }
-        if ProbeRecoveryPolicy.shouldResume(intendedActive: state?.intendedActive == true,
-                                           foreground: foreground, transportRunning: connectionManager != nil) {
-            connectionRetries = 0
+        if connectionManager == nil {
             guard record("foreground_recovery") else { return }
             startTransport()
         } else {
+            startPresence()
             startActivityIfAvailable()
-            if ready { sendNextAttempt(); sendFinishIfNeeded() }
+            for link in Array(links.values) { link.resumeWork() }
+            fillSlots()
         }
     }
 
@@ -163,7 +157,7 @@ final class ProbeModel: ObservableObject {
         foreground = false
         guard state?.intendedActive == true, !awaitingResume, record("entered_background") else { return }
         if backgroundBluetoothAllowed {
-            backgroundPolicy = "Live Activity Bluetooth is best effort; screen-off delivery is unverified"
+            backgroundPolicy = "Live Activity Bluetooth is best effort; concurrent screen-off delivery is unverified"
             status = "Session saved and available for Bluetooth events; background delivery is best effort."
             updateActivity()
         } else { finishCurrentAttemptOrPause() }
@@ -175,111 +169,226 @@ final class ProbeModel: ObservableObject {
     }
 
     private var backgroundBluetoothAllowed: Bool {
-        if #available(iOS 26.0, *), let activity = activityObject as? ProbeLiveActivity {
-            return activity.allowsBackgroundBluetooth
-        }
+        if #available(iOS 26.0, *), let activity = activityObject as? ProbeLiveActivity { return activity.allowsBackgroundBluetooth }
         return false
     }
-
-    private var mayStartWork: Bool {
+    var mayStartWork: Bool {
         state?.intendedActive == true && !awaitingResume && (foreground || backgroundBluetoothAllowed)
     }
 
     private func startTransport() {
-        guard mayStartWork, connectionManager == nil else { return }
-        linkGeneration &+= 1
-        let manager = ConnectionManager(serviceID: serviceID, strategy: .pointToPoint)
+        guard mayStartWork, connectionManager == nil, restartWork == nil else { return }
+        transportGeneration &+= 1
+        let manager = ConnectionManager(serviceID: serviceID, strategy: .cluster, queue: .main)
         manager.delegate = self
         let scanner = Discoverer(connectionManager: manager)
         scanner.delegate = self
+        let broadcaster = Advertiser(connectionManager: manager)
+        broadcaster.delegate = self
         connectionManager = manager
         discoverer = scanner
-        status = "Searching for Android; Bluetooth only. Both phones exchange 20 attempts."
-        let generation = sessionGeneration
-        scanner.startDiscovery(mediums: [.ble]) { [weak self, weak scanner, weak manager] error in
-            DispatchQueue.main.async {
-                guard let self, let scanner, let manager, self.sessionGeneration == generation,
-                      self.discoverer === scanner, self.connectionManager === manager, self.sessionActive else { return }
-                if let error {
-                    self.recordSDKError("discovery_failed", error: error)
-                    self.recoverConnection(reason: "discovery_failed")
-                } else if self.record("discovery_started", fields: ["requested_medium": "ble"]) {
-                    // Nearby has instantiated its CBManagers. The Live Activity starts locally in the foreground.
-                    self.startActivityIfAvailable()
+        advertiser = broadcaster
+        status = "Searching for compatible phones. Up to four peer links; generated bytes only."
+        startPresence()
+    }
+
+    private func startPresence() {
+        guard mayStartWork, !finishingInBackground, let localContext, let manager = connectionManager else { return }
+        if !discoveryRunning, let scanner = discoverer {
+            discoveryRunning = true
+            scanner.startDiscovery(mediums: [.ble]) { [weak self, weak scanner, weak manager] error in
+                DispatchQueue.main.async {
+                    guard let self, let manager, let scanner, self.connectionManager === manager,
+                          self.discoverer === scanner, self.mayStartWork else { return }
+                    if let error { self.transportFailed("discovery_failed", error: error) }
+                    else if self.record("discovery_started", fields: ["requested_medium": "ble"]) {
+                        // Nearby has instantiated its CBManagers. The Live Activity starts locally in the foreground.
+                        self.startActivityIfAvailable()
+                    }
+                }
+            }
+        }
+        if !advertisingRunning, let broadcaster = advertiser {
+            advertisingRunning = true
+            broadcaster.startAdvertising(using: Data(localContext.encoded.utf8), mediums: [.ble]) { [weak self, weak broadcaster, weak manager] error in
+                DispatchQueue.main.async {
+                    guard let self, let manager, let broadcaster, self.connectionManager === manager,
+                          self.advertiser === broadcaster, self.mayStartWork else { return }
+                    if let error { self.transportFailed("advertising_failed", error: error) }
+                    else { _ = self.record("advertising_started", fields: ["requested_medium": "ble"]) }
                 }
             }
         }
     }
 
-    private func isCurrent(_ manager: ConnectionManager, endpoint: EndpointID? = nil) -> Bool {
-        state?.intendedActive == true && !awaitingResume && connectionManager === manager
-        && (endpoint == nil || endpointID == endpoint)
+    private func transportFailed(_ event: String, error: Error) {
+        guard recordSDKError(event, error: error) else { return }
+        awaitingResume = true
+        pauseTransport(reason: "Bluetooth discovery could not start. Check permissions and radios, then tap Resume.")
     }
 
-    private func schedule(after delay: TimeInterval, action: @escaping (ProbeModel) -> Void) -> DispatchWorkItem {
-        let session = sessionGeneration
-        let link = linkGeneration
-        let work = DispatchWorkItem { [weak self] in
-            guard let self, self.sessionGeneration == session, self.linkGeneration == link,
-                  self.state?.intendedActive == true, !self.awaitingResume else { return }
-            action(self)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
-        return work
+    func isCurrent(_ link: ProbeLink) -> Bool {
+        state?.intendedActive == true && !awaitingResume && links[link.endpointID] === link && pool.contains(link.reservation)
     }
 
-    private func recoverConnection(reason: String) {
-        guard state?.intendedActive == true, !awaitingResume,
-              record("connection_interrupted", fields: ["failure_reason": reason]) else { return }
-        let catchUp = currentLinkIsCatchUp
-        tearDownTransport()
-        guard mayStartWork else {
-            status = "Session saved. Connections resume when TrailMesh is active."
-            return
+    private func candidateIsEligible(_ candidate: ProbePeerCandidate) -> Bool {
+        guard let state,
+              (retryCounts[candidate.context.sessionID] ?? 0) <= 5,
+              (eligibleAfter[candidate.context.sessionID] ?? 0) <= ProcessInfo.processInfo.systemUptime else { return false }
+        guard let peer = state.peer(candidate.context.sessionID) else { return state.peers.count < 8 }
+        guard let completed = peer.completedAt else { return true }
+        let age = Date().timeIntervalSince(completed)
+        return age >= 0 && age < 60 && (catchUpLinks[peer.sessionID] ?? 0) < 1 && (catchUpRequests[peer.sessionID] ?? 0) < 3
+    }
+
+    private func fillSlots() {
+        guard mayStartWork, !finishingInBackground, restartWork == nil, let scanner = discoverer,
+              let manager = connectionManager, let localContext else { return }
+        while let reservation = pool.reserveNext(eligible: { self.candidateIsEligible($0) }) {
+            guard let link = makeLink(reservation, manager: manager) else { continue }
+            scanner.requestConnection(to: link.endpointID, using: Data(localContext.encoded.utf8), mediums: [.ble]) { [weak self, weak manager, weak link] error in
+                DispatchQueue.main.async {
+                    guard let self, let manager, let link, self.connectionManager === manager,
+                          self.isCurrent(link), let error else { return }
+                    self.recordSDKError("connection_request_failed", error: error, peer: link.remote)
+                    self.linkFailed(link, reason: "connection_request_failed")
+                }
+            }
         }
-        if catchUp {
-            // Completed peers have their own bounded reconciliation budget. They cannot exhaust
-            // normal recovery or prevent discovery of a new peer that still needs DATA.
-            status = "Completion reconciliation interrupted; searching for another peer…"
-            retryWork = schedule(after: 0.5) { $0.startTransport() }
-            return
-        }
-        connectionRetries += 1
-        guard ProbeRecoveryPolicy.canRetry(connectionRetries) else {
-            _ = record("connection_retry_limit")
+        refreshPublishedState()
+        // Replacing the shared SDK only after every other peer drains preserves
+        // healthy links and gives ambiguous old endpoint callbacks no new owner.
+        if links.isEmpty, journalCannotContinue {
             awaitingResume = true
-            status = "Connection recovery paused after five retries. Tap Resume to try again."
-            updateActivity()
+            pauseTransport(reason: "Eight-peer test journal is full. Export logs and start a new session, or Resume to retry saved peers.")
             return
         }
-        let retry = connectionRetries
-        let delay = ProbeRecoveryPolicy.delay(forRetry: retry)
-        status = "Reconnecting in \(Int(delay)) seconds (retry \(retry)/5)…"
-        guard record("connection_retry_scheduled", fields: ["retry": "\(retry)"]) else { return }
-        retryWork = schedule(after: delay) { $0.startTransport() }
+        if links.isEmpty, pool.retiredCount > 0 { restartTransportWhenIdle(); return }
+        refillWork?.cancel(); refillWork = nil
+        let now = ProcessInfo.processInfo.systemUptime
+        if let next = eligibleAfter.values.filter({ $0 > now }).min() {
+            let work = DispatchWorkItem { [weak self] in self?.fillSlots() }
+            refillWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0.05, next - now), execute: work)
+        }
+    }
+
+    private var journalCannotContinue: Bool {
+        guard let state, state.peers.count == 8 else { return false }
+        return state.peers.allSatisfy { peer in
+            peer.completedAt != nil || (retryCounts[peer.sessionID] ?? 0) > 5
+        }
+    }
+
+    private func makeLink(_ reservation: ProbePeerReservation, manager: ConnectionManager) -> ProbeLink? {
+        guard var next = state else { _ = pool.release(reservation); return nil }
+        let candidate = reservation.candidate
+        do {
+            try next.bindPeer(candidate.context.sessionID)
+            try next.prepareLink(to: candidate.context.sessionID)
+        } catch {
+            _ = pool.release(reservation)
+            _ = record("unknown_peer_skipped_journal_full", fields: ["peer_session_id": candidate.context.sessionID])
+            return nil
+        }
+        guard commit(next) else { return nil }
+        let catchUp = next.peer(candidate.context.sessionID)?.completedAt != nil
+        if catchUp { catchUpRequests[candidate.context.sessionID, default: 0] += 1 }
+        eligibleAfter.removeValue(forKey: candidate.context.sessionID)
+        let link = ProbeLink(reservation: reservation, catchUp: catchUp, host: self) { [weak self, weak manager] bytes, id, completion in
+            guard let self, let manager, self.connectionManager === manager,
+                  self.links[candidate.endpointID]?.reservation == reservation else { return }
+            _ = manager.send(bytes, to: [candidate.endpointID], id: id) { [weak self, weak manager] error in
+                DispatchQueue.main.async {
+                    guard let self, let manager, self.connectionManager === manager,
+                          self.links[candidate.endpointID]?.reservation == reservation else { return }
+                    completion(error)
+                }
+            }
+        }
+        links[candidate.endpointID] = link
+        link.beginConnecting()
+        guard record("peer_discovered", fields: ["peer_session_id": link.remote]) else { return nil }
+        refreshPublishedState()
+        return link
+    }
+
+    func linkChanged(_ link: ProbeLink, successfulAttempt: Bool) {
+        guard isCurrent(link) else { return }
+        status = "\(links.count) peer links. Sent \(successfulAttempts); received \(receivedAttempts) generated payloads."
+        if successfulAttempt { retryCounts[link.remote] = 0 }
         updateActivity()
+        if finishingInBackground, !links.values.contains(where: { $0.pendingAttempt != nil }) {
+            pauseTransport(reason: "Current attempts finished; session saved until TrailMesh is active.")
+        }
+    }
+
+    func linkFailed(_ link: ProbeLink, reason: String) {
+        guard isCurrent(link), record("connection_interrupted", fields: ["peer_session_id": link.remote, "failure_reason": reason]) else { return }
+        let retry = link.catchUp ? 1 : min(6, (retryCounts[link.remote] ?? 0) + 1)
+        if !link.catchUp { retryCounts[link.remote] = retry }
+        eligibleAfter[link.remote] = ProcessInfo.processInfo.systemUptime + ProbeRecoveryPolicy.delay(forRetry: retry)
+        release(link)
+        status = "One peer interrupted; other links continue. Waiting phones receive the next slots."
+        fillSlots()
+    }
+
+    func linkCompleted(_ link: ProbeLink) {
+        guard isCurrent(link) else { return }
+        if link.catchUp { catchUpLinks[link.remote, default: 0] += 1 }
+        retryCounts[link.remote] = 0
+        eligibleAfter[link.remote] = ProcessInfo.processInfo.systemUptime + 2
+        release(link)
+        status = "Peer batch complete. Other links and discovery continue."
+        updateActivity()
+        fillSlots()
+    }
+
+    private func release(_ link: ProbeLink) {
+        links.removeValue(forKey: link.endpointID)
+        _ = pool.release(link.reservation)
+        link.cancel()
+        connectionManager?.disconnect(from: link.endpointID)
+        refreshPublishedState()
+    }
+
+    private func restartTransportWhenIdle() {
+        guard links.isEmpty, restartWork == nil else { return }
+        tearDownTransport()
+        guard mayStartWork else { return }
+        let session = sessionGeneration
+        let generation = transportGeneration
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.sessionGeneration == session, self.transportGeneration == generation else { return }
+            self.restartWork = nil
+            self.startTransport()
+        }
+        restartWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
     private func tearDownTransport() {
-        linkGeneration &+= 1
-        [connectionDeadline, helloDeadline, ackDeadline, finishDeadline, peerProgressDeadline, retryWork, completionWork].forEach { $0?.cancel() }
-        connectionDeadline = nil; helloDeadline = nil; ackDeadline = nil
-        finishDeadline = nil; peerProgressDeadline = nil; retryWork = nil; completionWork = nil
-        let scanner = discoverer
-        let manager = connectionManager
-        let previousEndpoint = endpointID
-        discoverer = nil; connectionManager = nil; endpointID = nil; peerSessionID = nil
-        scanner?.delegate = nil
-        manager?.delegate = nil
-        scanner?.stopDiscovery()
-        if let previousEndpoint { manager?.disconnect(from: previousEndpoint) }
-        connected = false; ready = false; helloReceived = false; helloSent = false
-        helloTransmissions = 0; finishTransmissions = 0; inboundFrames = 0
-        pendingAttempt = nil; pendingDigest = nil; pendingPayloadID = nil
-        finishAckPayloads.removeAll()
+        transportGeneration &+= 1
+        refillWork?.cancel(); refillWork = nil
+        restartWork?.cancel(); restartWork = nil
+        let previous = Array(links.values)
+        links.removeAll()
+        pool.reset()
+        for link in previous { link.cancel() }
+        discoverer?.delegate = nil
+        advertiser?.delegate = nil
+        connectionManager?.delegate = nil
+        discoverer?.stopDiscovery()
+        advertiser?.stopAdvertising()
+        for link in previous { connectionManager?.disconnect(from: link.endpointID) }
+        discoverer = nil
+        advertiser = nil
+        connectionManager = nil
+        discoveryRunning = false
+        advertisingRunning = false
         finishingInBackground = false
-        currentLinkIsCatchUp = false
         endBackgroundTask()
+        refreshPublishedState()
     }
 
     private func pauseTransport(reason: String) {
@@ -289,254 +398,15 @@ final class ProbeModel: ObservableObject {
         updateActivity()
     }
 
-    private func sendHello() {
-        guard connected, let manager = connectionManager, let endpointID, let remote = peerSessionID, let state else { return }
-        helloDeadline?.cancel()
-        guard helloTransmissions < 3 else { recoverConnection(reason: "hello_timeout"); return }
-        helloTransmissions += 1
-        do {
-            let message = try ForegroundFrame.encodeHelloMessage(sessionID: state.sessionID, peerSessionID: remote, payloadSize: state.payloadSize)
-            sendControl(message, manager: manager, endpoint: endpointID) { model, error in
-                if error != nil { model.recoverConnection(reason: "hello_send_failed"); return }
-                model.helloSent = true
-                model.becomeReadyIfPossible()
-            }
-            helloDeadline = schedule(after: 10) { model in if !model.ready { model.sendHello() } }
-        } catch { recoverConnection(reason: "hello_encoding_failed") }
-    }
-
-    private func becomeReadyIfPossible() {
-        guard !ready, helloSent, helloReceived, connected, let remote = peerSessionID else { return }
-        ready = true
-        helloDeadline?.cancel()
-        guard record("peer_ready", fields: ["direction": "bidirectional"]) else { return }
-        status = "Connected. Sending and receiving generated test bytes."
-        if let peer = state?.peer(remote), peer.remoteFinished {
-            sendRemoteFinishAcknowledgement(successful: peer.remoteSuccessful!, failed: peer.remoteFailed!)
-        }
-        sendNextAttempt()
-        sendFinishIfNeeded()
-        updateActivity()
-    }
-
-    private func sendNextAttempt() {
-        guard mayStartWork, !finishingInBackground, ready, pendingAttempt == nil,
-              let remote = peerSessionID, let endpointID, let manager = connectionManager,
-              var next = state, let peer = next.peer(remote) else { return }
-        guard !peer.outgoingComplete else { sendFinishIfNeeded(); return }
-        if peer.transmissions >= 3 {
-            finishAttempt(success: false, reason: "transmission_limit", attempt: peer.nextAttempt)
-            return
-        }
-        do {
-            let attempt = try next.beginTransmission(to: remote)
-            let payload = try ForegroundFrame.makeTestPayload(size: next.payloadSize, attemptIndex: attempt)
-            let digest = ForegroundFrame.digest(payload)
-            let message = try ForegroundFrame.encodeSessionDataMessage(sessionID: next.sessionID, attemptIndex: attempt, payload: payload)
-            append("payload_sent", fields: ["attempt_index": "\(attempt)", "payload_size_bytes": "\(next.payloadSize)",
-                   "transmission": "\(next.peer(remote)!.transmissions)", "peer_session_id": remote,
-                   "expected_sha256": ForegroundFrame.hex(digest), "direction": "iphone-to-android"], to: &next)
-            guard commit(next) else { return }
-            pendingAttempt = attempt; pendingDigest = digest
-            let payloadID = Int64.random(in: 1...Int64.max)
-            pendingPayloadID = payloadID
-            let session = sessionGeneration; let link = linkGeneration
-            _ = manager.send(message, to: [endpointID], id: payloadID) { [weak self, weak manager] error in
-                DispatchQueue.main.async {
-                    guard let self, let manager, self.isCurrent(manager, endpoint: endpointID),
-                          self.sessionGeneration == session, self.linkGeneration == link,
-                          self.pendingAttempt == attempt, self.pendingPayloadID == payloadID, error != nil else { return }
-                    self.transmissionFailed(reason: "payload_send_failed")
-                }
-            }
-            ackDeadline = schedule(after: 15) { model in
-                if model.pendingAttempt == attempt, model.pendingPayloadID == payloadID { model.transmissionFailed(reason: "acknowledgement_timeout") }
-            }
-        } catch { recoverConnection(reason: "payload_encoding_failed") }
-    }
-
-    private func transmissionFailed(reason: String) {
-        guard let attempt = pendingAttempt, let remote = peerSessionID, let peer = state?.peer(remote) else { return }
-        ackDeadline?.cancel()
-        pendingAttempt = nil; pendingDigest = nil; pendingPayloadID = nil
-        endBackgroundTask()
-        guard record("transmission_failed", fields: ["attempt_index": "\(attempt)", "peer_session_id": remote, "failure_reason": reason]) else { return }
-        if peer.transmissions >= 3 { finishAttempt(success: false, reason: reason, attempt: attempt) }
-        else if finishingInBackground || !mayStartWork { pauseTransport(reason: "Unacknowledged attempt saved; will resume when active.") }
-        else {
-            retryWork?.cancel()
-            retryWork = schedule(after: 0.5) { $0.sendNextAttempt() }
-        }
-    }
-
-    private func finishAttempt(success: Bool, reason: String?, attempt: Int, receivedDigest: Data? = nil) {
-        guard let remote = peerSessionID, var next = state else { return }
-        do {
-            guard try next.finishAttempt(to: remote, attempt: attempt, success: success) else { return }
-            let expected = try ForegroundFrame.makeTestPayload(size: next.payloadSize, attemptIndex: attempt)
-            var fields = ["attempt_index": "\(attempt)", "success": "\(success)", "payload_size_bytes": "\(next.payloadSize)",
-                          "peer_session_id": remote, "direction": "iphone-to-android", "expected_sha256": ForegroundFrame.digestHex(expected)]
-            if let reason { fields["failure_reason"] = reason }
-            if let receivedDigest { fields["received_sha256"] = ForegroundFrame.hex(receivedDigest) }
-            append("attempt_result", fields: fields, to: &next)
-            guard commit(next) else { return }
-            ackDeadline?.cancel()
-            pendingAttempt = nil; pendingDigest = nil; pendingPayloadID = nil
-            endBackgroundTask()
-            if success { connectionRetries = 0 }
-            status = "Sent: \(successfulAttempts) succeeded, \(failedAttempts) failed. Received: \(receivedAttempts) unique."
-            updateActivity()
-            if finishingInBackground || !mayStartWork { pauseTransport(reason: "Current attempt finished; session saved until TrailMesh is active.") }
-            else {
-                retryWork?.cancel()
-                retryWork = schedule(after: 0.1) { model in model.sendNextAttempt(); model.sendFinishIfNeeded() }
-            }
-        } catch { recoverConnection(reason: "attempt_state_invalid") }
-    }
-
-    private func receiveData(_ message: ProbeSessionDataMessage, manager: ConnectionManager, endpoint: EndpointID) {
-        guard ready, let remote = peerSessionID, message.sessionID == remote, let state,
-              message.frame.payload.count == state.payloadSize, (0..<20).contains(message.attemptIndex) else {
-            _ = record("unexpected_session_data"); return
-        }
-        do {
-            let expected = try ForegroundFrame.makeTestPayload(size: state.payloadSize, attemptIndex: message.attemptIndex)
-            let accepted = expected == message.frame.payload
-            var next = state
-            let unique: Bool
-            if accepted { unique = try next.recordReceived(from: remote, attempt: message.attemptIndex) }
-            else { unique = false }
-            append(unique ? "payload_received" : accepted ? "duplicate_payload_received" : "payload_rejected",
-                   fields: ["attempt_index": "\(message.attemptIndex)", "payload_size_bytes": "\(state.payloadSize)",
-                            "peer_session_id": remote, "expected_sha256": ForegroundFrame.digestHex(expected),
-                            "received_sha256": ForegroundFrame.hex(message.frame.digest), "success": "\(accepted)", "direction": "android-to-iphone"], to: &next)
-            // Commit deduplication before acknowledging. A failed write never emits a positive ACK.
-            guard commit(next) else { return }
-            if let peer = next.peer(remote), ProbeRecoveryPolicy.shouldRenewReciprocalDeadline(uniqueReceived: unique, peer: peer) {
-                armReciprocalProgressDeadline()
-            }
-            let ack = try ForegroundFrame.encodeSessionAckMessage(sessionID: remote, attemptIndex: message.attemptIndex, accepted: accepted, digest: message.frame.digest)
-            sendControl(ack, manager: manager, endpoint: endpoint) { model, error in
-                if error != nil { _ = model.record("acknowledgement_send_failed") }
-            }
-            updateActivity()
-        } catch { _ = record("invalid_session_data") }
-    }
-
-    private func receiveAck(_ message: ProbeSessionAckMessage) {
-        guard ready, message.sessionID == state?.sessionID, message.attemptIndex == pendingAttempt, let expected = pendingDigest else {
-            _ = record("unexpected_acknowledgement"); return
-        }
-        if message.accepted && message.digest == expected {
-            finishAttempt(success: true, reason: nil, attempt: message.attemptIndex, receivedDigest: message.digest)
-        } else { transmissionFailed(reason: "acknowledgement_or_checksum_mismatch") }
-    }
-
-    private func sendFinishIfNeeded() {
-        guard mayStartWork, ready, let remote = peerSessionID, let peer = state?.peer(remote),
-              peer.outgoingComplete, !peer.localFinishAcknowledged, finishDeadline == nil,
-              let state, let manager = connectionManager, let endpointID else { return }
-        guard finishTransmissions < 3 else { recoverConnection(reason: "finish_timeout"); return }
-        finishTransmissions += 1
-        do {
-            let message = try ForegroundFrame.encodeFinishMessage(sessionID: state.sessionID, peerSessionID: remote,
-                acknowledgement: false, successfulAttempts: peer.successful, failedAttempts: peer.failed)
-            sendControl(message, manager: manager, endpoint: endpointID) { model, error in
-                if error != nil { model.recoverConnection(reason: "finish_send_failed") }
-            }
-            finishDeadline = schedule(after: 10) { model in model.finishDeadline = nil; model.sendFinishIfNeeded() }
-        } catch { recoverConnection(reason: "finish_encoding_failed") }
-    }
-
-    private func receiveFinish(_ message: ProbeFinishMessage) {
-        guard ready, let remote = peerSessionID, message.sessionID == remote,
-              message.peerSessionID == state?.sessionID, var next = state else { _ = record("unexpected_finish"); return }
-        do {
-            if message.acknowledgement {
-                let wasAcknowledged = next.peer(remote)?.localFinishAcknowledged == true
-                try next.recordLocalFinishAcknowledgement(from: remote, successful: message.successfulAttempts, failed: message.failedAttempts)
-                append("local_finish_acknowledged", fields: ["peer_session_id": remote], to: &next)
-                guard commit(next) else { return }
-                finishDeadline?.cancel(); finishDeadline = nil
-                if !wasAcknowledged { armReciprocalProgressDeadline() }
-            } else {
-                completionWork?.cancel(); completionWork = nil
-                try next.recordRemoteFinish(from: remote, successful: message.successfulAttempts, failed: message.failedAttempts)
-                append("remote_batch_finished", fields: ["peer_session_id": remote], to: &next)
-                guard commit(next) else { return }
-                if peerProgressDeadline == nil { armReciprocalProgressDeadline() }
-                sendRemoteFinishAcknowledgement(successful: message.successfulAttempts, failed: message.failedAttempts)
-            }
-            completePeerIfPossible()
-        } catch { _ = record("invalid_finish") }
-    }
-
-    private func sendRemoteFinishAcknowledgement(successful: Int, failed: Int) {
-        guard let state, let remote = peerSessionID, let manager = connectionManager, let endpointID else { return }
-        do {
-            let message = try ForegroundFrame.encodeFinishMessage(sessionID: state.sessionID, peerSessionID: remote,
-                acknowledgement: true, successfulAttempts: successful, failedAttempts: failed)
-            let id = Int64.random(in: 1...Int64.max)
-            finishAckPayloads[id] = remote
-            sendControl(message, manager: manager, endpoint: endpointID, payloadID: id) { model, error in
-                if error != nil {
-                    model.finishAckPayloads.removeValue(forKey: id)
-                    model.recoverConnection(reason: "finish_ack_send_failed")
-                }
-            }
-        } catch { recoverConnection(reason: "finish_ack_encoding_failed") }
-    }
-
-    private func completePeerIfPossible() {
-        guard let remote = peerSessionID, state?.peer(remote)?.complete == true,
-              finishAckPayloads.isEmpty, completionWork == nil else { return }
-        peerProgressDeadline?.cancel(); peerProgressDeadline = nil
-        status = "Bidirectional batch complete. Finishing peer acknowledgement…"
-        completionWork = schedule(after: 1) { model in
-            guard model.state?.peer(remote)?.complete == true, model.finishAckPayloads.isEmpty else {
-                model.completionWork = nil
-                model.armReciprocalProgressDeadline()
-                return
-            }
-            guard model.record("peer_batch_complete", fields: ["peer_session_id": remote]) else { return }
-            if model.currentLinkIsCatchUp { model.catchUpLinks[remote] = (model.catchUpLinks[remote] ?? 0) + 1 }
-            model.tearDownTransport()
-            model.connectionRetries = 0
-            model.status = "Peer batch complete. Searching for the next Android phone…"
-            model.updateActivity()
-            if model.mayStartWork { model.startTransport() }
-        }
-    }
-
-    private func armReciprocalProgressDeadline() {
-        guard let remote = peerSessionID, state?.peer(remote)?.needsReciprocalProgressDeadline == true else { return }
-        peerProgressDeadline?.cancel()
-        peerProgressDeadline = schedule(after: ProbeRecoveryPolicy.reciprocalProgressTimeout) { model in
-            guard model.state?.peer(remote)?.needsReciprocalProgressDeadline == true else { return }
-            model.recoverConnection(reason: "reciprocal_progress_timeout")
-        }
-    }
-
-    private func sendControl(_ data: Data, manager: ConnectionManager, endpoint: EndpointID,
-                             payloadID: PayloadID = Int64.random(in: 1...Int64.max),
-                             completion: @escaping (ProbeModel, Error?) -> Void) {
-        let session = sessionGeneration; let link = linkGeneration
-        _ = manager.send(data, to: [endpoint], id: payloadID) { [weak self, weak manager] error in
-            DispatchQueue.main.async {
-                guard let self, let manager, self.isCurrent(manager, endpoint: endpoint),
-                      self.sessionGeneration == session, self.linkGeneration == link else { return }
-                completion(self, error)
-            }
-        }
-    }
-
     private func finishCurrentAttemptOrPause() {
         finishingInBackground = true
-        discoverer?.stopDiscovery()
-        backgroundPolicy = "Finishing one attempt, then saving for foreground recovery"
-        if pendingAttempt != nil {
+        discoverer?.stopDiscovery(); discoveryRunning = false
+        advertiser?.stopAdvertising(); advertisingRunning = false
+        refillWork?.cancel(); refillWork = nil
+        backgroundPolicy = "Finishing current attempts, then saving for foreground recovery"
+        if links.values.contains(where: { $0.pendingAttempt != nil }) {
             beginBackgroundTaskIfNeeded()
-            status = "Finishing the current attempt before pausing transport…"
+            status = "Finishing current attempts before pausing every link…"
             _ = record("background_finishing_current_attempt")
         } else {
             guard record("background_transport_paused") else { return }
@@ -548,18 +418,17 @@ final class ProbeModel: ObservableObject {
     private func beginBackgroundTaskIfNeeded() {
         guard backgroundTask == .invalid else { return }
         let generation = sessionGeneration
-        let link = linkGeneration
         backgroundTaskGeneration &+= 1
         let assertion = backgroundTaskGeneration
-        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Finish TrailMesh test exchange") { [weak self] in
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Finish TrailMesh test exchanges") { [weak self] in
             // UIKit invokes expiration synchronously on main. A stale assertion was already ended;
             // it must never release a newer task. End this assertion before checkpoint cleanup.
             guard let self, self.backgroundTaskGeneration == assertion, self.backgroundTask != .invalid else { return }
-            let currentOwner = self.sessionGeneration == generation && self.linkGeneration == link
+            let currentOwner = self.sessionGeneration == generation
             self.endBackgroundTask()
             guard currentOwner else { return }
-            _ = self.record("background_time_expired")
-            self.pauseTransport(reason: "Background time ended. Pending attempt saved for automatic foreground recovery.")
+            guard self.record("background_time_expired") else { return }
+            self.pauseTransport(reason: "Background time ended. Pending attempts saved for automatic foreground recovery.")
         }
     }
 
@@ -590,12 +459,8 @@ final class ProbeModel: ObservableObject {
         }
         let content = ProbeActivityAttributes.ContentState(status: status, sent: successfulAttempts, failed: failedAttempts, received: receivedAttempts)
         if activity.start(sessionID: state.sessionID, content: content) {
-            backgroundPolicy = "Live Activity Bluetooth is best effort; screen-off delivery is unverified"
-        } else {
-            activitySuppressed = true
-            backgroundPolicy = "Live Activity unavailable; automatic foreground recovery"
-            _ = record("background_activity_start_unavailable")
-        }
+            backgroundPolicy = "Live Activity Bluetooth is best effort; concurrent screen-off delivery is unverified"
+        } else { _ = record("background_activity_start_unavailable") }
     }
 
     private func updateActivity() {
@@ -612,7 +477,7 @@ final class ProbeModel: ObservableObject {
     }
 
     @discardableResult
-    private func commit(_ next: ProbeSessionState) -> Bool {
+    func commit(_ next: ProbeSessionState) -> Bool {
         do {
             try store.save(next)
             state = next
@@ -627,7 +492,9 @@ final class ProbeModel: ObservableObject {
         }
     }
 
-    private func append(_ event: String, fields: [String: String], to next: inout ProbeSessionState) {
+    func append(_ event: String, fields: [String: String], to next: inout ProbeSessionState) {
+        var fields = fields
+        if event == "connected" { fields["lifecycle"] = foreground ? "foreground" : "background" }
         next.appendRecord(ProbeLogEntry(event: event, observedAt: ISO8601DateFormatter().string(from: Date()), fields: fields))
     }
 
@@ -638,9 +505,12 @@ final class ProbeModel: ObservableObject {
         return commit(next)
     }
 
-    private func recordSDKError(_ event: String, error: Error) {
+    @discardableResult
+    private func recordSDKError(_ event: String, error: Error, peer: String? = nil) -> Bool {
         let error = error as NSError
-        _ = record(event, fields: ["error_domain": String(error.domain.prefix(120)), "error_code": "\(error.code)"])
+        var fields = ["error_domain": String(error.domain.prefix(120)), "error_code": "\(error.code)"]
+        if let peer { fields["peer_session_id"] = peer }
+        return record(event, fields: fields)
     }
 
     private func refreshPublishedState() {
@@ -650,6 +520,8 @@ final class ProbeModel: ObservableObject {
         receivedAttempts = state?.peers.reduce(0) { $0 + $1.receivedAttempts.count } ?? 0
         duplicateAttempts = state?.peers.reduce(0) { $0 + $1.duplicates } ?? 0
         completedPeers = state?.peers.filter { $0.completedAt != nil }.count ?? 0
+        activePeers = links.count
+        waitingPeers = pool.waitingCount
         logs = state?.records.map {
             let attempt = $0.fields["attempt_index"].map { " #\($0)" } ?? ""
             let result = $0.fields["success"].map { $0 == "true" ? ": success" : ": failed" } ?? ""
@@ -658,131 +530,82 @@ final class ProbeModel: ObservableObject {
     }
 }
 
-extension ProbeModel: DiscovererDelegate, ConnectionManagerDelegate {
+extension ProbeModel: DiscovererDelegate, AdvertiserDelegate, ConnectionManagerDelegate {
     func discoverer(_ discoverer: Discoverer, didFind endpointID: EndpointID, with context: Data) {
-        guard self.discoverer === discoverer, mayStartWork, self.endpointID == nil,
-              let remote = ProbePeerContext.parse(context), let state else { return }
-        let local = ProbePeerContext(platform: .ios, sessionID: state.sessionID, payloadSize: state.payloadSize)
-        guard local.isCompatible(with: remote), local.canInitiate(to: remote) else { return }
-        let catchUp = state.peer(remote.sessionID)?.completedAt != nil
-        if catchUp, let completed = state.peer(remote.sessionID)?.completedAt {
-            let age = Date().timeIntervalSince(completed)
-            guard age >= 0, age < 60, (catchUpLinks[remote.sessionID] ?? 0) < 1,
-                  (catchUpRequests[remote.sessionID] ?? 0) < 3 else { return }
-            catchUpRequests[remote.sessionID] = (catchUpRequests[remote.sessionID] ?? 0) + 1
-        }
-        var next = state
-        do { try next.bindPeer(remote.sessionID); try next.prepareLink(to: remote.sessionID) }
-        catch ProbeSessionError.journalFull {
-            if state.shouldPauseForFullJournal {
-                awaitingResume = true
-                pauseTransport(reason: "Eight-peer journal is full. Export the log and start a new session.")
-            } else {
-                _ = record("unknown_peer_skipped_journal_full", fields: ["peer_session_id": remote.sessionID])
-            }
-            return
-        }
-        catch {
-            awaitingResume = true
-            pauseTransport(reason: "Saved peer state is invalid. Export the log and start a new session.")
-            return
-        }
-        guard commit(next), let manager = connectionManager else { return }
-        self.endpointID = endpointID
-        peerSessionID = remote.sessionID
-        currentLinkIsCatchUp = catchUp
-        linkGeneration &+= 1
-        let session = sessionGeneration; let link = linkGeneration
-        guard record("peer_discovered", fields: ["peer_session_id": remote.sessionID]) else { return }
-        status = "Compatible Android found. Connecting…"
-        discoverer.stopDiscovery()
-        discoverer.requestConnection(to: endpointID, using: Data(local.encoded.utf8), mediums: [.ble]) { [weak self, weak manager] error in
-            DispatchQueue.main.async {
-                guard let self, let manager, self.isCurrent(manager, endpoint: endpointID),
-                      self.sessionGeneration == session, self.linkGeneration == link, let error else { return }
-                self.recordSDKError("connection_request_failed", error: error)
-                self.recoverConnection(reason: "connection_request_failed")
-            }
-        }
-        connectionDeadline = schedule(after: 20) { model in if !model.connected { model.recoverConnection(reason: "connection_timeout") } }
+        guard self.discoverer === discoverer, mayStartWork, !finishingInBackground,
+              let remote = ProbePeerContext.parse(context), let localContext,
+              localContext.isCompatible(with: remote), localContext.canInitiate(to: remote) else { return }
+        _ = pool.offer(ProbePeerCandidate(endpointID: endpointID, context: remote))
+        fillSlots()
     }
 
     func discoverer(_ discoverer: Discoverer, didLose endpointID: EndpointID) {
         guard self.discoverer === discoverer else { return }
-        if self.endpointID == endpointID, !connected { recoverConnection(reason: "peer_lost_while_connecting") }
+        pool.removeWaiting(endpointID: endpointID)
+        refreshPublishedState()
+        // Discovery loss does not establish that an existing connection has failed.
+    }
+
+    func advertiser(_ advertiser: Advertiser, didReceiveConnectionRequestFrom endpointID: EndpointID,
+                    with context: Data, connectionRequestHandler: @escaping (Bool) -> Void) {
+        guard self.advertiser === advertiser, mayStartWork, !finishingInBackground,
+              let manager = connectionManager, let localContext,
+              let remote = ProbePeerContext.parse(context), remote.canInitiate(to: localContext) else {
+            connectionRequestHandler(false); return
+        }
+        let candidate = ProbePeerCandidate(endpointID: endpointID, context: remote)
+        guard candidateIsEligible(candidate), let reservation = pool.reserveIncoming(candidate),
+              makeLink(reservation, manager: manager) != nil else { connectionRequestHandler(false); return }
+        connectionRequestHandler(true)
     }
 
     func connectionManager(_ connectionManager: ConnectionManager, didReceive verificationCode: String,
                            from endpointID: EndpointID, verificationHandler: @escaping (Bool) -> Void) {
-        let accepted = isCurrent(connectionManager, endpoint: endpointID) && mayStartWork
-        if accepted { _ = record("sdk_verification_code_auto_accepted_test_mode") }
-        verificationHandler(accepted && !awaitingResume)
+        guard self.connectionManager === connectionManager, let link = links[endpointID], isCurrent(link), mayStartWork else {
+            verificationHandler(false); return
+        }
+        // Automatic verification remains limited to generated synthetic test bytes.
+        let saved = record("sdk_verification_code_auto_accepted_test_mode", fields: ["peer_session_id": link.remote])
+        verificationHandler(saved && isCurrent(link))
     }
 
-    func connectionManager(_ connectionManager: ConnectionManager, didReceive data: Data, withID payloadID: PayloadID, from endpointID: EndpointID) {
-        guard isCurrent(connectionManager, endpoint: endpointID), connected else { return }
-        guard inboundFrames < 256 else { recoverConnection(reason: "link_frame_limit"); return }
-        inboundFrames += 1
-        do {
-            if ForegroundFrame.isHelloMessage(data) {
-                let hello = try ForegroundFrame.decodeHelloMessage(data)
-                guard hello.sessionID == peerSessionID, hello.peerSessionID == state?.sessionID,
-                      hello.payloadSize == state?.payloadSize, hello.attemptCount == 20 else { recoverConnection(reason: "hello_mismatch"); return }
-                helloReceived = true
-                becomeReadyIfPossible()
-            } else if ForegroundFrame.isFinishMessage(data) {
-                receiveFinish(try ForegroundFrame.decodeFinishMessage(data))
-            } else if ForegroundFrame.isSessionAckMessage(data) {
-                receiveAck(try ForegroundFrame.decodeSessionAckMessage(data))
-            } else {
-                receiveData(try ForegroundFrame.decodeSessionDataMessage(data), manager: connectionManager, endpoint: endpointID)
-            }
-        } catch { _ = record("invalid_probe_frame") }
+    func connectionManager(_ connectionManager: ConnectionManager, didReceive data: Data,
+                           withID payloadID: PayloadID, from endpointID: EndpointID) {
+        guard self.connectionManager === connectionManager else { return }
+        links[endpointID]?.receive(data)
     }
 
     func connectionManager(_ connectionManager: ConnectionManager, didReceive stream: InputStream, withID payloadID: PayloadID,
                            from endpointID: EndpointID, cancellationToken token: CancellationToken) {
         token.cancel()
-        if isCurrent(connectionManager, endpoint: endpointID) { _ = record("unexpected_stream_payload") }
+        guard self.connectionManager === connectionManager else { return }
+        links[endpointID]?.rejectUnsupportedPayload()
     }
 
     func connectionManager(_ connectionManager: ConnectionManager, didStartReceivingResourceWithID payloadID: PayloadID,
                            from endpointID: EndpointID, at localURL: URL, withName name: String, cancellationToken token: CancellationToken) {
         token.cancel()
-        if isCurrent(connectionManager, endpoint: endpointID) { _ = record("unexpected_file_payload") }
+        guard self.connectionManager === connectionManager else { return }
+        links[endpointID]?.rejectUnsupportedPayload()
     }
 
     func connectionManager(_ connectionManager: ConnectionManager, didReceiveTransferUpdate update: TransferUpdate,
                            from endpointID: EndpointID, forPayload payloadID: PayloadID) {
-        guard isCurrent(connectionManager, endpoint: endpointID) else { return }
+        guard self.connectionManager === connectionManager, let link = links[endpointID] else { return }
         switch update {
-        case .failure, .canceled:
-            if pendingPayloadID == payloadID { transmissionFailed(reason: "nearby_transfer_failed") }
-            else if finishAckPayloads.removeValue(forKey: payloadID) != nil { recoverConnection(reason: "finish_ack_transfer_failed") }
-        case .success:
-            if let remote = finishAckPayloads.removeValue(forKey: payloadID), var next = state {
-                do {
-                    try next.recordRemoteFinishAcknowledgementDelivered(to: remote)
-                    if commit(next) { completePeerIfPossible() }
-                } catch { recoverConnection(reason: "finish_ack_state_invalid") }
-            }
+        case .failure, .canceled: link.transferUpdated(payloadID: payloadID, succeeded: false)
+        case .success: link.transferUpdated(payloadID: payloadID, succeeded: true)
         case .progress: break
         }
     }
 
     func connectionManager(_ connectionManager: ConnectionManager, didChangeTo state: ConnectionState, for endpointID: EndpointID) {
-        guard isCurrent(connectionManager, endpoint: endpointID) else { return }
+        guard self.connectionManager === connectionManager, let link = links[endpointID], isCurrent(link) else { return }
         switch state {
-        case .connected:
-            guard !connected else { return }
-            connected = true
-            connectionDeadline?.cancel()
-            guard record("connected", fields: ["lifecycle": foreground ? "foreground" : "background"]) else { return }
-            status = "Connected. Confirming the shared test session…"
-            sendHello()
-        case .connecting: status = "Connecting…"
-        case .disconnected: recoverConnection(reason: "peer_disconnected")
-        case .rejected: recoverConnection(reason: "connection_rejected")
+        case .connected: link.didConnect()
+        case .connecting: break
+        case .disconnected: linkFailed(link, reason: "peer_disconnected")
+        case .rejected: linkFailed(link, reason: "connection_rejected")
         }
     }
 }

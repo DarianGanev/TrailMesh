@@ -32,7 +32,7 @@ final class ProbePeerContextTests: XCTestCase {
         XCTAssertTrue(android.isCompatible(with: ProbePeerContext(platform: .ios, sessionID: second, payloadSize: 2048)))
         XCTAssertFalse(android.isCompatible(with: ProbePeerContext(platform: .ios, sessionID: first, payloadSize: 2048)))
         XCTAssertFalse(android.isCompatible(with: ProbePeerContext(platform: .ios, sessionID: second, payloadSize: 8192)))
-        XCTAssertFalse(ProbePeerContext(platform: .ios, sessionID: first, payloadSize: 2048).isCompatible(with: ProbePeerContext(platform: .ios, sessionID: second, payloadSize: 2048)))
+        XCTAssertTrue(ProbePeerContext(platform: .ios, sessionID: first, payloadSize: 2048).isCompatible(with: ProbePeerContext(platform: .ios, sessionID: second, payloadSize: 2048)))
     }
 
     func testInitiationElectsExactlyOneCompatibleDevice() {
@@ -43,6 +43,9 @@ final class ProbePeerContextTests: XCTestCase {
         XCTAssertFalse(otherAndroid.canInitiate(to: android))
         XCTAssertFalse(android.canInitiate(to: ios))
         XCTAssertTrue(ios.canInitiate(to: android))
+        let otherIOS = ProbePeerContext(platform: .ios, sessionID: first, payloadSize: 2048)
+        XCTAssertTrue(otherIOS.canInitiate(to: ios))
+        XCTAssertFalse(ios.canInitiate(to: otherIOS))
         XCTAssertFalse(android.canInitiate(to: android))
         XCTAssertFalse(android.canInitiate(to: ProbePeerContext(platform: .ios, sessionID: second, payloadSize: 8192)))
     }
