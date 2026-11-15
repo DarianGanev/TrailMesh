@@ -620,6 +620,14 @@ The caller supplies monotonic elapsed time for five-second negotiation, ten-seco
 
 The [API 26 storage measurement](apps/android/benchmark-results/report-store-api26-v1.json) uses 5,154 signed synthetic reports near the 25 MiB logical budget. Full verified map/history/forwarding queries held the repository lock for about 12 seconds and delayed concurrent ingestion; a bounded eight-candidate inventory page took about 26 ms. This emulator result requires a map/history pagination or reviewed snapshot strategy before UI/radio integration in #26/#27. Preserve integrity and clock checks while addressing contention. The measurement does not establish physical-device performance or radio behavior.
 
+#### Local relevance and bounded repository reads
+
+The [local relevance profile](protocol/relevance-v1-profile.json) defines equivalent Python, Kotlin and Swift decisions over verified report projections. An explicit manual area, a usable GPS area, and an optional route corridor combine by union. Routes stay local. The area radius accepts 100 m through 50 km. Route corridors accept 100 m through 10 km, defaulting to 1 km, with at most 2,048 points. Spherical distance handles longitude wrap and polar coordinates. Report accuracy never widens the selected region. GPS fixes older than five minutes, dated in the future, or less accurate than 1 km require an explicit manual area or usable route. Missing usable configuration produces a configuration-required result.
+
+Selection does not replace signature, expiry, quarantine, quota or forwarding checks. The encounter freezes its local context and rechecks outgoing eligibility when loading bytes. Changing interests requires replacing the affected encounter. Local candidate selection sorts newest observations first, then ID. Exchange inventories retain the existing ascending-ID wire contract and advance through empty filtered pages using the last inspected raw candidate.
+
+Native map/history page APIs verify at most 64 raw candidates plus one unverified lookahead. They return a continuation cursor even when expiry or bounds remove every result. Observation-descending and ID-ascending index seeks release database access after each page. Additive schema v5 introduces the matching index while preserving signed bytes and v4 forwarding state. Existing full-result APIs remain available for compatibility; production consumers use bounded operations. The hiking interface and offline-map work remain separate milestone tasks.
+
 ## 11. Bundle format and validation
 
 ### 11.1 Immutable and mutable separation
