@@ -33,9 +33,7 @@ class RepositoryExchangeStore(private val repository: ReportRepository) : Report
     override suspend fun initialCursor(now: Long) = repository.exchangeInventoryCursor(now)
 
     override suspend fun inventoryPage(afterID: String?, limit: Int, now: Long): InventoryPage {
-        val page = repository.inventoryPage(afterID, limit, now)
-        repository.recordExchangeInventoryProgress(page.nextCursor, page.hasMore, now)
-        return page
+        return repository.inventoryPage(afterID, limit, now)
     }
 
     override suspend fun currentIDs(ids: List<String>, now: Long) = repository.currentIDs(ids, now)
@@ -53,9 +51,7 @@ class SelectedRepositoryExchangeStore(
 ) : ReportExchangeStore {
     override suspend fun initialCursor(now: Long) = repository.exchangeInventoryCursor(now)
     override suspend fun inventoryPage(afterID: String?, limit: Int, now: Long): InventoryPage {
-        val page = repository.selectedInventoryPage(afterID,limit,now,context)
-        repository.recordExchangeInventoryProgress(page.nextCursor,page.hasMore,now)
-        return page
+        return repository.selectedInventoryPage(afterID,limit,now,context)
     }
     override suspend fun currentIDs(ids: List<String>, now: Long) = repository.currentIDs(ids,now)
     override suspend fun load(id: String, now: Long) = repository.loadSelectedForExchange(id,now,context)

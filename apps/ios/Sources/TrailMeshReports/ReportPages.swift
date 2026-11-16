@@ -13,6 +13,27 @@ public struct ReportPage: Sendable {
     /// Number of raw rows verified, excluding the single unverified lookahead.
     public let inspectedCount: Int
 }
+
+/// SQL shared by production paging and its query-plan regression checks.
+enum ReportPageQuery: CaseIterable {
+    case first, sameObservation, olderObservation
+    var sql: String {
+        let predicate: String
+        switch self {
+        case .first: predicate = ""
+        case .sameObservation: predicate = "WHERE r.observed_at_ms = ? AND r.bundle_id > ?"
+        case .olderObservation: predicate = "WHERE r.observed_at_ms < ?"
+        }
+        return """
+            SELECT \(ReportRepository.storedColumns) FROM reports r
+            LEFT JOIN bundles b ON b.bundle_id = r.bundle_id
+            LEFT JOIN relay_state s ON s.bundle_id = r.bundle_id
+            LEFT JOIN quarantined_ids q ON q.bundle_id = r.bundle_id
+            \(predicate) ORDER BY r.observed_at_ms DESC, r.bundle_id ASC LIMIT ?
+            """
+    }
+}
+
 extension ReportRepository {
     /// Keyset page in observation DESC / ID ASC order. A filtered empty page can
     /// have more raw candidates. Each call releases the actor and transaction.
@@ -33,25 +54,19 @@ extension ReportRepository {
             try Self.observeClock(db, now: now)
             // LIMIT applies before verification/expiry/bounds filtering. Otherwise
             // an expired or quarantined prefix could hide an unbounded scan.
-            func fetch(_ predicate: String, _ arguments: StatementArguments) throws -> [Row] {
-                try Row.fetchAll(db, sql: """
-                    SELECT \(Self.storedColumns) FROM reports r
-                    LEFT JOIN bundles b ON b.bundle_id = r.bundle_id
-                    LEFT JOIN relay_state s ON s.bundle_id = r.bundle_id
-                    LEFT JOIN quarantined_ids q ON q.bundle_id = r.bundle_id
-                    \(predicate) ORDER BY r.observed_at_ms DESC, r.bundle_id ASC LIMIT ?
-                    """, arguments: arguments)
+            func fetch(_ query: ReportPageQuery, _ arguments: StatementArguments) throws -> [Row] {
+                try Row.fetchAll(db, sql: query.sql, arguments: arguments)
             }
             let rows: [Row]
             if let after {
                 // Separate index seeks avoid rescanning the earlier prefix, even
                 // when thousands of reports share the cursor's observation time.
-                let equal = try fetch("WHERE r.observed_at_ms = ? AND r.bundle_id > ?", [after.observedAt, after.bundleID, limit + 1])
+                let equal = try fetch(.sameObservation, [after.observedAt, after.bundleID, limit + 1])
                 if equal.count > limit { rows = equal }
                 else {
-                    rows = equal + (try fetch("WHERE r.observed_at_ms < ?", [after.observedAt, limit + 1 - equal.count]))
+                    rows = equal + (try fetch(.olderObservation, [after.observedAt, limit + 1 - equal.count]))
                 }
-            } else { rows = try fetch("", [limit + 1]) }
+            } else { rows = try fetch(.first, [limit + 1]) }
             let scanned = rows.prefix(limit)
             var selected: [StoredReport] = []
             var cursor = after

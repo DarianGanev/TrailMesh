@@ -111,13 +111,29 @@ final class ReportPageTests: XCTestCase {
         _ = try await before.ingest(wire, now: now)
         let database = try ReportDatabase.open(path: path)
         try await database.write { try $0.execute(sql: "DROP INDEX reports_observation_id; DELETE FROM grdb_migrations WHERE identifier = 'v5'") }
-        let after = try ReportRepository(path: path)
+        let migrated = try ReportDatabase.open(path: path)
+        let after = ReportRepository(database: migrated)
         let page = try await after.reportPage(now: now, bounds: world)
         XCTAssertEqual(page.reports.map(\.bundleID), [id])
         let outgoing = try await after.loadOutgoing(id, now: now)
         XCTAssertEqual(outgoing?.wire, wire)
-        let plan = try await database.read { try Row.fetchAll($0, sql: "EXPLAIN QUERY PLAN SELECT bundle_id FROM reports ORDER BY observed_at_ms DESC, bundle_id ASC LIMIT 65").map { try $0.decode(String.self, forColumn: "detail") } }
-        XCTAssertTrue(plan.contains { $0.contains("reports_observation_id") })
-        XCTAssertFalse(plan.contains { $0.contains("TEMP B-TREE") })
+        // EXPLAIN on an older connection can retain its pre-migration schema.
+        for query in ReportPageQuery.allCases {
+            let plan = try await migrated.read {
+                let arguments: StatementArguments
+                switch query {
+                case .first: arguments = [65]
+                case .sameObservation: arguments = [now, id, 65]
+                case .olderObservation: arguments = [now, 65]
+                }
+                return try Row.fetchAll($0, sql: "EXPLAIN QUERY PLAN " + query.sql, arguments: arguments)
+                    .map { try $0.decode(String.self, forColumn: "detail") }
+            }
+            XCTAssertTrue(plan.contains { $0.contains("reports_observation_id") }, "\(plan)")
+            XCTAssertFalse(plan.contains { $0.contains("TEMP B-TREE") }, "\(plan)")
+            if query != .first {
+                XCTAssertTrue(plan.contains { $0.contains("SEARCH") && $0.contains("reports_observation_id") }, "\(plan)")
+            }
+        }
     }
 }

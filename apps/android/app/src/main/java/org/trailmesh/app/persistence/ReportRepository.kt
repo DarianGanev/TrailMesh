@@ -595,6 +595,10 @@ private constructor(
                             )
                     }
                 }
+            db.execSQL(
+                "INSERT OR REPLACE INTO exchange_cursor VALUES(1,?)",
+                arrayOf<Any?>(if (more) cursor else null),
+            )
             org.trailmesh.app.exchange.InventoryPage(items, cursor, more)
         }
     }
