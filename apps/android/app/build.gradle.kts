@@ -31,6 +31,7 @@ android {
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
 dependencies {
+    implementation("com.google.android.gms:play-services-nearby:19.5.1")
     implementation("androidx.room:room-runtime:2.8.5")
     implementation("androidx.room:room-ktx:2.8.5")
     implementation("com.google.crypto.tink:tink-android:1.24.0")

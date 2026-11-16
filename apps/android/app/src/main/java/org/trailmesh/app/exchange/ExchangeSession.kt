@@ -10,7 +10,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.trailmesh.app.persistence.StoreOutcome
 
-class ExchangeAction(val generation: Long, bytes: ByteArray) {
+class ExchangeAction(val generation: Long, bytes: ByteArray, val terminal: Boolean = false) {
     private val wire = bytes.copyOf()
     val bytes
         get() = wire.copyOf()
@@ -86,7 +86,12 @@ class ExchangeSession(
         require(nonce.matches(Regex("[0-9a-f]{32}")) && nonce != ExchangeWire.ZERO)
     }
 
+    /** Read-only lifecycle state; terminal actions still carry a current generation until drained. */
+    val isComplete: Boolean get() = closed || invalidated.get()
+
     fun isCurrent(token: Long) = token == generation && !invalidated.get()
+
+    fun isLive(action: ExchangeAction) = isCurrent(action.generation) && (!closed || action.terminal)
 
     suspend fun peerOutcomes(): List<ClaimedPeerOutcome> = access.withLock { claims.toList() }
 
@@ -245,7 +250,7 @@ class ExchangeSession(
             if (bytesUsed + bytes.size > 262144) emptyList()
             else {
                 bytesUsed += bytes.size
-                listOf(ExchangeAction(generation, bytes))
+                listOf(ExchangeAction(generation, bytes, terminal = true))
             }
         }
     }
@@ -509,7 +514,13 @@ class ExchangeSession(
     }
 
     private fun maybeComplete(actions: MutableList<ExchangeAction>) {
-        if (localDone && peerDone && incoming == null && requested.isEmpty() && pendingAck == null)
+        // Give the peer a chance to observe replies emitted by this callback, especially DONE.
+        // Closing now would make their normal actions stale before the owner can dispatch them.
+        // The peer can close after seeing DONE; an empty later callback can also close locally.
+        if (
+            actions.isEmpty() &&
+                localDone && peerDone && incoming == null && requested.isEmpty() && pendingAck == null
+        )
             actions.addAll(close(0))
     }
 }

@@ -77,6 +77,11 @@ class StoredReport(
         get() = author.copyOf()
 }
 
+data class SavedTestReportEvidence(
+    val bundleID: String, val canonicalCoreSHA256: String, val originalWireSHA256: String,
+    val observedAt: Long, val isExpired: Boolean, val isQuarantined: Boolean, val remainingHops: Int,
+)
+
 class ForwardableReport(val bundleID: String, originalWire: ByteArray) {
     private val wire = originalWire.copyOf()
     val originalWire
@@ -524,7 +529,10 @@ private constructor(
             }
     }
 
-    suspend fun exchangeInventoryCursor(now: Long): String? = transaction { db ->
+    suspend fun exchangeInventoryCursor(now: Long) = exchangeInventoryCursor { now }
+
+    suspend fun exchangeInventoryCursor(clock: () -> Long): String? = transaction { db ->
+        val now=clock()
         observe(db, now)
         db.query("SELECT singleton,after_id FROM exchange_cursor").use { c ->
             if (!c.moveToFirst()) null
@@ -544,8 +552,11 @@ private constructor(
         }
     }
 
-    suspend fun recordExchangeInventoryProgress(cursor: String?, hasMore: Boolean, now: Long) =
+    suspend fun recordExchangeInventoryProgress(cursor: String?, hasMore: Boolean, now: Long) = recordExchangeInventoryProgress(cursor,hasMore) { now }
+
+    suspend fun recordExchangeInventoryProgress(cursor: String?, hasMore: Boolean, clock: () -> Long) =
         transaction { db ->
+            val now=clock()
             observe(db, now)
             require(cursor == null || cursor.matches(Regex("[0-9a-f]{64}")))
             db.execSQL(
@@ -554,20 +565,24 @@ private constructor(
             )
         }
 
-    suspend fun inventoryPage(afterID: String?, limit: Int, now: Long) = inventoryPageInternal(afterID,limit,now,null,false)
+    suspend fun inventoryPage(afterID: String?, limit: Int, now: Long) = inventoryPageInternal(afterID,limit,{now},null,false)
 
-    suspend fun selectedInventoryPage(afterID: String?, limit: Int, now: Long, context: RelevanceContext?) = inventoryPageInternal(afterID,limit,now,context,true)
+    suspend fun selectedInventoryPage(afterID: String?, limit: Int, now: Long, context: RelevanceContext?) = selectedInventoryPage(afterID,limit,{now},context)
+
+    /** Selection and rotating cursor progress commit atomically under one fresh clock sample. */
+    suspend fun selectedInventoryPage(afterID: String?, limit: Int, clock: () -> Long, context: RelevanceContext?) = inventoryPageInternal(afterID,limit,clock,context,true)
 
     private suspend fun inventoryPageInternal(
         afterID: String?,
         limit: Int,
-        now: Long,
+        clock: () -> Long,
         relevance: RelevanceContext? = null,
         applyRelevance: Boolean = false,
     ): org.trailmesh.app.exchange.InventoryPage {
         require(limit in 1..8)
         require(afterID == null || afterID.matches(Regex("[0-9a-f]{64}")))
         return transaction { db ->
+            val now=clock()
             observe(db, now)
             val items = mutableListOf<org.trailmesh.app.exchange.ReportDescriptor>()
             var cursor: String? = null
@@ -595,13 +610,17 @@ private constructor(
                             )
                     }
                 }
+            if(applyRelevance) db.execSQL("INSERT OR REPLACE INTO exchange_cursor VALUES(1,?)",arrayOf<Any?>(if(more) cursor else null))
             org.trailmesh.app.exchange.InventoryPage(items, cursor, more)
         }
     }
 
-    suspend fun currentIDs(ids: List<String>, now: Long): Set<String> {
+    suspend fun currentIDs(ids: List<String>, now: Long) = currentIDs(ids) { now }
+
+    suspend fun currentIDs(ids: List<String>, clock: () -> Long): Set<String> {
         require(ids.size <= 8)
         return transaction { db ->
+            val now=clock()
             observe(db, now)
             buildSet {
                 for (id in ids) {
@@ -618,12 +637,15 @@ private constructor(
         }
     }
 
-    suspend fun loadForExchange(id: String, now: Long) = loadForExchangeInternal(id,now,null,false)
+    suspend fun loadForExchange(id: String, now: Long) = loadForExchangeInternal(id,{now},null,false)
 
-    suspend fun loadSelectedForExchange(id: String, now: Long, context: RelevanceContext?) = loadForExchangeInternal(id,now,context,true)
+    suspend fun loadSelectedForExchange(id: String, now: Long, context: RelevanceContext?) = loadForExchangeInternal(id,{now},context,true)
 
-    private suspend fun loadForExchangeInternal(id: String, now: Long, relevance: RelevanceContext?, applyRelevance: Boolean): org.trailmesh.app.exchange.OutgoingReport? =
+    suspend fun loadSelectedForExchange(id: String, clock: () -> Long, context: RelevanceContext?) = loadForExchangeInternal(id,clock,context,true)
+
+    private suspend fun loadForExchangeInternal(id: String, clock: () -> Long, relevance: RelevanceContext?, applyRelevance: Boolean): org.trailmesh.app.exchange.OutgoingReport? =
         transaction { db ->
+            val now=clock()
             observe(db, now)
             db.query("SELECT $COLUMNS $JOIN WHERE b.bundle_id=?", arrayOf<Any?>(id)).use { c ->
                 if (!c.moveToFirst()) null
@@ -643,11 +665,38 @@ private constructor(
             }
         }
 
+    /** User-initiated development evidence only: bounded, freshly verified, with no text or location. */
+    suspend fun syntheticTestEvidence(now: Long) = syntheticTestEvidence { now }
+
+    suspend fun syntheticTestEvidence(clock: () -> Long): List<SavedTestReportEvidence> = transaction { db ->
+        val now=clock()
+        observe(db,now)
+        val ids=db.query("SELECT bundle_id FROM reports INDEXED BY reports_observation_page ORDER BY observed_at_ms DESC,bundle_id ASC LIMIT 64").use { c ->
+            buildList { while(c.moveToNext()) {
+                if(c.getType(0)!=Cursor.FIELD_TYPE_STRING) throw ReportStoreException(StoreFailure.CORRUPT_STORED_REPORT)
+                add(c.getString(0))
+            } }
+        }
+        fun digest(bytes: ByteArray)=java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 255) }
+        buildList {
+            for(id in ids) db.query("SELECT $COLUMNS $JOIN WHERE b.bundle_id=?",arrayOf<Any?>(id)).use { c ->
+                if(!c.moveToFirst()) throw ReportStoreException(StoreFailure.CORRUPT_STORED_REPORT)
+                val checked=verified(c,now)
+                val p=checked.report
+                if(p.category=="trail" && p.status=="muddy" && p.note.startsWith("SYNTHETIC TrailMesh test "))
+                    add(SavedTestReportEvidence(id,digest(checked.verified.canonicalCore),digest(checked.verified.originalWire),p.observedAt,p.isExpired,p.isQuarantined,checked.remainingHops))
+            }
+        }
+    }
+
     private fun relevant(report: StoredReport, context: RelevanceContext?, now: Long) =
         RelevancePolicy.evaluate(RelevantReport(report.bundleID,report.observedAt,report.expiresAt,GeoPoint(report.latE7,report.lonE7)),context,now) == RelevanceDecision.eligible
 
     /** Only after explicit confirmation that the backward correction is intentional. */
-    suspend fun recoverClockAfterUserConfirmation(now: Long): Int = transaction { db ->
+    suspend fun recoverClockAfterUserConfirmation(now: Long) = recoverClockAfterUserConfirmation { now }
+
+    suspend fun recoverClockAfterUserConfirmation(clock: () -> Long): Int = transaction { db ->
+        val now=clock()
         validClock(now)
         if (now >= scalar(db, "SELECT last_now_ms FROM repository_clock WHERE singleton=1"))
             throw ReportStoreException(StoreFailure.CLOCK)
@@ -667,7 +716,10 @@ private constructor(
     }
 
     /** Only after the user confirms the clock and agrees to delete expired history. */
-    suspend fun reclaimExpiredReportsAfterUserConfirmation(now: Long): Int = transaction { db ->
+    suspend fun reclaimExpiredReportsAfterUserConfirmation(now: Long) = reclaimExpiredReportsAfterUserConfirmation { now }
+
+    suspend fun reclaimExpiredReportsAfterUserConfirmation(clock: () -> Long): Int = transaction { db ->
+        val now=clock()
         observe(db, now)
         val ids =
             db.query(

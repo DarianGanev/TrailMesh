@@ -284,6 +284,42 @@ abstract class RepositoryContract {
         repo.close()
     }
 
+    @Test
+    fun syntheticEvidenceHashesVerifiedOriginalBytesAndRetainsHopZero() = runBlocking {
+        val (_,now)=fixture()
+        val repo=ReportRepository.open(context,name())
+        val saved=repo.author(draft(now,"SYNTHETIC TrailMesh test abc").copy(category="trail",status="muddy",maxHops=0),signer(),now) as StoreOutcome.Stored
+        repo.author(draft(now,"personal report excluded"),signer(),now)
+        val evidence=repo.syntheticTestEvidence(now)
+        assertEquals(listOf(saved.id),evidence.map { it.bundleID })
+        assertEquals(0,evidence.single().remainingHops)
+        assertEquals(64,evidence.single().canonicalCoreSHA256.length)
+        assertEquals(64,evidence.single().originalWireSHA256.length)
+        repo.database.openHelper.writableDatabase.execSQL("UPDATE bundles SET original_wire=x'00' WHERE bundle_id=?",arrayOf<Any?>(saved.id))
+        assertStoreFailure(StoreFailure.CORRUPT_STORED_REPORT) { repo.syntheticTestEvidence(now) }
+        repo.close()
+    }
+
+    @Test
+    fun productionClockIsResampledInsideReadsWhileFixedSamplesRemainStrict() = runBlocking {
+        val (_,now)=fixture()
+        val repo=ReportRepository.open(context,name())
+        val id=(repo.author(draft(now,"SYNTHETIC TrailMesh test clock").copy(category="trail",status="muddy"),signer(),now) as StoreOutcome.Stored).id
+        val oldSample=now
+        repo.currentIDs(emptyList(),now+1) // another peer committed after the caller's old sample
+        val selected=org.trailmesh.app.exchange.SelectedRepositoryExchangeStore(repo,org.trailmesh.app.relevance.RelevanceContext(manualArea=org.trailmesh.app.relevance.Area(org.trailmesh.app.relevance.GeoPoint(0,0),100)),{now+1})
+        assertEquals(listOf(id),selected.inventoryPage(null,8,oldSample).reports.map { it.id })
+        assertEquals(setOf(id),selected.currentIDs(listOf(id),oldSample))
+        assertNotNull(selected.load(id,oldSample))
+        selected.initialCursor(oldSample)
+        assertEquals(id,repo.syntheticTestEvidence { now+1 }.single().bundleID)
+        assertStoreFailure(StoreFailure.CLOCK) { repo.inventoryPage(null,8,oldSample) }
+        assertStoreFailure(StoreFailure.CLOCK) { repo.syntheticTestEvidence { oldSample } }
+        val backwards=org.trailmesh.app.exchange.SelectedRepositoryExchangeStore(repo,org.trailmesh.app.relevance.RelevanceContext(manualArea=org.trailmesh.app.relevance.Area(org.trailmesh.app.relevance.GeoPoint(0,0),100)),{oldSample})
+        assertStoreFailure(StoreFailure.CLOCK) { backwards.inventoryPage(null,8,now+2) }
+        repo.close()
+    }
+
     private suspend fun assertStoreFailure(reason: StoreFailure, operation: suspend () -> Any?) {
         try { operation(); fail("Expected store failure $reason") } catch (failure: ReportStoreException) { assertEquals(reason,failure.reason) }
     }
