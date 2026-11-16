@@ -667,31 +667,61 @@ abstract class ExchangeContract {
     @Test
     fun offerBudgetIsCheckedBeforeAnOversizedRequestBatch() =
         kotlinx.coroutines.runBlocking {
-            val all = (1..40).map { ReportDescriptor("%064x".format(it), 1, 1) }
-            val store =
-                object : EmptyStore() {
-                    override suspend fun inventoryPage(
-                        afterID: String?,
-                        limit: Int,
-                        now: Long,
-                    ): InventoryPage {
-                        val entries = all.filter { afterID == null || it.id > afterID }.take(8)
-                        return InventoryPage(
-                            entries,
-                            entries.last().id,
-                            entries.last() != all.last(),
-                        )
-                    }
+            val (_, now) = signedFixture()
+            val context =
+                androidx.test.core.app.ApplicationProvider.getApplicationContext<
+                    android.content.Context,
+                >()
+            val repo =
+                org.trailmesh.app.persistence.ReportRepository.open(
+                    context,
+                    "cap-${java.util.UUID.randomUUID().toString().take(8)}.db",
+                )
+            val key = com.google.crypto.tink.subtle.Ed25519Sign.KeyPair.newKeyPair()
+            val signer =
+                object : org.trailmesh.app.security.ReportSigner {
+                    override val publicKey = key.publicKey
 
-                    override suspend fun load(id: String, now: Long) =
-                        OutgoingReport(all.single { it.id == id }, byteArrayOf(1))
+                    override fun sign(message: ByteArray) =
+                        com.google.crypto.tink.subtle.Ed25519Sign(key.privateKey).sign(message)
                 }
-            val s = ExchangeSession(store, localNonce, 9) { 0 }
+            repeat(70) { index ->
+                assertTrue(
+                    repo.author(
+                        org.trailmesh.app.persistence.ReportDraft(
+                            "trail",
+                            "muddy",
+                            now,
+                            0,
+                            0,
+                            1,
+                            "selected offer $index",
+                            now + 3600000,
+                            1,
+                        ),
+                        signer,
+                        now,
+                    ) is org.trailmesh.app.persistence.StoreOutcome.Stored,
+                )
+            }
+            val store =
+                SelectedRepositoryExchangeStore(
+                    repo,
+                    org.trailmesh.app.relevance.RelevanceContext(
+                        manualArea =
+                            org.trailmesh.app.relevance.Area(
+                                org.trailmesh.app.relevance.GeoPoint(0, 0),
+                                100,
+                            ),
+                    ),
+                )
+            val s = ExchangeSession(store, localNonce, 9) { now }
             s.start(0)
             var out = messages(s.receive(9, peerFrame(ExchangeMessage.Hello()), 1))
             var count = 0
             while (out.none { it is ExchangeMessage.Close }) {
                 val summary = out.filterIsInstance<ExchangeMessage.Summary>().single()
+                assertEquals(8, summary.entries.size)
                 out =
                     messages(
                         s.receive(
@@ -717,6 +747,39 @@ abstract class ExchangeContract {
             }
             assertEquals(32, count)
             assertEquals(ExchangeMessage.Close(2), out.last())
+            repo.recordExchangeInventoryProgress(null, false, now)
+            val filtered =
+                SelectedRepositoryExchangeStore(
+                    repo,
+                    org.trailmesh.app.relevance.RelevanceContext(
+                        manualArea =
+                            org.trailmesh.app.relevance.Area(
+                                org.trailmesh.app.relevance.GeoPoint(100000000, 0),
+                                100,
+                            ),
+                    ),
+                )
+            val bounded = ExchangeSession(filtered, localNonce, 10) { now }
+            bounded.start(0)
+            var replies = messages(bounded.receive(10, peerFrame(ExchangeMessage.Hello()), 1))
+            var pages = 0
+            while (replies.any { it is ExchangeMessage.Summary }) {
+                val summary = replies.filterIsInstance<ExchangeMessage.Summary>().single()
+                assertEquals(pages, summary.page)
+                assertTrue(summary.entries.isEmpty())
+                pages++
+                replies =
+                    messages(
+                        bounded.receive(10, peerFrame(ExchangeMessage.Request(emptyList())), 1),
+                    )
+            }
+            assertEquals(8, pages)
+            assertEquals(listOf(ExchangeMessage.Done), replies)
+            assertNotNull(
+                filtered.initialCursor(now),
+            ) // six raw candidates remain for a later encounter
+            bounded.cancel()
+            repo.close()
         }
 
     @Test

@@ -8,7 +8,9 @@ import java.util.UUID
 import kotlinx.coroutines.*
 import org.junit.Assert.*
 import org.junit.Test
+import org.trailmesh.app.exchange.SelectedRepositoryExchangeStore
 import org.trailmesh.app.protocol.*
+import org.trailmesh.app.relevance.*
 import org.trailmesh.app.security.ReportSigner
 
 abstract class RepositoryContract {
@@ -173,7 +175,7 @@ abstract class RepositoryContract {
             repo.ingest(wire) {
                 if (calls++ > 0)
                     repo.database.openHelper.writableDatabase.execSQL(
-                        "PRAGMA defer_foreign_keys=ON"
+                        "PRAGMA defer_foreign_keys=ON",
                     )
                 now
             }
@@ -201,6 +203,136 @@ abstract class RepositoryContract {
         }
         assertEquals(0, count(repo, "bundles"))
         repo.close()
+    }
+
+    @Test
+    fun reportPagesUseRawCursorBoundAndPreserveObservationIDOrdering() = runBlocking {
+        val (_, now) = fixture()
+        val repo = ReportRepository.open(context,name())
+        val key = signer()
+        repeat(66) { assertTrue(repo.author(draft(now,"page $it").copy(observedAt=now-it/2),key,now) is StoreOutcome.Stored) }
+        val expected = repo.reports(now).map { it.bundleID }
+        val first = repo.reportPage(now)
+        assertEquals(expected.take(64), first.reports.map { it.bundleID })
+        assertEquals(64, first.inspectedCount)
+        assertTrue(first.hasMore)
+        val tail = repo.reportPage(now, after=first.nextCursor)
+        assertEquals(expected.drop(64),tail.reports.map { it.bundleID })
+        assertFalse(tail.hasMore)
+        assertEquals(expected, (first.reports+tail.reports).map { it.bundleID })
+        repo.database.openHelper.writableDatabase.execSQL("UPDATE reports SET observed_at_ms=observed_at_ms-1 WHERE bundle_id=?",arrayOf<Any?>(expected[64]))
+        assertEquals(64,repo.reportPage(now).reports.size)
+        assertStoreFailure(StoreFailure.CORRUPT_STORED_REPORT) { repo.reportPage(now,after=first.nextCursor) }
+        repo.close()
+    }
+
+    @Test
+    fun expiredRawPageContinuesAndQuarantinedHistoryIsStillVerified() = runBlocking {
+        val (_, now) = fixture()
+        val repo = ReportRepository.open(context,name())
+        val key = signer()
+        repeat(3) { repo.author(draft(now,"expired $it"),key,now) }
+        val page = repo.reportPage(now+7_200_000,limit=2)
+        assertTrue(page.reports.isEmpty())
+        assertTrue(page.hasMore)
+        assertEquals(2,page.inspectedCount)
+        assertFalse(repo.reportPage(now+7_200_000,after=page.nextCursor,limit=2).hasMore)
+        repo.recoverClockAfterUserConfirmation(now)
+        assertTrue(repo.reportPage(now).reports.isEmpty())
+        assertTrue(repo.reportPage(now,includeExpired=true).reports.all { it.isQuarantined && it.isExpired })
+        repo.database.openHelper.writableDatabase.execSQL("UPDATE reports SET observed_at_ms=observed_at_ms-1")
+        assertStoreFailure(StoreFailure.CORRUPT_STORED_REPORT) { repo.reportPage(now,includeExpired=true) }
+        repo.close()
+    }
+
+    @Test
+    fun selectedInventoryKeepsRawIDCursorAndRechecksExpiryAndClock() = runBlocking {
+        val (_, now) = fixture()
+        val repo = ReportRepository.open(context,name())
+        val key = signer()
+        repeat(10) { repo.author(draft(now,"selected $it"),key,now) }
+        val outside = org.trailmesh.app.relevance.RelevanceContext(manualArea=org.trailmesh.app.relevance.Area(org.trailmesh.app.relevance.GeoPoint(100000000,0),100))
+        val selected = org.trailmesh.app.exchange.SelectedRepositoryExchangeStore(repo,outside)
+        val first = selected.inventoryPage(null,8,now)
+        assertTrue(first.reports.isEmpty())
+        assertTrue(first.hasMore)
+        assertNotNull(first.nextCursor)
+        val last = selected.inventoryPage(first.nextCursor,8,now)
+        assertTrue(last.reports.isEmpty())
+        assertFalse(last.hasMore)
+        val inside = org.trailmesh.app.exchange.SelectedRepositoryExchangeStore(repo,org.trailmesh.app.relevance.RelevanceContext(manualArea=org.trailmesh.app.relevance.Area(org.trailmesh.app.relevance.GeoPoint(0,0),100)))
+        val inventory = inside.inventoryPage(null,8,now)
+        assertEquals(8, inventory.reports.size)
+        assertEquals(2, inside.inventoryPage(inventory.nextCursor, 8, now).reports.size)
+        assertEquals(inventory.reports.map { it.id }.sorted(),inventory.reports.map { it.id })
+        val id = inventory.reports.first().id
+        assertNotNull(inside.load(id,now))
+        assertNull(selected.load(id,now))
+        assertNull(inside.load(id,now+7_200_000))
+        assertStoreFailure(StoreFailure.CLOCK) { inside.inventoryPage(null,8,now) }
+        repo.close()
+    }
+    @Test
+    fun boundsFilterWithinRawBudgetAndEmptyPageStillContinues() = runBlocking {
+        val (_,now) = fixture()
+        val repo = ReportRepository.open(context,name())
+        val key = signer()
+        repo.author(draft(now,"outside").copy(latE7=10000000),key,now)
+        repo.author(draft(now,"inside").copy(observedAt=now-1),key,now)
+        val bounds = ReportBounds(south=-100,north=100,west=-100,east=100)
+        val first = repo.reportPage(now,bounds,limit=1)
+        assertTrue(first.reports.isEmpty())
+        assertTrue(first.hasMore)
+        assertEquals(1,first.inspectedCount)
+        assertEquals("inside",repo.reportPage(now,bounds,after=first.nextCursor,limit=1).reports.single().note)
+        repo.close()
+    }
+
+    @Test
+    fun selectedStoreSeparatesInvalidAdmissionFromIrrelevantOrMissingConfiguration() = runBlocking {
+        val (_, now) = fixture()
+        val source = ReportRepository.open(context, name())
+        source.author(draft(now).copy(maxHops = 2), signer(), now)
+        val wire = source.forwardable(now).single().originalWire
+        val configurations =
+            listOf(
+                RelevanceContext(manualArea = Area(GeoPoint(100000000, 0), 100)),
+                RelevanceContext(manualArea = Area(GeoPoint(0, 0), 99)),
+                null,
+            )
+        for (configuration in configurations) {
+            val repo = ReportRepository.open(context, name())
+            val selected = SelectedRepositoryExchangeStore(repo, configuration)
+            assertEquals(
+                StoreOutcome.Rejected("invalid"),
+                selected.ingest(byteArrayOf(0), 1) { now },
+            )
+            assertEquals(0, count(repo, "seen_ids"))
+            val stored = selected.ingest(wire, 1) { now } as StoreOutcome.Stored
+            assertEquals(listOf(stored.id), repo.reports(now).map { it.bundleID })
+            assertEquals(1, repo.inventoryPage(null, 8, now).reports.single().hops)
+            assertTrue(selected.inventoryPage(null, 8, now).reports.isEmpty())
+            assertNull(selected.load(stored.id, now))
+            assertEquals(StoreOutcome.Duplicate(stored.id), selected.ingest(wire, 1) { now })
+            assertEquals(1, count(repo, "seen_ids"))
+            repo.close()
+        }
+        source.close()
+    }
+
+    private fun irrelevantStore(repo: ReportRepository) =
+        SelectedRepositoryExchangeStore(
+            repo,
+            RelevanceContext(manualArea = Area(GeoPoint(100000000, 0), 100)),
+        )
+
+    private suspend fun assertStoreFailure(reason: StoreFailure, operation: suspend () -> Any?) {
+        try {
+            operation()
+            fail("Expected store failure $reason")
+        } catch (failure: ReportStoreException) {
+            assertEquals(reason, failure.reason)
+        }
     }
 
     private val context: Context
@@ -301,7 +433,7 @@ abstract class RepositoryContract {
         val repo = ReportRepository.open(context, name())
         val key = signer()
         for (note in listOf("a\u0000b", "")) assertTrue(
-            repo.author(draft(now, note), key, now) is StoreOutcome.Stored
+            repo.author(draft(now, note), key, now) is StoreOutcome.Stored,
         )
         assertEquals(setOf("a\u0000b", ""), repo.reports(now).map { it.note }.toSet())
         val wires = repo.forwardable(now)
@@ -317,18 +449,23 @@ abstract class RepositoryContract {
         val key = signer()
         repeat(22) { source.author(draft(now), key, now) }
         val wires = source.forwardable(now).map { it.originalWire }
-        val file = name()
-        var dest = ReportRepository.open(context, file)
-        wires.take(20).forEach { assertTrue(dest.ingest(it, now) is StoreOutcome.Stored) }
-        assertTrue(dest.ingest(wires[0], now) is StoreOutcome.Duplicate)
-        dest.close()
-        dest = ReportRepository.open(context, file)
-        assertEquals(StoreOutcome.Rejected("quota"), dest.ingest(wires[20], now))
-        dest.recoverClockAfterUserConfirmation(now - 1)
-        assertEquals(StoreOutcome.Rejected("quota"), dest.ingest(wires[20], now - 1))
-        assertTrue(dest.ingest(wires[20], now + 3_599_999) is StoreOutcome.Stored)
+        for (selected in listOf(false, true)) {
+            val file = name()
+            var dest = ReportRepository.open(context, file)
+            suspend fun admit(wire: ByteArray, instant: Long) =
+                if (selected) irrelevantStore(dest).ingest(wire, 0) { instant }
+                else dest.ingest(wire, instant)
+            wires.take(20).forEach { assertTrue(admit(it, now) is StoreOutcome.Stored) }
+            assertTrue(admit(wires[0], now) is StoreOutcome.Duplicate)
+            dest.close()
+            dest = ReportRepository.open(context, file)
+            assertEquals(StoreOutcome.Rejected("quota"), admit(wires[20], now))
+            dest.recoverClockAfterUserConfirmation(now - 1)
+            assertEquals(StoreOutcome.Rejected("quota"), admit(wires[20], now - 1))
+            assertTrue(admit(wires[20], now + 3_599_999) is StoreOutcome.Stored)
+            dest.close()
+        }
         source.close()
-        dest.close()
     }
 
     @Test
@@ -479,40 +616,51 @@ abstract class RepositoryContract {
     @Test
     fun seenIdsRemainBoundedUntilConfirmedCleanup() = runBlocking {
         val (wire, now) = fixture()
-        val repo = ReportRepository.open(context, name())
-        sql(
-            repo,
-            "WITH RECURSIVE n(i) AS(SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<10000) INSERT INTO seen_ids SELECT printf('%064x',i),?,'test' FROM n",
-            now + 1000,
-        )
-        assertEquals(StoreOutcome.Rejected("quota"), repo.ingest(wire, now))
-        assertEquals(10000, count(repo, "seen_ids"))
-        assertEquals(StoreOutcome.Rejected("quota"), repo.ingest(wire, now + 1000))
-        repo.reclaimExpiredReportsAfterUserConfirmation(now + 1000)
-        assertTrue(repo.ingest(wire, now + 1000) is StoreOutcome.Stored)
-        assertEquals(1, count(repo, "seen_ids"))
-        repo.close()
+        for (selected in listOf(false, true)) {
+            val repo = ReportRepository.open(context, name())
+            suspend fun admit(instant: Long) =
+                if (selected) irrelevantStore(repo).ingest(wire, 0) { instant }
+                else repo.ingest(wire, instant)
+            sql(
+                repo,
+                "WITH RECURSIVE n(i) AS(SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<10000) INSERT INTO seen_ids SELECT printf('%064x',i),?,'test' FROM n",
+                now + 1000,
+            )
+            assertEquals(StoreOutcome.Rejected("quota"), admit(now))
+            assertEquals(10000, count(repo, "seen_ids"))
+            assertEquals(StoreOutcome.Rejected("quota"), admit(now + 1000))
+            repo.reclaimExpiredReportsAfterUserConfirmation(now + 1000)
+            assertTrue(admit(now + 1000) is StoreOutcome.Stored)
+            assertEquals(1, count(repo, "seen_ids"))
+            repo.close()
+        }
     }
 
     @Test
     fun remoteCapacityReservesFiveMebibytesForLocalAuthoring() = runBlocking {
         val (wire, now) = fixture()
-        val repo = ReportRepository.open(context, name())
-        sql(
-            repo,
-            "INSERT INTO bundles VALUES('quota-fixture',zeroblob(1),zeroblob(64),zeroblob(20971455),zeroblob(32),?,?,?,0)",
-            now - 1,
-            now + 7_200_000,
-            now,
-        )
-        assertEquals(StoreOutcome.Rejected("quota"), repo.ingest(wire, now))
-        assertTrue(repo.author(draft(now), signer(), now) is StoreOutcome.Stored)
-        sql(
-            repo,
-            "UPDATE bundles SET original_wire=zeroblob(26214400) WHERE bundle_id='quota-fixture'",
-        )
-        assertEquals(StoreOutcome.Rejected("quota"), repo.author(draft(now), signer(), now))
-        repo.close()
+        for (selected in listOf(false, true)) {
+            val repo = ReportRepository.open(context, name())
+            suspend fun admit(instant: Long) =
+                if (selected) irrelevantStore(repo).ingest(wire, 0) { instant }
+                else repo.ingest(wire, instant)
+            sql(
+                repo,
+                "INSERT INTO bundles VALUES('quota-fixture',zeroblob(1),zeroblob(64),zeroblob(20971455),zeroblob(32),?,?,?,0)",
+                now - 1,
+                now + 7_200_000,
+                now,
+            )
+            assertEquals(StoreOutcome.Rejected("quota"), admit(now))
+            assertTrue(repo.author(draft(now), signer(), now) is StoreOutcome.Stored)
+            sql(
+                repo,
+                "UPDATE bundles SET original_wire=zeroblob(26214400) WHERE bundle_id='quota-fixture'",
+            )
+            assertEquals(StoreOutcome.Rejected("quota"), admit(now))
+            assertEquals(StoreOutcome.Rejected("quota"), repo.author(draft(now), signer(), now))
+            repo.close()
+        }
     }
 
     @Test
@@ -674,24 +822,43 @@ abstract class RepositoryContract {
     }
 
     @Test
+    fun inventoryCursorCommitsWithPage() = runBlocking {
+        val (_, now) = fixture()
+        val repo = ReportRepository.open(context, name())
+        val key = signer()
+        repeat(9) { repo.author(draft(now), key, now) }
+        val page = repo.inventoryPage(null, 8, now)
+        assertTrue(page.hasMore)
+        // A different encounter can advance the clock immediately after the read.
+        repo.currentIDs(emptyList(), now + 1)
+        assertEquals(page.nextCursor, repo.exchangeInventoryCursor(now + 1))
+        val adapter = org.trailmesh.app.exchange.RepositoryExchangeStore(repo)
+        val final = adapter.inventoryPage(page.nextCursor, 8, now + 1)
+        assertFalse(final.hasMore)
+        assertNull(repo.exchangeInventoryCursor(now + 1))
+        repo.close()
+    }
+
+    @Test
     fun inventoryRotationSurvivesRestartAndReachesBeyondFirst64() = runBlocking {
         val (_, now) = fixture()
         val file = name()
         var repo = ReportRepository.open(context, file)
         val key = signer()
         repeat(70) { repo.author(draft(now), key, now) }
-        val adapter = org.trailmesh.app.exchange.RepositoryExchangeStore(repo)
+        val adapter = SelectedRepositoryExchangeStore(repo, RelevanceContext(manualArea = Area(GeoPoint(0, 0), 100)))
         var cursor = adapter.initialCursor(now)
         val first = mutableSetOf<String>()
         repeat(8) {
             val page = adapter.inventoryPage(cursor, 8, now)
+            assertEquals(8, page.reports.size)
             first.addAll(page.reports.map { it.id })
             cursor = page.nextCursor
         }
         assertEquals(64, first.size)
         repo.close()
         repo = ReportRepository.open(context, file)
-        val next = org.trailmesh.app.exchange.RepositoryExchangeStore(repo)
+        val next = SelectedRepositoryExchangeStore(repo, RelevanceContext(manualArea = Area(GeoPoint(0, 0), 100)))
         assertEquals(cursor, next.initialCursor(now))
         val page = next.inventoryPage(next.initialCursor(now), 8, now)
         assertEquals(6, page.reports.size)
@@ -709,7 +876,7 @@ abstract class RepositoryContract {
                         String(
                             resource("org.trailmesh.app.persistence.ReportDatabase/$version.json"),
                             Charsets.UTF_8,
-                        )
+                        ),
                     )
                     .getJSONObject("database")
             val db = context.openOrCreateDatabase(file, 0, null)
@@ -725,7 +892,7 @@ abstract class RepositoryContract {
                             indexes
                                 .getJSONObject(j)
                                 .getString("createSql")
-                                .replace("\u0024{TABLE_NAME}", table)
+                                .replace("\u0024{TABLE_NAME}", table),
                         )
                 }
                 val setup = schema.getJSONArray("setupQueries")
@@ -783,7 +950,7 @@ abstract class RepositoryContract {
     fun bothPreReleaseSchemasMigrateWithoutChangingSignedBlobsOrProjection() = runBlocking {
         val (wire, now) = fixture()
         val verified = ReportAdmission.validate(wire, now).verified!!
-        for (version in listOf(1, 2, 3)) {
+        for (version in listOf(1, 2, 3, 4)) {
             val file = legacy(version)
             val repo = ReportRepository.open(context, file)
             assertEquals(StoreOutcome.Duplicate(verified.bundleID), repo.ingest(wire, now))
@@ -806,10 +973,11 @@ abstract class RepositoryContract {
                                 "bundles_author_admission",
                                 "reports_event",
                                 "reports_location",
+                                "reports_observation_page",
                                 "relay_expiry",
                                 "seen_retention",
-                            )
-                        )
+                            ),
+                        ),
                     )
                 }
             }
@@ -834,6 +1002,7 @@ abstract class RepositoryContract {
                         },
                         ReportDatabase.MIGRATION_2_3,
                         ReportDatabase.MIGRATION_3_4,
+                        ReportDatabase.MIGRATION_4_5,
                     )
                     .build()
             try {
@@ -863,7 +1032,7 @@ abstract class RepositoryContract {
         repo.ingest(wire, now)
         repo.close()
         withContext(Dispatchers.IO) {
-            context.openOrCreateDatabase(file, 0, null).use { it.version = 5 }
+            context.openOrCreateDatabase(file, 0, null).use { it.version = 6 }
         }
         try {
             ReportRepository.open(context, file)
@@ -871,7 +1040,7 @@ abstract class RepositoryContract {
         } catch (_: IllegalStateException) {}
         withContext(Dispatchers.IO) {
             context.openOrCreateDatabase(file, 0, null).use { db ->
-                assertEquals(5, db.version)
+                assertEquals(6, db.version)
                 db.rawQuery("SELECT original_wire FROM bundles", null).use {
                     it.moveToFirst()
                     assertArrayEquals(wire, it.getBlob(0))

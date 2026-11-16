@@ -48,6 +48,50 @@ final class ExchangeSessionTests: XCTestCase {
         let stale = await nextA.receive(Data([0,0,0,0]), generation: 1, elapsed: 1)
         XCTAssertTrue(stale.isEmpty)
     }
+    func testRelevantSelectionStillEnforces32TransferEncounterLimit() async throws {
+        let (_, now, _) = try exchangeFixture()
+        let repository = try ReportRepository(path: ":memory:")
+        let identity = try ReportIdentity.create(store: ExchangeMemoryKeyStore())
+        for i in 0..<40 {
+            let draft = ReportDraft(category: "note", status: "observed", observedAt: now, latitude: 0, longitude: 0,
+                accuracy: 1, note: "encounter cap \(i)", expiresAt: now + 10000, maxHops: 2)
+            guard case .stored = try await repository.author(draft, identity: identity, now: now) else { return XCTFail("signed report") }
+        }
+        let selected = SelectedReportExchangeStore(repository: repository, context: RelevanceContext(manualArea: RelevanceArea(center: RelevancePoint(latitude: 0, longitude: 0), radius: 1000)))
+        let session = ExchangeSession(store: selected, nonce: Data(repeating: 1, count: 16), generation: 1, wallClock: { now })
+        _ = await session.start(elapsed: 0)
+        let hello = ExchangeFrame(source: Data(repeating: 2, count: 16), destination: Data(repeating: 0, count: 16), body: .hello(features: 1, maxFrame: 16384, maxChunk: 1024))
+        var pending = await session.receive(try ExchangeWire.encode(hello), generation: 1, elapsed: 1)
+        var descriptors: [Int: ExchangeDescriptor] = [:]
+        var offers = 0
+        var terminalReason: Int?
+        for _ in 0..<1000 {
+            guard !pending.isEmpty else { break }
+            let frame = try ExchangeWire.decode(pending.removeFirst().bytes)
+            switch frame.body {
+            case let .summary(_, _, entries):
+                XCTAssertLessThanOrEqual(entries.count, 8)
+                pending += await session.receive(try Self.remote(.request(entries.map(\.id))), generation: 1, elapsed: 1)
+            case let .offer(transfer, descriptor):
+                offers += 1; descriptors[transfer] = descriptor
+            case let .chunk(transfer, offset, total, bytes):
+                if offset + bytes.count == total, let descriptor = descriptors[transfer] {
+                    // RECEIVED remains an untrusted peer claim; it advances the
+                    // encounter budget without asserting physical delivery.
+                    pending += await session.receive(try Self.remote(.received(transfer: transfer, id: descriptor.id, result: 0)), generation: 1, elapsed: 1)
+                }
+            case let .close(reason): terminalReason = reason
+            default: break
+            }
+        }
+        XCTAssertEqual(offers, 32)
+        XCTAssertEqual(terminalReason, 2)
+        let reason = await session.failureReason
+        XCTAssertEqual(reason, 2)
+        let remaining = try await selected.inventoryPage(after: nil, limit: 8, now: now)
+        XCTAssertEqual(remaining.entries.count, 8, "Encounter limits must leave later reports available for another encounter")
+        await session.cancel()
+    }
     func testDeadlineAndCancelledGenerationSuppressCallbacks() async throws {
         let store = try ReportRepository(path: ":memory:")
         let session = ExchangeSession(store: store, nonce: Data(repeating: 1, count: 16), generation: 42, wallClock: { 0 })

@@ -11,10 +11,11 @@ enum ReportDatabase {
             let hasMigrations = try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'grdb_migrations')") ?? false
             if hasMigrations {
                 let applied = Set(try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations"))
-                guard applied.isSubset(of: ["v1", "v2", "v3", "v4"]),
+                guard applied.isSubset(of: ["v1", "v2", "v3", "v4", "v5"]),
                       !applied.contains("v2") || applied.contains("v1"),
                       !applied.contains("v3") || applied.contains("v2"),
-                      !applied.contains("v4") || applied.contains("v3") else {
+                      !applied.contains("v4") || applied.contains("v3"),
+                      !applied.contains("v5") || applied.contains("v4") else {
                     throw ReportDatabaseError.unsupportedSchema
                 }
             }
@@ -116,6 +117,10 @@ enum ReportDatabase {
                     remaining_hops INTEGER NOT NULL CHECK (remaining_hops BETWEEN 0 AND 12)
                 );
                 """)
+        }
+        migrator.registerMigration("v5") { db in
+            // The keyset page must not sort the full report table per request.
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS reports_observation_id ON reports(observed_at_ms DESC, bundle_id ASC)")
         }
         try migrator.migrate(queue)
         return queue

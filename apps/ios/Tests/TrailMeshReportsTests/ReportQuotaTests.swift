@@ -46,7 +46,7 @@ final class ReportQuotaTests: XCTestCase {
         guard case .stored = afterHold else { return XCTFail("Rate hold did not expire after one hour") }
     }
 
-    func testSeenIDsAreBoundedAfterAdmission() async throws {
+    func testSelectedIngressKeepsSeenIDsBoundedAfterAdmission() async throws {
         let resource = try XCTUnwrap(TestResources.bundle.url(forResource: "report-v1-vectors", withExtension: "json"))
         let document = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: resource)) as? [String: Any])
         let cases = try XCTUnwrap(document["cases"] as? [[String: Any]])
@@ -65,17 +65,18 @@ final class ReportQuotaTests: XCTestCase {
                 INSERT INTO seen_ids SELECT printf('%064x', n), ?, 'test' FROM numbers
                 """, arguments: [now + 1_000])
         }
-        let full = try await repository.ingest(wire, now: now)
+        let selected = SelectedReportExchangeStore(repository: repository, context: RelevanceContext())
+        let full = try await selected.ingestTransferred(wire, offeredHops: 2, clock: { now })
         XCTAssertEqual(full, .rejected(.quota))
         let retained = try await database.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM seen_ids") }
         XCTAssertEqual(retained, 10_000)
         _ = try await repository.reclaimExpiredReportsAfterUserConfirmation(now: now + 1_000)
-        guard case .stored = try await repository.ingest(wire, now: now + 1_000) else { return XCTFail("Confirmed cleanup should free seen-ID capacity") }
+        guard case .stored = try await selected.ingestTransferred(wire, offeredHops: 2, clock: { now + 1_000 }) else { return XCTFail("Confirmed cleanup should free seen-ID capacity") }
         let remaining = try await database.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM seen_ids") }
         XCTAssertEqual(remaining, 1)
     }
 
-    func testRemoteCapacityReservesRoomForLocalReports() async throws {
+    func testSelectedIngressRemoteCapacityReservesRoomForLocalReports() async throws {
         let resource = try XCTUnwrap(TestResources.bundle.url(forResource: "report-v1-vectors", withExtension: "json"))
         let document = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: resource)) as? [String: Any])
         let cases = try XCTUnwrap(document["cases"] as? [[String: Any]])
@@ -95,7 +96,9 @@ final class ReportQuotaTests: XCTestCase {
                 VALUES ('quota-fixture', zeroblob(1), zeroblob(64), zeroblob(20971455), zeroblob(32), ?, ?, ?, 0)
                 """, arguments: [now - 1, now + 7_200_000, now])
         }
-        let rejected = try await repository.ingest(wire, now: now)
+        let selected = SelectedReportExchangeStore(repository: repository, context: RelevanceContext(manualArea:
+            RelevanceArea(center: RelevancePoint(latitude: 421790000, longitude: 235850000), radius: 1000)))
+        let rejected = try await selected.ingestTransferred(wire, offeredHops: 2, clock: { now })
         XCTAssertEqual(rejected, .rejected(.quota))
         let identity = try ReportIdentity.create(store: QuotaKeyStore())
         let draft = ReportDraft(category: "water", status: "dry", observedAt: now,

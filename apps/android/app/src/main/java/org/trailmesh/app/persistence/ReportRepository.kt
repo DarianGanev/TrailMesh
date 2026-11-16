@@ -9,6 +9,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.trailmesh.app.protocol.*
 import org.trailmesh.app.security.ReportSigner
+import org.trailmesh.app.relevance.*
 
 sealed class StoreOutcome {
     data class Stored(val id: String) : StoreOutcome()
@@ -33,6 +34,9 @@ data class ReportBounds(
     val west: Long = -1_800_000_000,
     val east: Long = 1_800_000_000,
 )
+
+data class ReportPageCursor(val observedAt: Long, val id: String)
+data class ReportPage(val reports: List<StoredReport>, val nextCursor: ReportPageCursor?, val hasMore: Boolean, val inspectedCount: Int)
 
 data class ReportDraft(
     val category: String,
@@ -440,6 +444,60 @@ private constructor(
         }
     }
 
+    /** Bounded verified map/history page; continue by raw cursor even when the page is empty. */
+    suspend fun reportPage(
+        now: Long,
+        bounds: ReportBounds = ReportBounds(),
+        includeExpired: Boolean = false,
+        after: ReportPageCursor? = null,
+        limit: Int = 64,
+    ): ReportPage {
+        validClock(now)
+        require(limit in 1..64)
+        require(after == null || (after.observedAt in 0..ReportJSON.SAFE_INTEGER && after.id.matches(Regex("[0-9a-f]{64}"))))
+        if (bounds.south !in -900000000L..900000000L || bounds.north !in -900000000L..900000000L || bounds.south > bounds.north || bounds.west !in -1800000000L..1800000000L || bounds.east !in -1800000000L..1800000000L)
+            throw ReportStoreException(StoreFailure.INVALID_BOUNDS)
+        return transaction { db ->
+            observe(db,now)
+            // Two range seeks avoid rescanning the preceding index prefix for a late cursor.
+            // Bounds and expiry filter only after the bounded signed-row verification budget.
+            val candidates = mutableListOf<ReportPageCursor>()
+            fun collect(sql: String, args: Array<Any?>) {
+                db.query(sql,args).use { c ->
+                    while (c.moveToNext()) {
+                        if (c.getType(0) != Cursor.FIELD_TYPE_INTEGER || c.getType(1) != Cursor.FIELD_TYPE_STRING)
+                            throw ReportStoreException(StoreFailure.CORRUPT_STORED_REPORT)
+                        candidates.add(ReportPageCursor(c.getLong(0),c.getString(1)))
+                    }
+                }
+            }
+            val keys = "SELECT observed_at_ms,bundle_id FROM reports INDEXED BY reports_observation_page"
+            if (after == null) {
+                collect("$keys ORDER BY observed_at_ms DESC,bundle_id ASC LIMIT ?",arrayOf(limit+1))
+            } else {
+                collect("$keys WHERE observed_at_ms=? AND bundle_id>? ORDER BY bundle_id ASC LIMIT ?",arrayOf(after.observedAt,after.id,limit+1))
+                if (candidates.size < limit+1)
+                    collect("$keys WHERE observed_at_ms<? ORDER BY observed_at_ms DESC,bundle_id ASC LIMIT ?",arrayOf(after.observedAt,limit+1-candidates.size))
+            }
+            val items = mutableListOf<StoredReport>()
+            var cursor: ReportPageCursor? = null
+            var inspected = 0
+            val more = candidates.size > limit
+            for (candidate in candidates.take(limit)) {
+                val checked = db.query("SELECT $COLUMNS $JOIN WHERE b.bundle_id=?",arrayOf<Any?>(candidate.id)).use { c ->
+                    if (!c.moveToFirst()) throw ReportStoreException(StoreFailure.CORRUPT_STORED_REPORT)
+                    verified(c,now).report
+                }
+                require(candidate.observedAt == checked.observedAt && candidate.id == checked.bundleID)
+                inspected++
+                cursor = candidate
+                val inLongitude = if (bounds.west <= bounds.east) checked.lonE7 in bounds.west..bounds.east else checked.lonE7 >= bounds.west || checked.lonE7 <= bounds.east
+                if ((includeExpired || !checked.isExpired) && checked.latE7 in bounds.south..bounds.north && inLongitude) items.add(checked)
+            }
+            ReportPage(items,cursor,more,inspected)
+        }
+    }
+
     /**
      * Returns original wire copies only for current, non-quarantined reports with a positive hop
      * cap.
@@ -496,10 +554,16 @@ private constructor(
             )
         }
 
-    suspend fun inventoryPage(
+    suspend fun inventoryPage(afterID: String?, limit: Int, now: Long) = inventoryPageInternal(afterID,limit,now,null,false)
+
+    suspend fun selectedInventoryPage(afterID: String?, limit: Int, now: Long, context: RelevanceContext?) = inventoryPageInternal(afterID,limit,now,context,true)
+
+    private suspend fun inventoryPageInternal(
         afterID: String?,
         limit: Int,
         now: Long,
+        relevance: RelevanceContext? = null,
+        applyRelevance: Boolean = false,
     ): org.trailmesh.app.exchange.InventoryPage {
         require(limit in 1..8)
         require(afterID == null || afterID.matches(Regex("[0-9a-f]{64}")))
@@ -521,7 +585,7 @@ private constructor(
                         }
                         val checked = verified(c, now)
                         cursor = checked.report.bundleID
-                        if (!checked.report.isExpired && checked.remainingHops > 0)
+                        if (!checked.report.isExpired && checked.remainingHops > 0 && (!applyRelevance || relevant(checked.report,relevance,now)))
                             items.add(
                                 org.trailmesh.app.exchange.ReportDescriptor(
                                     cursor,
@@ -531,6 +595,10 @@ private constructor(
                             )
                     }
                 }
+            db.execSQL(
+                "INSERT OR REPLACE INTO exchange_cursor VALUES(1,?)",
+                arrayOf<Any?>(if (more) cursor else null),
+            )
             org.trailmesh.app.exchange.InventoryPage(items, cursor, more)
         }
     }
@@ -554,14 +622,18 @@ private constructor(
         }
     }
 
-    suspend fun loadForExchange(id: String, now: Long): org.trailmesh.app.exchange.OutgoingReport? =
+    suspend fun loadForExchange(id: String, now: Long) = loadForExchangeInternal(id,now,null,false)
+
+    suspend fun loadSelectedForExchange(id: String, now: Long, context: RelevanceContext?) = loadForExchangeInternal(id,now,context,true)
+
+    private suspend fun loadForExchangeInternal(id: String, now: Long, relevance: RelevanceContext?, applyRelevance: Boolean): org.trailmesh.app.exchange.OutgoingReport? =
         transaction { db ->
             observe(db, now)
             db.query("SELECT $COLUMNS $JOIN WHERE b.bundle_id=?", arrayOf<Any?>(id)).use { c ->
                 if (!c.moveToFirst()) null
                 else {
                     val checked = verified(c, now)
-                    if (checked.report.isExpired || checked.remainingHops == 0) null
+                    if (checked.report.isExpired || checked.remainingHops == 0 || (applyRelevance && !relevant(checked.report,relevance,now))) null
                     else
                         org.trailmesh.app.exchange.OutgoingReport(
                             org.trailmesh.app.exchange.ReportDescriptor(
@@ -574,6 +646,9 @@ private constructor(
                 }
             }
         }
+
+    private fun relevant(report: StoredReport, context: RelevanceContext?, now: Long) =
+        RelevancePolicy.evaluate(RelevantReport(report.bundleID,report.observedAt,report.expiresAt,GeoPoint(report.latE7,report.lonE7)),context,now) == RelevanceDecision.eligible
 
     /** Only after explicit confirmation that the backward correction is intentional. */
     suspend fun recoverClockAfterUserConfirmation(now: Long): Int = transaction { db ->

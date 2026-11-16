@@ -1,0 +1,62 @@
+{
+  "schema": "trailmesh.local-relevance-profile",
+  "version": 1,
+  "scope": "Local policy over verified projections. Context and route are never transmitted.",
+  "earth_radius_m": 6371008.8,
+  "boundary_tolerance_m": 1e-06,
+  "limits": {
+    "latitude_e7": 900000000,
+    "longitude_e7": 1800000000,
+    "area_radius_m": [
+      100,
+      50000
+    ],
+    "corridor_m": [
+      100,
+      10000
+    ],
+    "default_corridor_m": 1000,
+    "route_points": [
+      1,
+      2048
+    ],
+    "gps_accuracy_m": 1000,
+    "gps_age_ms": 300000,
+    "safe_integer": 9007199254740991
+  },
+  "context_fields": {
+    "manual_area": {
+      "center": [
+        "lat_e7",
+        "lon_e7"
+      ],
+      "radius_m": "integer"
+    },
+    "gps_area": {
+      "center": [
+        "lat_e7",
+        "lon_e7"
+      ],
+      "radius_m": "integer",
+      "accuracy_m": "finite nonnegative number",
+      "fix_at_ms": "nonnegative safe integer"
+    },
+    "route": {
+      "points": "ordered E7 points",
+      "corridor_m": "optional integer"
+    }
+  },
+  "validation": "Unknown keys, explicit null optional members, booleans used as numbers, nonfinite numbers, out-of-range coordinates and bounds are invalidConfiguration. Context may be null or empty. Every supplied member is validated before fallback. Adjacent route vertices with dot <= -1 + 1e-12 are invalid. Repeated identical vertices are allowed.",
+  "gps": "Structurally valid fixes with accuracy >1000m or age outside 0..300000ms are unavailable. Explicit manual area and route each work without GPS. Future fixes are unavailable, allowing caller clock rollback to be handled without inferred location.",
+  "geometry": "Minimum distance to closed minor great-circle arcs on a sphere. One route point acts as a circle. Manual area, usable GPS area and route are combined by union. Report signed accuracy never widens the area or corridor.",
+  "decision_order": [
+    "invalidConfiguration",
+    "expired",
+    "configurationRequired",
+    "eligible or notRelevant"
+  ],
+  "expiry": "expires_at_ms <= now_ms is expired. now_ms is a nonnegative safe integer. Repository clock/quarantine/admission checks precede policy.",
+  "selection": "Eligible only, observed_at_ms descending then ID ascending, deduplicated immutable IDs. Selection input must already be admitted. This ordering is local only.",
+  "wire_inventory": "Existing exchange-v1 ID ascending order, including across bounded raw candidate pages. Relevance filters each <=8 raw candidate page and is rechecked on load. Preserve the raw cursor through empty filtered pages. Freeze context per encounter.",
+  "report_page": "Inspect <=64 raw rows plus lookahead, observed_at_ms DESC then ID ASC. Typed cursor advances by inspected rows. Empty filtered pages may have more rows. Recheck original signed bytes and preserve history/query bounds."
+}
