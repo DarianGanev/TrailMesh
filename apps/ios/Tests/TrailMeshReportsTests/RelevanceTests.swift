@@ -3,6 +3,32 @@ import XCTest
 @testable import TrailMeshReports
 
 final class RelevanceTests: XCTestCase {
+    func testDiagnosticsCountTypedReasonsAndDeduplicationWithoutGeometry() {
+        let context = RelevanceContext(manualArea: RelevanceArea(center: RelevancePoint(latitude: 0, longitude: 0), radius: 1000))
+        let a = RelevanceReport(id: "a", observedAt: 3, expiresAt: 100, latitude: 0, longitude: 0)
+        let b = RelevanceReport(id: "b", observedAt: 2, expiresAt: 100, latitude: 0, longitude: 0)
+        let expired = RelevanceReport(id: "old", observedAt: 1, expiresAt: 10, latitude: 0, longitude: 0)
+        let distant = RelevanceReport(id: "far", observedAt: 4, expiresAt: 100, latitude: 10000000, longitude: 0)
+        let reports = [distant, a, expired, b, a]
+        let selection = RelevancePolicy.selectWithDiagnostics(reports, context: context, now: 10)
+        XCTAssertEqual(selection.reports.map(\.id), ["a", "b"])
+        XCTAssertEqual(selection.diagnostics.candidateCount, 5)
+        XCTAssertEqual(selection.diagnostics.decisionCounts[.eligible], 3)
+        XCTAssertEqual(selection.diagnostics.decisionCounts[.expired], 1)
+        XCTAssertEqual(selection.diagnostics.decisionCounts[.notRelevant], 1)
+        XCTAssertEqual(selection.diagnostics.decisionCounts[.configurationRequired], 0)
+        XCTAssertEqual(selection.diagnostics.decisionCounts[.invalidConfiguration], 0)
+        XCTAssertEqual(selection.diagnostics.duplicateCount, 1)
+        XCTAssertEqual(selection.diagnostics.selectedCount, 2)
+        XCTAssertEqual(RelevancePolicy.diagnostics(reports, context: context, now: 10), selection.diagnostics)
+        XCTAssertEqual(RelevancePolicy.select(reports, context: context, now: 10).map(\.id), selection.reports.map(\.id))
+        let missing = RelevancePolicy.diagnostics(reports, context: nil, now: 10)
+        XCTAssertEqual(missing.decisionCounts[.configurationRequired], 4)
+        XCTAssertEqual(missing.decisionCounts[.expired], 1)
+        let invalid = RelevancePolicy.diagnostics(reports, context: RelevanceContext.parse(Data("[]".utf8)), now: 10)
+        XCTAssertEqual(invalid.decisionCounts[.invalidConfiguration], 5)
+        XCTAssertEqual(invalid.selectedCount, 0)
+    }
     func testSharedLiteralDecisionsAndSelection() throws {
         let url = try XCTUnwrap(TestResources.bundle.url(forResource: "relevance-v1-vectors", withExtension: "json"))
         let document = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])

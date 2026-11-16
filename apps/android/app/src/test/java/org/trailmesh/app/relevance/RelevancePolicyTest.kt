@@ -36,6 +36,20 @@ class RelevancePolicyTest {
         assertEquals(RelevanceDecision.invalidConfiguration,RelevancePolicy.evaluateLocal(report,mapOf("manual_area" to null),100))
         assertEquals(RelevanceDecision.invalidConfiguration,RelevancePolicy.evaluate(report,RelevanceContext(route=Route(List(2049) { GeoPoint(0,0) })),100))
     }
+    @Test fun diagnosticsExposeCountsAndReasonsWithDeduplicatedSelection() {
+        val context = RelevanceContext(manualArea = Area(GeoPoint(0, 0), 100))
+        val candidates = listOf(report, report, report.copy(id = "far", point = GeoPoint(10_000_000, 0)), report.copy(id = "old", expiresAt = 100))
+        val summary = RelevancePolicy.diagnostics(candidates, context, 100)
+        assertEquals(4, summary.candidateCount)
+        assertEquals(1, summary.selectedCount)
+        assertEquals(2, summary.decisionCounts[RelevanceDecision.eligible])
+        assertEquals(1, summary.decisionCounts[RelevanceDecision.notRelevant])
+        assertEquals(1, summary.decisionCounts[RelevanceDecision.expired])
+        assertEquals(4, summary.decisionCounts.values.sum())
+        assertEquals(3, RelevancePolicy.diagnostics(candidates, null, 100).decisionCounts[RelevanceDecision.configurationRequired])
+        val invalid = RelevanceContext(manualArea = Area(GeoPoint(0, 0), 99))
+        assertEquals(4, RelevancePolicy.diagnostics(candidates, invalid, 100).decisionCounts[RelevanceDecision.invalidConfiguration])
+    }
     @Test fun routeSnapshotsCallerOwnedMutablePoints() {
         val points = mutableListOf(GeoPoint(0,0))
         val context = RelevanceContext(route=Route(points,100))
