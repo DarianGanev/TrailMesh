@@ -17,7 +17,10 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
     public var activeLinkCount: Int { links.count }
     public var waitingCandidateCount: Int { waiting.count }
     public var queuedCallbackCount: Int { reservations.count }
-    public var queuedByteCount: Int { reservations.values.reduce(0, +) }
+    public var queuedByteCount: Int { reservations.values.reduce(0) { $0 + $1.bytes } }
+    // Internal deterministic scheduling seam; production leaves it nil.
+    var beforeDispatchForTesting: (@MainActor (Data) async -> Void)?
+    var readyActionBatchCount: Int { links.values.reduce(0) { $0 + $1.readyBatches.count } }
     public var onChange: (@MainActor () -> Void)?
     private let repository: ReportRepository
     private let radio: any ReportSessionRadio
@@ -27,13 +30,18 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
     private let jitter: @Sendable () -> Double
     private var context: RelevanceContext?
     private var intended = false, foreground = true
-    private var generation: UInt64 = 0, ticket: UInt64 = 0, ingress: UInt64 = 0
+    private var generation: UInt64 = 0, ticket: UInt64 = 0, ingress: UInt64 = 0, batchSequence: UInt64 = 0
     private var observed: Int64 = 0
     private var waiting: [Candidate] = []
     private var links: [String: Link] = [:]
     private var tombstones: Set<String> = []
     private var rotationRequired = false
-    private var reservations: [UInt64: Int] = [:]
+    private struct InputReservation {
+        let bytes: Int
+        var workFinished = false
+        var outputFinished = false
+    }
+    private var reservations: [UInt64: InputReservation] = [:]
     private var cooldowns: [String: Cooldown] = [:]
     private var cooldownOrder: [String] = []
     private var ticker: Task<Void, Never>?
@@ -48,6 +56,10 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
         var drainAt: Int64?, succeeded = false, pauseAfterDrain = false
         var pending: Set<UInt64> = []
         var actionDrain = ReportActionDrain()
+        var batchOrder: [UInt64] = []
+        var readyBatches: [UInt64: [ExchangeAction]] = [:]
+        var batchReservations: [UInt64: UInt64] = [:]
+        var drainingBatches = false
         var peerClaimCount = 0
         init(candidate: Candidate, generation: UInt64, engine: ExchangeSession, began: Int64) {
             self.candidate = candidate; self.generation = generation; self.engine = engine; self.began = began
@@ -115,9 +127,12 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
         radioEpoch &+= 1
         ticker?.cancel(); ticker = nil
         let old = Array(links.values)
-        links.removeAll(); waiting.removeAll(); tombstones.removeAll(); reservations.removeAll(); rotationRequired = false
+        links.removeAll(); waiting.removeAll(); tombstones.removeAll(); rotationRequired = false
         radio.stop()
-        for link in old { Task { await link.engine.cancel() } }
+        for link in old {
+            discardReadyBatches(link)
+            Task { await link.engine.cancel() }
+        }
     }
     public func noteAuthoredTestReport(_ evidence: SavedTestReportEvidence) { record("report_authored", bundleID: evidence.bundleID) }
     private func changed() { onChange?() }
@@ -186,6 +201,7 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
     private func release(_ link: Link, succeeded: Bool) {
         guard current(link) else { return }
         links.removeValue(forKey: link.candidate.endpoint)
+        discardReadyBatches(link)
         if tombstones.count < 32 { tombstones.insert(link.candidate.endpoint) }
         if tombstones.count == 32 { rotationRequired = true }
         remember(link.candidate.peer, success: succeeded)
@@ -197,6 +213,7 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
     }
     private func dispatch(_ actions: [ExchangeAction], link: Link) async {
         for action in actions {
+            if let beforeDispatchForTesting { await beforeDispatchForTesting(action.bytes) }
             guard current(link), await link.engine.isLive(action), current(link) else { continue }
             guard link.pending.count < 64 else { record("queue_overflow", peer: link.candidate.peer); release(link, succeeded: false); return }
             ticket &+= 1
@@ -205,6 +222,9 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
             do { try radio.send(action.bytes, endpoint: link.candidate.endpoint, ticket: id) }
             catch { link.pending.remove(id); record("send_failed", peer: link.candidate.peer); release(link, succeeded: false); return }
         }
+        await observeCompletion(link)
+    }
+    private func observeCompletion(_ link: Link) async {
         guard current(link) else { return }
         let claims = (await link.engine.peerOutcomes).count
         guard current(link) else { return }
@@ -212,11 +232,53 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
         let completionState = await link.engine.completion
         if let completion = completionState {
             guard current(link) else { return }
-            if completion.failureReason == 4 { link.pauseAfterDrain = true }
+            if completion.localRepositoryFailure { link.pauseAfterDrain = true }
             link.succeeded = completion.succeeded
             if link.drainAt == nil { link.drainAt = monotonic() }
             releaseIfDrained(link)
         }
+    }
+    private func reserveBatch(_ link: Link) -> UInt64 {
+        batchSequence &+= 1
+        link.batchOrder.append(batchSequence)
+        link.actionDrain.begin()
+        return batchSequence
+    }
+    private func batchReady(_ actions: [ExchangeAction], id: UInt64, link: Link) async {
+        guard current(link) else { finishBatch(id, link: link); return }
+        if actions.isEmpty {
+            // An empty tick never waits behind a suspended repository operation.
+            // This keeps tick generation bounded and deadlines independent.
+            finishBatch(id, link: link)
+        } else { link.readyBatches[id] = actions }
+        await observeCompletion(link)
+        guard current(link), !link.drainingBatches else { return }
+        link.drainingBatches = true
+        Task { [weak self] in
+            guard let self else { return }
+            while self.current(link), let next = link.batchOrder.first, let batch = link.readyBatches.removeValue(forKey: next) {
+                await self.dispatch(batch, link: link)
+                self.finishBatch(next, link: link)
+            }
+            link.drainingBatches = false
+        }
+    }
+    private func finishBatch(_ id: UInt64, link: Link) {
+        link.batchOrder.removeAll { $0 == id }
+        link.readyBatches.removeValue(forKey: id)
+        if let reservation = link.batchReservations.removeValue(forKey: id) { finishReservation(reservation, work: false) }
+        finishOperation(link)
+    }
+    private func discardReadyBatches(_ link: Link) {
+        // Ready output can be discarded now, but its ingress reservation stays
+        // charged until the task that retained the original bytes has returned.
+        for id in Array(link.readyBatches.keys) { finishBatch(id, link: link) }
+    }
+    private func finishReservation(_ id: UInt64, work: Bool) {
+        guard var reservation = reservations[id] else { return }
+        if work { reservation.workFinished = true } else { reservation.outputFinished = true }
+        if reservation.workFinished && reservation.outputFinished { reservations.removeValue(forKey: id) }
+        else { reservations[id] = reservation }
     }
     private func finishOperation(_ link: Link) {
         link.actionDrain.finish()
@@ -238,13 +300,12 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
                 if now - link.began >= 15000 { release(link, succeeded: false) }
             } else if !link.tickPending {
                 link.tickPending = true
-                link.actionDrain.begin()
+                let batchID = reserveBatch(link)
                 Task { [weak self] in
                     let actions = await link.engine.tick(elapsed: now)
                     guard let self else { return }
-                    await self.dispatch(actions, link: link)
                     link.tickPending = false
-                    self.finishOperation(link)
+                    await self.batchReady(actions, id: batchID, link: link)
                 }
             }
         }
@@ -267,12 +328,11 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
     public func radioConnected(endpoint: String, epoch: UInt64) {
         guard epoch == radioEpoch, let link = links[endpoint], current(link), !link.connected else { return }
         link.connected = true; record("link_connected", peer: link.candidate.peer)
-        link.actionDrain.begin()
+        let batchID = reserveBatch(link)
         Task { [weak self] in
             let actions = await link.engine.start(elapsed: self?.monotonic() ?? 0)
             guard let self else { return }
-            await self.dispatch(actions, link: link)
-            self.finishOperation(link)
+            await self.batchReady(actions, id: batchID, link: link)
         }
     }
     public func radioDisconnected(endpoint: String, epoch: UInt64) {
@@ -285,14 +345,14 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
         }
         ingress &+= 1
         let reservation = ingress, elapsed = monotonic()
-        reservations[reservation] = bytes.count
-        link.actionDrain.begin()
+        reservations[reservation] = InputReservation(bytes: bytes.count)
+        let batchID = reserveBatch(link)
+        link.batchReservations[batchID] = reservation
         Task { [weak self] in
             let actions = await link.engine.receive(bytes, generation: link.generation, elapsed: elapsed)
             guard let self else { return }
-            self.reservations.removeValue(forKey: reservation)
-            await self.dispatch(actions, link: link)
-            self.finishOperation(link)
+            await self.batchReady(actions, id: batchID, link: link)
+            self.finishReservation(reservation, work: true)
         }
     }
     public func radioSent(ticket: UInt64, succeeded: Bool, endpoint: String, epoch: UInt64) {

@@ -21,6 +21,106 @@ final class ReportSessionTests: XCTestCase {
         XCTAssertFalse(drain.mayRelease(completed: true, pendingPayloads: 1))
         XCTAssertTrue(drain.mayRelease(completed: true, pendingPayloads: 0))
     }
+    func testSeparateCallbackDoneBatchDispatchesBeforeLaterGracefulClose() async throws {
+        let repository = try ReportRepository(path: ":memory:"), radio = FakeReportRadio()
+        let coordinator = ReportSessionCoordinator(repository: repository, radio: radio, wallClock: { 0 }, monotonic: { 0 }, temporaryID: { "11111111111111111111111111111111" })
+        let gate = SessionDispatchGate()
+        coordinator.beforeDispatchForTesting = { bytes in
+            if let frame = try? ExchangeWire.decode(bytes), case .done = frame.body { await gate.hold() }
+        }
+        coordinator.start(context: area, publicSharingConsent: true)
+        let epoch = coordinator.radioEpoch
+        coordinator.radioFound(endpoint: "peer", advertisement: advertisement(1), epoch: epoch)
+        coordinator.radioConnected(endpoint: "peer", epoch: epoch)
+        for _ in 0..<1000 { if !radio.sent.isEmpty { break }; try await Task.sleep(for: .milliseconds(1)) }
+        let localNonce = try ExchangeWire.decode(XCTUnwrap(radio.sent.first).0).source
+        func remote(_ body: ExchangeBody) throws -> Data {
+            try ExchangeWire.encode(ExchangeFrame(source: Data(repeating: 4, count: 16), destination: localNonce, body: body))
+        }
+        let hello = ExchangeFrame(source: Data(repeating: 4, count: 16), destination: Data(repeating: 0, count: 16), body: .hello(features: 1, maxFrame: 16384, maxChunk: 1024))
+        coordinator.radioReceived(try ExchangeWire.encode(hello), endpoint: "peer", epoch: epoch)
+        for _ in 0..<1000 { if radio.sent.count >= 2 { break }; try await Task.sleep(for: .milliseconds(1)) }
+        coordinator.radioReceived(try remote(.summary(page: 0, more: false, entries: [])), endpoint: "peer", epoch: epoch)
+        for _ in 0..<1000 { if radio.sent.count >= 3 { break }; try await Task.sleep(for: .milliseconds(1)) }
+        coordinator.radioReceived(try remote(.request([])), endpoint: "peer", epoch: epoch)
+        for _ in 0..<1000 { if gate.entered { break }; try await Task.sleep(for: .milliseconds(1)) }
+        XCTAssertTrue(gate.entered)
+        coordinator.radioReceived(try remote(.done), endpoint: "peer", epoch: epoch)
+        for _ in 0..<1000 { if coordinator.readyActionBatchCount == 1 { break }; try await Task.sleep(for: .milliseconds(1)) }
+        XCTAssertEqual(coordinator.readyActionBatchCount, 1, "Later CLOSE must wait behind the owned DONE batch")
+        XCTAssertFalse(try radio.sent.contains { if case .close = try ExchangeWire.decode($0.0).body { return true }; return false })
+        gate.release()
+        for _ in 0..<1000 { if radio.sent.count >= 5 { break }; try await Task.sleep(for: .milliseconds(1)) }
+        let bodies = try radio.sent.map { try ExchangeWire.decode($0.0).body }
+        XCTAssertEqual(Array(bodies.suffix(2)), [.done, .close(0)])
+        for (_, endpoint, ticket) in radio.sent { coordinator.radioSent(ticket: ticket, succeeded: true, endpoint: endpoint, epoch: epoch) }
+        for _ in 0..<1000 { if coordinator.activeLinkCount == 0 { break }; try await Task.sleep(for: .milliseconds(1)) }
+        XCTAssertEqual(coordinator.activeLinkCount, 0)
+        coordinator.stop()
+    }
+    func testUntrustedPeerClose4DoesNotPauseHealthyLinksOrDiscovery() async throws {
+        let repository = try ReportRepository(path: ":memory:"), radio = FakeReportRadio()
+        let coordinator = ReportSessionCoordinator(repository: repository, radio: radio, wallClock: { 0 }, monotonic: { 0 }, temporaryID: { "11111111111111111111111111111111" })
+        coordinator.start(context: area, publicSharingConsent: true)
+        let epoch = coordinator.radioEpoch
+        for i in 0..<4 { coordinator.radioFound(endpoint: "peer\(i)", advertisement: advertisement(i), epoch: epoch) }
+        coordinator.radioConnected(endpoint: "peer0", epoch: epoch)
+        for _ in 0..<1000 { if !radio.sent.isEmpty { break }; try await Task.sleep(for: .milliseconds(1)) }
+        let nonce = try ExchangeWire.decode(XCTUnwrap(radio.sent.first).0).source
+        let hello = ExchangeFrame(source: Data(repeating: 4, count: 16), destination: Data(repeating: 0, count: 16), body: .hello(features: 1, maxFrame: 16384, maxChunk: 1024))
+        coordinator.radioReceived(try ExchangeWire.encode(hello), endpoint: "peer0", epoch: epoch)
+        for _ in 0..<1000 { if radio.sent.count >= 2 { break }; try await Task.sleep(for: .milliseconds(1)) }
+        let close = ExchangeFrame(source: Data(repeating: 4, count: 16), destination: nonce, body: .close(4))
+        coordinator.radioReceived(try ExchangeWire.encode(close), endpoint: "peer0", epoch: epoch)
+        for _ in 0..<1000 {
+            for (_, endpoint, ticket) in radio.sent { coordinator.radioSent(ticket: ticket, succeeded: true, endpoint: endpoint, epoch: epoch) }
+            if coordinator.activeLinkCount == 3 { break }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        XCTAssertEqual(coordinator.state, .running)
+        XCTAssertEqual(coordinator.activeLinkCount, 3)
+        XCTAssertFalse(coordinator.events.contains { $0.code == "storage_failure" })
+        coordinator.radioFound(endpoint: "replacement", advertisement: advertisement(8), epoch: epoch)
+        XCTAssertEqual(coordinator.activeLinkCount, 4)
+        XCTAssertTrue(radio.connects.contains("replacement"))
+        XCTAssertEqual(coordinator.radioEpoch, epoch)
+        coordinator.stop()
+    }
+    func testStopResumeKeepsOldBlockedPayloadChargedUntilItsDispatchReturns() async throws {
+        let repository = try ReportRepository(path: ":memory:"), radio = FakeReportRadio()
+        let coordinator = ReportSessionCoordinator(repository: repository, radio: radio, wallClock: { 0 }, monotonic: { 0 }, temporaryID: { "11111111111111111111111111111111" })
+        let gate = SessionDispatchGate()
+        coordinator.beforeDispatchForTesting = { bytes in
+            if let frame = try? ExchangeWire.decode(bytes), case .close = frame.body { await gate.hold() }
+        }
+        coordinator.start(context: area, publicSharingConsent: true)
+        let oldEpoch = coordinator.radioEpoch
+        coordinator.radioFound(endpoint: "old", advertisement: advertisement(0), epoch: oldEpoch)
+        coordinator.radioConnected(endpoint: "old", epoch: oldEpoch)
+        for _ in 0..<1000 { if !radio.sent.isEmpty { break }; try await Task.sleep(for: .milliseconds(1)) }
+        let hello = ExchangeFrame(source: Data(repeating: 4, count: 16), destination: Data(repeating: 0, count: 16), body: .hello(features: 1, maxFrame: 16384, maxChunk: 1024))
+        coordinator.radioReceived(try ExchangeWire.encode(hello), endpoint: "old", epoch: oldEpoch)
+        for _ in 0..<1000 { if radio.sent.count >= 2 { break }; try await Task.sleep(for: .milliseconds(1)) }
+        coordinator.radioReceived(Data(count: 200000), endpoint: "old", epoch: oldEpoch)
+        for _ in 0..<1000 { if gate.entered { break }; try await Task.sleep(for: .milliseconds(1)) }
+        XCTAssertTrue(gate.entered)
+        XCTAssertEqual(coordinator.queuedByteCount, 200000)
+        coordinator.stop()
+        XCTAssertEqual(coordinator.queuedByteCount, 200000, "Stop invalidates generations, not retained-payload ownership")
+        coordinator.start(context: area, publicSharingConsent: true)
+        let newEpoch = coordinator.radioEpoch
+        coordinator.radioFound(endpoint: "new", advertisement: advertisement(1), epoch: newEpoch)
+        coordinator.radioConnected(endpoint: "new", epoch: newEpoch)
+        coordinator.radioReceived(Data(count: 70000), endpoint: "new", epoch: newEpoch)
+        XCTAssertTrue(coordinator.events.contains { $0.code == "queue_overflow" })
+        XCTAssertEqual(coordinator.queuedByteCount, 200000)
+        gate.release()
+        for _ in 0..<1000 { if coordinator.queuedCallbackCount == 0 { break }; try await Task.sleep(for: .milliseconds(1)) }
+        XCTAssertEqual(coordinator.queuedCallbackCount, 0)
+        XCTAssertEqual(coordinator.queuedByteCount, 0)
+        XCTAssertFalse(try radio.sent.contains { if case .close = try ExchangeWire.decode($0.0).body { return true }; return false }, "Old-generation output must never dispatch after Resume")
+        coordinator.stop()
+    }
     func testSharedProductSessionProfile() throws {
         let url = try XCTUnwrap(TestResources.bundle.url(forResource: "session-v1-profile", withExtension: "json"))
         let profile = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
@@ -227,4 +327,15 @@ final class SessionTestClock: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: Int64 = 0
     var value: Int64 { get { lock.lock(); defer { lock.unlock() }; return stored } set { lock.lock(); stored = newValue; lock.unlock() } }
+}
+
+@MainActor
+private final class SessionDispatchGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private(set) var entered = false
+    func hold() async {
+        entered = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() { continuation?.resume(); continuation = nil }
 }

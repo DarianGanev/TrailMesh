@@ -357,9 +357,15 @@ class ReportSessionService : Service() {
     }
 
     fun recoverClockAfterConfirmation() {
+        val repo = repository ?: return
+        // Invalidate loaded report frames before quarantine begins. Keep this bound
+        // service alive so the recovery transaction can finish after radio shutdown.
+        if (::coordinator.isInitialized) coordinator.stop()
+        preferences.edit().putBoolean("open_intent", false).commit()
+        leaveForeground()
         scope.launch {
             try {
-                repository!!.recoverClockAfterUserConfirmation(System::currentTimeMillis)
+                repo.recoverClockAfterUserConfirmation(System::currentTimeMillis)
                 message = "Clock recovery confirmed. Existing reports are quarantined history."
                 refresh()
             } catch (e: ReportStoreException) {

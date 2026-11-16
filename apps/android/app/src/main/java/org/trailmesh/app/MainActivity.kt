@@ -16,6 +16,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var saved: TextView
     private lateinit var consent: CheckBox
+    private var consentWithdrawn = false
     private lateinit var start: Button
     private lateinit var resume: Button
     private lateinit var create: Button
@@ -24,6 +25,8 @@ class MainActivity : Activity() {
         object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
                 session = (binder as ReportSessionService.LocalBinder).session
+                if (consentWithdrawn) session?.stopSharing()
+                else if (session?.state == ReportSessionState.active) consent.isChecked = true
                 render()
             }
 
@@ -73,6 +76,17 @@ class MainActivity : Activity() {
                 text =
                     "I agree to public sharing: reports and inventories are visible to nearby unverified participants. Signatures protect report integrity, not a person's identity. Routes, interests and private content are never sent."
                 minHeight = dp(48)
+                setOnCheckedChangeListener { _, checked ->
+                    consentWithdrawn = !checked
+                    if (!checked) {
+                        session?.stopSharing()
+                            ?: startService(
+                                Intent(this@MainActivity, ReportSessionService::class.java)
+                                    .setAction(ReportSessionService.ACTION_STOP),
+                            )
+                        render()
+                    }
+                }
                 container.addView(this)
             }
         fun button(label: String, action: () -> Unit) =

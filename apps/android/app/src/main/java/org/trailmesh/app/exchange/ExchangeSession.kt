@@ -130,23 +130,55 @@ class ExchangeSession(
             actions
         }
 
+    /** A one-shot arrival validated before an owner's separate processing/dispatch queue. */
+    class Arrival
+    internal constructor(
+        private val owner: ExchangeSession,
+        internal val generation: Long,
+        internal val elapsedMs: Long,
+    ) {
+        private val consumed = AtomicBoolean(false)
+
+        internal fun claim(session: ExchangeSession) =
+            owner === session && consumed.compareAndSet(false, true)
+    }
+
+    /** Samples the production clock under the same lock used by ticks and arrival ordering. */
+    fun registerArrival(token: Long, clock: () -> Long): Arrival? =
+        synchronized(clockAccess) {
+            if (!isCurrent(token) || closed || !started) return@synchronized null
+            val elapsedMs = clock()
+            val reason = deadline(elapsedMs)
+            if (reason != null) {
+                invalidate(reason)
+                return@synchronized null
+            }
+            Arrival(this, token, elapsedMs)
+        }
+
     /** Deadlines invalidate immediately; they never queue behind a suspended durable commit. */
-    suspend fun tick(elapsedMs: Long): List<ExchangeAction> {
-        if (!started || closed || invalidated.get()) return emptyList()
-        val reason = deadline(elapsedMs)
-        if (reason != null) invalidate(reason)
+    suspend fun tick(elapsedMs: Long): List<ExchangeAction> = tick { elapsedMs }
+
+    suspend fun tick(clock: () -> Long): List<ExchangeAction> {
+        synchronized(clockAccess) {
+            if (!started || closed || invalidated.get()) return emptyList()
+            val reason = deadline(clock())
+            if (reason != null) invalidate(reason)
+        }
         return emptyList()
     }
 
     suspend fun receive(token: Long, bytes: ByteArray, elapsedMs: Long): List<ExchangeAction> {
+        val arrival = registerArrival(token) { elapsedMs } ?: return emptyList()
+        return receive(arrival, bytes)
+    }
+
+    /** Only this engine can consume its ticket, once; a later tick cannot rewrite arrival time. */
+    suspend fun receive(arrival: Arrival, bytes: ByteArray): List<ExchangeAction> {
+        if (!arrival.claim(this)) return emptyList()
+        val token = arrival.generation
+        val elapsedMs = arrival.elapsedMs
         if (!isCurrent(token) || closed || !started) return emptyList()
-        // Validate event ordering at arrival, before waiting behind repository work. A later
-        // timer tick may advance the processing clock while this already-valid callback queues.
-        val arrivalReason = deadline(elapsedMs)
-        if (arrivalReason != null) {
-            invalidate(arrivalReason)
-            return emptyList()
-        }
         val reservations = queued.incrementAndGet()
         val reservedBytes = queuedBytes.addAndGet(bytes.size.toLong())
         try {
@@ -263,7 +295,7 @@ class ExchangeSession(
         val message = frame.message
         if (message is ExchangeMessage.Hello) {
             protocol(
-                peer == null && frame.source != nonce && frame.destination == ExchangeWire.ZERO
+                peer == null && frame.source != nonce && frame.destination == ExchangeWire.ZERO,
             )
             peer = frame.source
             maxFrame = minOf(maxFrame, message.maxFrame)
@@ -284,7 +316,7 @@ class ExchangeSession(
                         !(message.page == 7 && message.more) &&
                         (message.entries.isEmpty() ||
                             remoteLastID == null ||
-                            remoteLastID!! < message.entries.first().id)
+                            remoteLastID!! < message.entries.first().id),
                 )
                 remoteSummarySeen = true
                 remotePage++
@@ -300,7 +332,7 @@ class ExchangeSession(
                 val summary = localPage!!
                 val requestedIDs = message.ids.toSet()
                 protocol(
-                    message.ids == summary.entries.filter { it.id in requestedIDs }.map { it.id }
+                    message.ids == summary.entries.filter { it.id in requestedIDs }.map { it.id },
                 )
                 if (offered + message.ids.size > 32) {
                     actions.addAll(close(2))
@@ -316,7 +348,7 @@ class ExchangeSession(
                         incoming == null &&
                         requested.isNotEmpty() &&
                         message.report == requested.first &&
-                        message.transfer == incomingOffers + 1
+                        message.transfer == incomingOffers + 1,
                 )
                 incomingOffers++
                 protocol(incomingOffers <= 32)
@@ -338,7 +370,7 @@ class ExchangeSession(
                 protocol(
                     offered != null &&
                         message.transfer == offered.transfer &&
-                        message.id == offered.report.id
+                        message.id == offered.report.id,
                 )
                 completedAcks[message.transfer] = message
                 claims.add(ClaimedPeerOutcome(message.id, message.result))
@@ -351,7 +383,7 @@ class ExchangeSession(
                         remoteSummarySeen &&
                         !remoteMore &&
                         incoming == null &&
-                        requested.isEmpty()
+                        requested.isEmpty(),
                 )
                 peerDone = true
             }
@@ -362,7 +394,7 @@ class ExchangeSession(
                             peerDone &&
                             incoming == null &&
                             requested.isEmpty() &&
-                            pendingAck == null
+                            pendingAck == null,
                     )
                 closed = true
                 incoming = null
@@ -441,7 +473,7 @@ class ExchangeSession(
         if (replay != null) {
             protocol(
                 chunk.total == replay.bytes.size &&
-                    chunk.data.indices.all { replay.bytes[chunk.offset + it] == chunk.data[it] }
+                    chunk.data.indices.all { replay.bytes[chunk.offset + it] == chunk.data[it] },
             )
             emit(replay.ack, actions)
             return
@@ -450,7 +482,7 @@ class ExchangeSession(
         protocol(
             assembly != null &&
                 chunk.transfer == assembly.offer.transfer &&
-                chunk.total == assembly.bytes.size
+                chunk.total == assembly.bytes.size,
         )
         assembly!!
         for (i in chunk.data.indices) {

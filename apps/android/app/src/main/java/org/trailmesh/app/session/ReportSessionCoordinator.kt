@@ -115,7 +115,8 @@ class ReportSessionCoordinator(
 
     private class Budget(var callbacks: Int = 0, var bytes: Long = 0)
 
-    private var budget = Budget()
+    // Reservations belong to retained callback work, not an SDK or user-session generation.
+    private val budget = Budget()
 
     private class Link(val token: ReportLinkToken, val peer: String, val created: Long) {
         val processing = Mutex()
@@ -126,6 +127,13 @@ class ReportSessionCoordinator(
         var accepted = false
         var claimCount = 0
     }
+
+    private data class ReservedInput(
+        val link: Link,
+        val budget: Budget,
+        val bytes: ByteArray,
+        val arrival: ExchangeSession.Arrival,
+    )
 
     private val links = linkedMapOf<String, Link>()
     private val waiting = linkedMapOf<String, Candidate>()
@@ -189,7 +197,6 @@ class ReportSessionCoordinator(
             context = value
             sessionID = randomID().also { require(ReportAdvertisement.parse("TMR1|$it") != null) }
             epoch++
-            budget = Budget()
             links.clear()
             waiting.clear()
             tombstones.clear()
@@ -215,7 +222,6 @@ class ReportSessionCoordinator(
         links.clear()
         waiting.clear()
         tombstones.clear()
-        budget = Budget()
         radio.stop()
         record(code)
     }
@@ -403,10 +409,11 @@ class ReportSessionCoordinator(
      * Admission reserves aggregate capacity synchronously, before copying or creating a coroutine.
      */
     fun receive(token: ReportLinkToken, bytes: ByteArray) {
-        val reservation: Triple<Link, Budget, ByteArray> =
+        val reservation: ReservedInput =
             synchronized(gate) {
                 val link = current(token) ?: return
-                if (link.draining || link.engine == null) return
+                val engine = link.engine ?: return
+                if (link.draining) return
                 val b = budget
                 if (
                     b.callbacks >= ReportSessionLimits.QUEUED_CALLBACKS ||
@@ -416,17 +423,20 @@ class ReportSessionCoordinator(
                     finish(link, false)
                     return
                 }
+                val arrival = engine.registerArrival(token.generation, elapsed)
+                if (arrival == null) {
+                    if (!engine.isCurrent(token.generation)) finish(link, false)
+                    return
+                }
                 b.callbacks++
                 b.bytes += bytes.size
-                Triple(link, b, bytes.copyOf())
+                ReservedInput(link, b, bytes.copyOf(), arrival)
             }
-        val (link, b, snapshot) = reservation
-        val arrival = elapsed()
+        val (link, b, snapshot, arrival) = reservation
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 link.processing.withLock {
-                    if (isLive(token))
-                        dispatch(link, link.engine!!.receive(token.generation, snapshot, arrival))
+                    if (isLive(token)) dispatch(link, link.engine!!.receive(arrival, snapshot))
                 }
             } finally {
                 synchronized(gate) {
@@ -520,7 +530,7 @@ class ReportSessionCoordinator(
             val engine = link.engine ?: continue
             // tick never takes the engine's repository mutex and remains live while a commit waits.
             scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                engine.tick(elapsed())
+                engine.tick(elapsed)
                 synchronized(gate) {
                     if (current(link.token) === link && !engine.isCurrent(link.token.generation))
                         finish(link, false)
@@ -535,7 +545,6 @@ class ReportSessionCoordinator(
                 epoch++
                 tombstones.clear()
                 waiting.clear()
-                budget = Budget()
                 rotatePending = false
                 radio.start(epoch, "TMR1|$sessionID")
             }

@@ -22,6 +22,8 @@ public actor ExchangeSession {
     private var pending: [QueuedInput] = []
     private var queuedBytes = 0
     private var invalidated = false
+    private var gracefullyCompleted = false
+    private var localRepositoryFailure = false
     private var active = true, started = false, working = false
     private var peer: Data?
     private var decoder = ExchangeStreamDecoder()
@@ -39,19 +41,21 @@ public actor ExchangeSession {
     private var acknowledged: [Int: (String, Int)] = [:]
     /// Untrusted peer RECEIVED result codes; these do not establish recipient delivery.
     public private(set) var peerOutcomes: [Int] = []
-    /// Fixed local CLOSE reason, including pre-HELLO failures that cannot emit CLOSE.
+    /// Encounter CLOSE reason, including untrusted peer-supplied reasons. A peer
+    /// reason must never be interpreted as a local repository failure.
     public private(set) var failureReason: Int?
     /// Closed encounters retain terminal-action liveness until the radio drains.
-    public var completion: ExchangeCompletion? { active ? nil : ExchangeCompletion(failureReason: failureReason) }
+    public var completion: ExchangeCompletion? { active ? nil : ExchangeCompletion(failureReason: failureReason, localRepositoryFailure: localRepositoryFailure) }
     // Counts only queued callbacks, excluding the operation currently awaiting storage.
     var queuedInputCount: Int { pending.count }
     private struct Incoming { let transfer: Int; let descriptor: ExchangeDescriptor; var bytes: Data; var received: [Bool]; var count = 0 }
 
     public init(store: any ReportExchangeStore, nonce: Data, generation: UInt64, wallClock: @escaping @Sendable () -> Int64) { self.store = store; self.nonce = nonce; self.generation = generation; self.wallClock = wallClock }
     /// Failure/timeout closes invalidate normal actions. Verified graceful
-    /// completion preserves its ordered final batch (including replies before
-    /// CLOSE); terminal actions expire on cancel/disconnect of the generation.
-    public func isLive(_ action: ExchangeAction) -> Bool { action.generation == generation && !invalidated && (active || action.terminal) }
+    /// completion preserves previously emitted replies, including batches awaiting
+    /// dispatch from earlier callbacks. Cancellation/disconnect invalidates all
+    /// actions; peer reasons never grant graceful-completion liveness.
+    public func isLive(_ action: ExchangeAction) -> Bool { action.generation == generation && !invalidated && (active || action.terminal || gracefullyCompleted) }
     private func discardPending() { let callbacks = pending; pending.removeAll(); queuedBytes = 0; for callback in callbacks { callback.continuation.resume(returning: []) } }
     /// Invalidates pending output and partial input; already committed reports remain stored.
     public func cancel() { invalidated = true; active = false; incoming = nil; decoder = ExchangeStreamDecoder(); discardPending() }
@@ -65,9 +69,11 @@ public actor ExchangeSession {
     }
     private enum SessionFailure: Error { case reason(Int), stale }
     private func live() throws { guard active else { throw SessionFailure.stale } }
-    private func close(_ reason: Int) -> [ExchangeAction] {
+    private func close(_ reason: Int, repositoryFailure: Bool = false) -> [ExchangeAction] {
         guard active else { return [] }
         failureReason = reason == 0 ? nil : reason
+        gracefullyCompleted = reason == 0
+        localRepositoryFailure = repositoryFailure
         // CLOSE itself is bounded even when the encounter byte budget is exhausted.
         let frame = peer.map { ExchangeFrame(source: nonce, destination: $0, body: .close(reason)) }
         let bytes = frame.flatMap { try? ExchangeWire.encode($0) }
@@ -141,7 +147,7 @@ public actor ExchangeSession {
         catch let SessionFailure.reason(reason) { return close(reason) }
         catch ExchangeWireError.unsupported { return close(6) }
         catch ExchangeWireError.malformed { return close(3) }
-        catch { return close(4) }
+        catch { return close(4, repositoryFailure: true) }
     }
     private func page(now: Int64) async throws -> [ExchangeAction] {
         guard localPage < 8, offered < 32 else { throw SessionFailure.reason(2) }
@@ -238,7 +244,10 @@ public actor ExchangeSession {
             remoteDone = true; return try finish()
         case let .close(reason):
             guard reason != 0 || (localDone && remoteDone && incoming == nil && requested.isEmpty && awaiting == nil) else { throw SessionFailure.reason(3) }
-            active = false; incoming = nil; discardPending(); failureReason = reason == 0 ? nil : reason; return []
+            active = false; incoming = nil; discardPending()
+            failureReason = reason == 0 ? nil : reason
+            gracefullyCompleted = reason == 0
+            return []
         case .hello: throw SessionFailure.reason(3)
         }
     }
@@ -246,5 +255,7 @@ public actor ExchangeSession {
 
 public struct ExchangeCompletion: Sendable {
     public let failureReason: Int?
+    /// Set only by locally detected repository failures, never by remote CLOSE.
+    public let localRepositoryFailure: Bool
     public var succeeded: Bool { failureReason == nil }
 }

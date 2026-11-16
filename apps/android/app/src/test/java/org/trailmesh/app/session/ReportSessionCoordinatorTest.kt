@@ -365,4 +365,163 @@ class ReportSessionCoordinatorTest {
         assertTrue(engine.isComplete)
         engine.cancel()
     }
+
+    @Test
+    fun queuedArrivalSurvivesLaterTickAndActualRollbackStillFails() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val clock = java.util.concurrent.atomic.AtomicLong(0)
+        val store =
+            object : EmptyStore() {
+                override suspend fun inventoryPage(
+                    afterID: String?,
+                    limit: Int,
+                    now: Long,
+                ): InventoryPage {
+                    entered.complete(Unit)
+                    release.await()
+                    return InventoryPage(emptyList(), null, false)
+                }
+            }
+        val radio = Radio()
+        val owner =
+            ReportSessionCoordinator(
+                radio,
+                { store },
+                scope,
+                { 100 },
+                clock::get,
+                { "0".repeat(31) + "1" },
+            )
+        try {
+            owner.start(context, true)
+            owner.found(owner.epoch, "queued", "TMR1|" + "2".repeat(32))
+            val token = radio.requested.single()
+            owner.connected(token)
+            val hello =
+                ExchangeWire.encode(
+                    ExchangeFrame("a".repeat(32), ExchangeWire.ZERO, ExchangeMessage.Hello()),
+                )
+            clock.set(10)
+            owner.receive(token, hello)
+            entered.await()
+            clock.set(15)
+            owner.receive(token, byteArrayOf(0)) // valid partial prefix queues behind storage
+            assertEquals(2, owner.queuedCallbacks)
+            clock.set(20)
+            owner.tick()
+            release.complete(Unit)
+            withTimeout(5000) { while (owner.queuedCallbacks != 0) delay(1) }
+            assertTrue(
+                "An arrival registered at 15 must not become a rollback after tick 20",
+                owner.isLive(token),
+            )
+            clock.set(19)
+            owner.receive(token, byteArrayOf(0))
+            withTimeout(5000) { while (owner.isLive(token)) delay(1) }
+            assertFalse(owner.isLive(token))
+        } finally {
+            owner.stop()
+            release.complete(Unit)
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun retainedPayloadBudgetRemainsChargedAcrossRotationStopAndRestart() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var calls = 0
+        val store =
+            object : EmptyStore() {
+                override suspend fun inventoryPage(
+                    afterID: String?,
+                    limit: Int,
+                    now: Long,
+                ): InventoryPage {
+                    calls++
+                    entered.complete(Unit)
+                    release.await()
+                    return InventoryPage(emptyList(), null, false)
+                }
+            }
+        val radio = Radio()
+        val owner =
+            ReportSessionCoordinator(
+                radio,
+                { store },
+                scope,
+                { 100 },
+                { 0 },
+                { "0".repeat(31) + "1" },
+            )
+        try {
+            owner.start(context, true)
+            owner.found(owner.epoch, "old", "TMR1|" + "2".repeat(32))
+            val old = radio.requested.single()
+            owner.connected(old)
+            val hello =
+                ExchangeWire.encode(
+                    ExchangeFrame("a".repeat(32), ExchangeWire.ZERO, ExchangeMessage.Hello()),
+                )
+            owner.receive(old, hello)
+            entered.await()
+            owner.receive(old, ByteArray(120000))
+            val retained = hello.size.toLong() + 120000
+            assertEquals(retained, owner.queuedBytes)
+            owner.failed(old)
+            owner.tick() // retire the old SDK epoch while its repository operation is suspended
+            assertEquals(retained, owner.queuedBytes)
+            owner.stop()
+            assertEquals(retained, owner.queuedBytes)
+            owner.start(context, true)
+            assertEquals(retained, owner.queuedBytes)
+            owner.found(owner.epoch, "new", "TMR1|" + "3".repeat(32))
+            val current = radio.requested.last()
+            owner.connected(current)
+            owner.receive(current, hello + ByteArray(150000 - hello.size))
+            assertFalse(owner.isLive(current)) // would exceed the aggregate 256 KiB limit
+            assertEquals(retained, owner.queuedBytes)
+            assertEquals(2, owner.queuedCallbacks)
+            assertEquals(1, calls)
+            release.complete(Unit)
+            withTimeout(5000) { while (owner.queuedCallbacks != 0) delay(1) }
+            assertEquals(0L, owner.queuedBytes)
+        } finally {
+            owner.stop()
+            release.complete(Unit)
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun arrivalTicketsAreBoundToOneEngineAndCannotBeReplayedAfterAQueuedReceive() = runBlocking {
+        val first = ExchangeSession(EmptyStore(), "1".repeat(32), 1, { 100 })
+        val other = ExchangeSession(EmptyStore(), "2".repeat(32), 2, { 100 })
+        first.start(0)
+        other.start(0)
+        val hello =
+            ExchangeWire.encode(
+                ExchangeFrame("a".repeat(32), ExchangeWire.ZERO, ExchangeMessage.Hello()),
+            )
+        val arrival = requireNotNull(first.registerArrival(1) { 10 })
+        assertTrue(other.receive(arrival, hello).isEmpty())
+        first.tick { 20 }
+        assertTrue(
+            first.receive(arrival, hello).any {
+                ExchangeWire.decode(it.bytes).message is ExchangeMessage.Summary
+            },
+        )
+        assertTrue(first.receive(arrival, hello).isEmpty())
+        assertTrue(
+            first.isCurrent(1),
+        ) // replay did not turn into a duplicate-HELLO protocol failure
+        first.tick { 19 }
+        assertFalse(first.isCurrent(1))
+        assertEquals(4, first.localFailure)
+        first.cancel()
+        other.cancel()
+    }
 }
