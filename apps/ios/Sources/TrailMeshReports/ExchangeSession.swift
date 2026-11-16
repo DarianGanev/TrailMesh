@@ -41,6 +41,8 @@ public actor ExchangeSession {
     public private(set) var peerOutcomes: [Int] = []
     /// Fixed local CLOSE reason, including pre-HELLO failures that cannot emit CLOSE.
     public private(set) var failureReason: Int?
+    /// Closed encounters retain terminal-action liveness until the radio drains.
+    public var completion: ExchangeCompletion? { active ? nil : ExchangeCompletion(failureReason: failureReason) }
     // Counts only queued callbacks, excluding the operation currently awaiting storage.
     var queuedInputCount: Int { pending.count }
     private struct Incoming { let transfer: Int; let descriptor: ExchangeDescriptor; var bytes: Data; var received: [Bool]; var count = 0 }
@@ -230,4 +232,9 @@ public actor ExchangeSession {
         case .hello: throw SessionFailure.reason(3)
         }
     }
+}
+
+public struct ExchangeCompletion: Sendable {
+    public let failureReason: Int?
+    public var succeeded: Bool { failureReason == nil }
 }

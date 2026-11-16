@@ -75,11 +75,18 @@ extension ReportRepository {
 public struct SelectedReportExchangeStore: ReportExchangeStore {
     public let repository: ReportRepository
     public let context: RelevanceContext
-    public init(repository: ReportRepository, context: RelevanceContext) { self.repository = repository; self.context = context }
-    public func inventoryPage(after: String?, limit: Int, now: Int64) async throws -> ExchangeInventoryPage {
-        try await repository.selectedInventoryPage(after: after, limit: limit, now: now, context: context)
+    private let freshClock: (@Sendable () -> Int64)?
+    public init(repository: ReportRepository, context: RelevanceContext, clock: (@Sendable () -> Int64)? = nil) {
+        self.repository = repository; self.context = context; self.freshClock = clock
     }
-    public func currentIDs(_ ids: [String], now: Int64) async throws -> Set<String> { try await repository.currentIDs(ids, now: now) }
+    public func inventoryPage(after: String?, limit: Int, now: Int64) async throws -> ExchangeInventoryPage {
+        if let freshClock { return try await repository.selectedInventoryPage(after: after, limit: limit, clock: freshClock, context: context) }
+        return try await repository.selectedInventoryPage(after: after, limit: limit, now: now, context: context)
+    }
+    public func currentIDs(_ ids: [String], now: Int64) async throws -> Set<String> {
+        if let freshClock { return try await repository.currentIDs(ids, clock: freshClock) }
+        return try await repository.currentIDs(ids, now: now)
+    }
     public func loadOutgoing(_ id: String, clock: @Sendable () -> Int64) async throws -> ExchangeOutgoing? {
         try await repository.selectedLoadOutgoing(id, clock: clock, context: context)
     }
