@@ -5,6 +5,22 @@ import XCTest
 @MainActor
 final class ReportSessionTests: XCTestCase {
     private let area = RelevanceContext(manualArea: RelevanceArea(center: RelevancePoint(latitude: 426977000, longitude: 233219000), radius: 5000))
+    func testTerminalDrainRetainsOwnershipUntilAllActionBatchesDispatch() {
+        var drain = ReportActionDrain()
+        // Receive owns a CLOSE batch but is suspended before radio dispatch.
+        drain.begin()
+        // An independent tick observes completion without producing output.
+        drain.begin()
+        drain.finish()
+        XCTAssertFalse(drain.mayRelease(completed: true, pendingPayloads: 1))
+        // A synchronous SDK completion can empty the payload map while the
+        // owning action batch still has not finished its dispatch bookkeeping.
+        XCTAssertFalse(drain.mayRelease(completed: true, pendingPayloads: 0))
+        drain.finish()
+        XCTAssertFalse(drain.mayRelease(completed: false, pendingPayloads: 0))
+        XCTAssertFalse(drain.mayRelease(completed: true, pendingPayloads: 1))
+        XCTAssertTrue(drain.mayRelease(completed: true, pendingPayloads: 0))
+    }
     func testSharedProductSessionProfile() throws {
         let url = try XCTUnwrap(TestResources.bundle.url(forResource: "session-v1-profile", withExtension: "json"))
         let profile = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])

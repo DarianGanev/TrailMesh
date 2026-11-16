@@ -47,6 +47,7 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
         var connected = false, tickPending = false
         var drainAt: Int64?, succeeded = false, pauseAfterDrain = false
         var pending: Set<UInt64> = []
+        var actionDrain = ReportActionDrain()
         var peerClaimCount = 0
         init(candidate: Candidate, generation: UInt64, engine: ExchangeSession, began: Int64) {
             self.candidate = candidate; self.generation = generation; self.engine = engine; self.began = began
@@ -214,8 +215,16 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
             if completion.failureReason == 4 { link.pauseAfterDrain = true }
             link.succeeded = completion.succeeded
             if link.drainAt == nil { link.drainAt = monotonic() }
-            if link.pending.isEmpty { release(link, succeeded: link.succeeded) }
+            releaseIfDrained(link)
         }
+    }
+    private func finishOperation(_ link: Link) {
+        link.actionDrain.finish()
+        releaseIfDrained(link)
+    }
+    private func releaseIfDrained(_ link: Link) {
+        guard current(link), link.actionDrain.mayRelease(completed: link.drainAt != nil, pendingPayloads: link.pending.count) else { return }
+        release(link, succeeded: link.succeeded)
     }
     public func tick() {
         guard state == .running else { return }
@@ -229,11 +238,13 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
                 if now - link.began >= 15000 { release(link, succeeded: false) }
             } else if !link.tickPending {
                 link.tickPending = true
+                link.actionDrain.begin()
                 Task { [weak self] in
                     let actions = await link.engine.tick(elapsed: now)
                     guard let self else { return }
                     await self.dispatch(actions, link: link)
                     link.tickPending = false
+                    self.finishOperation(link)
                 }
             }
         }
@@ -256,7 +267,13 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
     public func radioConnected(endpoint: String, epoch: UInt64) {
         guard epoch == radioEpoch, let link = links[endpoint], current(link), !link.connected else { return }
         link.connected = true; record("link_connected", peer: link.candidate.peer)
-        Task { [weak self] in let actions = await link.engine.start(elapsed: self?.monotonic() ?? 0); await self?.dispatch(actions, link: link) }
+        link.actionDrain.begin()
+        Task { [weak self] in
+            let actions = await link.engine.start(elapsed: self?.monotonic() ?? 0)
+            guard let self else { return }
+            await self.dispatch(actions, link: link)
+            self.finishOperation(link)
+        }
     }
     public func radioDisconnected(endpoint: String, epoch: UInt64) {
         guard epoch == radioEpoch, let link = links[endpoint] else { return }; release(link, succeeded: false)
@@ -269,17 +286,19 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
         ingress &+= 1
         let reservation = ingress, elapsed = monotonic()
         reservations[reservation] = bytes.count
+        link.actionDrain.begin()
         Task { [weak self] in
             let actions = await link.engine.receive(bytes, generation: link.generation, elapsed: elapsed)
             guard let self else { return }
             self.reservations.removeValue(forKey: reservation)
             await self.dispatch(actions, link: link)
+            self.finishOperation(link)
         }
     }
     public func radioSent(ticket: UInt64, succeeded: Bool, endpoint: String, epoch: UInt64) {
         guard epoch == radioEpoch, let link = links[endpoint], link.pending.remove(ticket) != nil else { return }
         guard succeeded else { record("send_failed", peer: link.candidate.peer); release(link, succeeded: false); return }
-        if link.drainAt != nil && link.pending.isEmpty { release(link, succeeded: link.succeeded) }
+        releaseIfDrained(link)
     }
     public func radioUnavailable(epoch: UInt64) { guard epoch == radioEpoch else { return }; pause(.radioUnavailable) }
 }
@@ -294,5 +313,17 @@ private struct SessionObservedStore: ReportExchangeStore {
         let outcome = try await base.ingestTransferred(wire, offeredHops: offeredHops, clock: clock)
         await committed(outcome)
         return outcome
+    }
+}
+
+/// Tracks ownership of engine results across actor suspension. An empty result
+/// cannot release a completed link while another task still owns a terminal batch.
+/// Tick deadlines and explicit cancellation remain independent of this gate.
+struct ReportActionDrain {
+    private(set) var operations = 0
+    mutating func begin() { operations += 1 }
+    mutating func finish() { precondition(operations > 0); operations -= 1 }
+    func mayRelease(completed: Bool, pendingPayloads: Int) -> Bool {
+        completed && operations == 0 && pendingPayloads == 0
     }
 }

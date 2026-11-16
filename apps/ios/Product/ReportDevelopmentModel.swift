@@ -3,6 +3,7 @@ import Foundation
 import SwiftUI
 import TrailMeshReports
 import UIKit
+import Darwin
 
 /// Controls for the development product target, not the hiking/map interface.
 @MainActor
@@ -109,6 +110,19 @@ final class ReportDevelopmentModel: ObservableObject {
             } catch { notice = "Synthetic report could not be saved. Check clock and storage." }
         }
     }
+    private static var hardwareModel: String {
+        var system = utsname()
+        guard uname(&system) == 0 else { return UIDevice.current.model }
+        let machine = withUnsafeBytes(of: &system.machine) { bytes in
+            String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        #if targetEnvironment(simulator)
+        let simulated = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] ?? machine
+        return "Simulator (" + simulated + ")"
+        #else
+        return machine.isEmpty ? UIDevice.current.model : machine
+        #endif
+    }
     func exportDiagnostics() {
         guard let repository, let coordinator else { return }
         guard ReportAdvertisement.parse(Data("TMR1|\(coordinator.sessionID)".utf8)) != nil else { notice = "Diagnostics need a valid temporary session identifier."; return }
@@ -116,7 +130,7 @@ final class ReportDevelopmentModel: ObservableObject {
             do {
                 let verified = try await repository.savedTestReportEvidence(clock: { Int64(Date().timeIntervalSince1970 * 1000) })
                 let device = UIDevice.current
-                let document = ReportSessionExport(deviceModel: device.model, osVersion: device.systemVersion,
+                let document = ReportSessionExport(deviceModel: Self.hardwareModel, osVersion: device.systemVersion,
                     appBuild: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
                     sourceCommit: Bundle.main.infoDictionary?["TrailMeshSourceCommit"] as? String,
                     sessionID: coordinator.sessionID, state: coordinator.state.exportValue, events: coordinator.events, savedTestReports: verified)

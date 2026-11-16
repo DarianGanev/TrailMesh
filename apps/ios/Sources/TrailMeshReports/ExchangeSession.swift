@@ -48,8 +48,9 @@ public actor ExchangeSession {
     private struct Incoming { let transfer: Int; let descriptor: ExchangeDescriptor; var bytes: Data; var received: [Bool]; var count = 0 }
 
     public init(store: any ReportExchangeStore, nonce: Data, generation: UInt64, wallClock: @escaping @Sendable () -> Int64) { self.store = store; self.nonce = nonce; self.generation = generation; self.wallClock = wallClock }
-    /// Normal actions expire when the encounter closes. Its terminal CLOSE remains
-    /// dispatchable until cancel/disconnect invalidates the entire generation.
+    /// Failure/timeout closes invalidate normal actions. Verified graceful
+    /// completion preserves its ordered final batch (including replies before
+    /// CLOSE); terminal actions expire on cancel/disconnect of the generation.
     public func isLive(_ action: ExchangeAction) -> Bool { action.generation == generation && !invalidated && (active || action.terminal) }
     private func discardPending() { let callbacks = pending; pending.removeAll(); queuedBytes = 0; for callback in callbacks { callback.continuation.resume(returning: []) } }
     /// Invalidates pending output and partial input; already committed reports remain stored.
@@ -124,7 +125,16 @@ public actor ExchangeSession {
                 _ = try ExchangeWire.encode(frame, maxFrame: maxFrame)
                 actions += try await handle(frame, now: wallClock())
                 guard actions.count <= 256 else { throw SessionFailure.reason(2) }
-                if !active { return actions }
+                if !active {
+                    // A coalesced callback can emit REQUEST/DONE before its final
+                    // frame completes the encounter. Keep that entire verified
+                    // graceful batch dispatchable in order; CLOSE must not make
+                    // its preceding replies fail the adapter's isLive check.
+                    if failureReason == nil && !invalidated {
+                        return actions.map { ExchangeAction(generation: $0.generation, bytes: $0.bytes, terminal: true) }
+                    }
+                    return actions
+                }
             }
             try live(); return actions
         } catch SessionFailure.stale { return [] }

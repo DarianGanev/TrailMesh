@@ -70,7 +70,10 @@ final class ProductNearbyRadio: ReportSessionRadio {
         _ = manager.send(bytes, to: [endpoint], id: payloadID) { [weak self, weak manager] error in
             DispatchQueue.main.async {
                 guard let self, let manager, self.manager === manager else { return }
-                self.complete(payloadID, succeeded: error == nil)
+                // This callback reports enqueue/attempt failure only. A nil
+                // error does not establish that the payload finished sending.
+                // Keep its ticket until didReceiveTransferUpdate succeeds.
+                if error != nil { self.complete(payloadID, succeeded: false) }
             }
         }
     }
