@@ -365,6 +365,7 @@ jobs:
           cmp ../../protocol/report-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/report-v1-vectors.json
           cmp ../../protocol/exchange-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/exchange-v1-vectors.json
           cmp ../../protocol/relevance-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/relevance-v1-vectors.json
+          cmp ../../protocol/session-v1-profile.json Tests/TrailMeshReportsTests/Fixtures/session-v1-profile.json
       - name: Test the product repository
         env:
           TRAILMESH_TEST_REPORT_OUTPUT: ${{ runner.temp }}/trailmesh-authored-report.json
@@ -413,6 +414,7 @@ jobs:
           cmp ../../protocol/report-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/report-v1-vectors.json
           cmp ../../protocol/exchange-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/exchange-v1-vectors.json
           cmp ../../protocol/relevance-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/relevance-v1-vectors.json
+          cmp ../../protocol/session-v1-profile.json Tests/TrailMeshReportsTests/Fixtures/session-v1-profile.json
           simulator_id="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; m=sorted(((r,x["udid"]) for r,es in d.items() if "iOS" in r for x in es if x["name"] == "iPhone 16"),reverse=True); print(m[0][1] if m else "")')"
           test -n "$simulator_id"
           echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
@@ -463,6 +465,7 @@ jobs:
           cmp ../../protocol/report-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/report-v1-vectors.json
           cmp ../../protocol/exchange-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/exchange-v1-vectors.json
           cmp ../../protocol/relevance-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/relevance-v1-vectors.json
+          cmp ../../protocol/session-v1-profile.json Tests/TrailMeshReportsTests/Fixtures/session-v1-profile.json
           xcodebuild test -project Product/TrailMesh.xcodeproj -scheme TrailMesh \
             -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
             -derivedDataPath "$RUNNER_TEMP/TrailMeshProductMinimum" \

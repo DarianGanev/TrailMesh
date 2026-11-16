@@ -1,0 +1,34 @@
+{
+  "schema": "trailmesh.public-session-profile",
+  "version": 1,
+  "service_id": "org.trailmesh.reports.v1",
+  "advertisement_prefix": "TMR1|",
+  "advertisement_bytes": 37,
+  "advertisement_id": "32 lowercase hexadecimal characters, nonzero and temporary; lower ID initiates",
+  "test_note_prefix": "SYNTHETIC TrailMesh test ",
+  "limits": {
+    "active_links": 4,
+    "waiting_candidates": 32,
+    "epoch_endpoints": 32,
+    "queued_callbacks": 64,
+    "queued_bytes": 262144,
+    "outbound_payloads_per_link": 64,
+    "retained_peer_cooldowns": 64,
+    "connect_ms": 15000,
+    "tick_ms": 250,
+    "terminal_drain_ms": 2000,
+    "export_events": 512,
+    "export_saved_test_reports": 64
+  },
+  "export": {
+    "schema": "trailmesh.report-session-log",
+    "version": 1,
+    "header_fields": ["platform", "deviceModel", "osVersion", "appBuild", "exportID", "sessionID", "state"],
+    "optional_header_fields": ["sourceCommit"],
+    "event_fields": ["code", "timestamp_ms"],
+    "optional_event_fields": ["peer_session_id", "bundle_id"],
+    "report_fields": ["bundle_id", "canonical_core_sha256", "original_wire_sha256", "observed_at_ms", "is_expired", "is_quarantined", "remaining_hops"]
+  },
+  "privacy": "User-initiated development evidence covers explicitly marked synthetic reports. Export verified hashes and metadata without report text, coordinates, routes, signing secrets, wire payloads or SDK authentication codes.",
+  "evidence": "Matching stored exports corroborate report identity, immutable bytes and observation time. Physical range, relay sequence, process restart and simultaneous radios require recorded operator observations."
+}
