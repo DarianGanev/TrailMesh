@@ -795,6 +795,24 @@ abstract class RepositoryContract {
     }
 
     @Test
+    fun inventoryCursorCommitsWithPage() = runBlocking {
+        val (_, now) = fixture()
+        val repo = ReportRepository.open(context, name())
+        val key = signer()
+        repeat(9) { repo.author(draft(now), key, now) }
+        val page = repo.inventoryPage(null, 8, now)
+        assertTrue(page.hasMore)
+        // A different encounter can advance the clock immediately after the read.
+        repo.currentIDs(emptyList(), now + 1)
+        assertEquals(page.nextCursor, repo.exchangeInventoryCursor(now + 1))
+        val adapter = org.trailmesh.app.exchange.RepositoryExchangeStore(repo)
+        val final = adapter.inventoryPage(page.nextCursor, 8, now + 1)
+        assertFalse(final.hasMore)
+        assertNull(repo.exchangeInventoryCursor(now + 1))
+        repo.close()
+    }
+
+    @Test
     fun inventoryRotationSurvivesRestartAndReachesBeyondFirst64() = runBlocking {
         val (_, now) = fixture()
         val file = name()

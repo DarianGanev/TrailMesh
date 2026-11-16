@@ -33,9 +33,7 @@ class RepositoryExchangeStore(private val repository: ReportRepository) : Report
     override suspend fun initialCursor(now: Long) = repository.exchangeInventoryCursor(now)
 
     override suspend fun inventoryPage(afterID: String?, limit: Int, now: Long): InventoryPage {
-        val page = repository.inventoryPage(afterID, limit, now)
-        repository.recordExchangeInventoryProgress(page.nextCursor, page.hasMore, now)
-        return page
+        return repository.inventoryPage(afterID, limit, now)
     }
 
     override suspend fun currentIDs(ids: List<String>, now: Long) = repository.currentIDs(ids, now)
