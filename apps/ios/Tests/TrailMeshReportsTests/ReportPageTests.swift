@@ -83,6 +83,33 @@ final class ReportPageTests: XCTestCase {
         let expired = try await configured.loadOutgoing(ids[0], clock: { now + 10000 })
         XCTAssertNil(expired)
     }
+    func testSelectedIngressKeepsAdmissionIndependentAndAuthorQuotaAuthoritative() async throws {
+        let (_, now, _) = try exchangeFixture()
+        let source = try ReportRepository(path: ":memory:"), destination = try ReportRepository(path: ":memory:")
+        let identity = try ReportIdentity.create(store: ExchangeMemoryKeyStore())
+        let noConfiguration = SelectedReportExchangeStore(repository: destination, context: RelevanceContext())
+        let relevant = SelectedReportExchangeStore(repository: destination, context: RelevanceContext(manualArea: RelevanceArea(center: RelevancePoint(latitude: 0, longitude: 0), radius: 1000)))
+        var firstID = ""
+        for i in 0..<21 {
+            guard case let .stored(id) = try await source.author(draft(i, now: now), identity: identity, now: now) else { return XCTFail("signed source") }
+            let loaded = try await source.loadOutgoing(id, now: now)
+            let wire = try XCTUnwrap(loaded).wire
+            if i == 0 { firstID = id }
+            if i < 20 {
+                let admitted = try await noConfiguration.ingestTransferred(wire, offeredHops: 2, clock: { now })
+                XCTAssertEqual(admitted, .stored(id), "Local relevance must not reject otherwise valid ingress")
+            } else {
+                let rejected = try await relevant.ingestTransferred(wire, offeredHops: 2, clock: { now })
+                XCTAssertEqual(rejected, .rejected(.quota), "Relevant selection cannot bypass the author-hour quota")
+            }
+        }
+        let hidden = try await noConfiguration.inventoryPage(after: nil, limit: 8, now: now)
+        XCTAssertTrue(hidden.entries.isEmpty); XCTAssertTrue(hidden.hasMore)
+        let membership = try await noConfiguration.currentIDs([firstID], now: now)
+        XCTAssertEqual(membership, [firstID], "Local configuration must not change durable membership")
+        let loaded = try await relevant.loadOutgoing(firstID, clock: { now })
+        XCTAssertEqual(loaded?.descriptor.hops, 1, "Selection must preserve the decremented forwarding budget")
+    }
     func testLookaheadIsNotVerifiedUntilNextPageAndZeroHopsStayReadable() async throws {
         let (_, now, _) = try exchangeFixture()
         let database = try ReportDatabase.open(path: ":memory:")

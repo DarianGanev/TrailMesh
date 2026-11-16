@@ -131,6 +131,9 @@ public struct RelevanceContext: Sendable {
         return true
     }
 }
+/// Projection of an already signature-verified, admitted report. This local policy
+/// is selection/ranking only: it cannot admit bytes, validate authenticity, change
+/// signed accuracy/expiry, override repository quotas/hops, or establish truth.
 public struct RelevanceReport: Codable, Equatable, Sendable {
     public let id: String
     public let observedAt: Int64, expiresAt: Int64, latitude: Int64, longitude: Int64
@@ -140,7 +143,21 @@ public struct RelevanceReport: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey { case id; case observedAt = "observed_at_ms", expiresAt = "expires_at_ms", latitude = "lat_e7", longitude = "lon_e7" }
     init(_ report: StoredReport) { self.init(id: report.bundleID, observedAt: report.observedAt, expiresAt: report.expiresAt, latitude: report.latitude, longitude: report.longitude) }
 }
-public enum RelevanceResult: String, Sendable { case eligible, notRelevant, expired, configurationRequired, invalidConfiguration }
+public enum RelevanceResult: String, CaseIterable, Hashable, Sendable { case eligible, notRelevant, expired, configurationRequired, invalidConfiguration }
+/// Counts only: no report identifiers, coordinates, areas or routes. Each input
+/// projection contributes one decision, including duplicate eligible inputs.
+/// duplicateCount counts eligible copies removed by immutable-ID deduplication;
+/// selectedCount = eligible count - duplicateCount.
+public struct RelevanceDiagnostics: Equatable, Sendable {
+    public let decisionCounts: [RelevanceResult: Int]
+    public let candidateCount: Int
+    public let duplicateCount: Int
+    public let selectedCount: Int
+}
+public struct RelevanceSelection: Sendable {
+    public let reports: [RelevanceReport]
+    public let diagnostics: RelevanceDiagnostics
+}
 public enum RelevancePolicy {
     public static func evaluate(_ report: RelevanceReport, context: RelevanceContext?, now: Int64) -> RelevanceResult {
         let context = context ?? RelevanceContext()
@@ -160,10 +177,28 @@ public enum RelevancePolicy {
         }
         return .notRelevant
     }
+    /// Local ranking over verified projections; encounter traffic and admission
+    /// budgets remain authoritative in ExchangeSession and ReportRepository.
     public static func select(_ reports: [RelevanceReport], context: RelevanceContext?, now: Int64) -> [RelevanceReport] {
+        selectWithDiagnostics(reports, context: context, now: now).reports
+    }
+    public static func diagnostics(_ reports: [RelevanceReport], context: RelevanceContext?, now: Int64) -> RelevanceDiagnostics {
+        selectWithDiagnostics(reports, context: context, now: now).diagnostics
+    }
+    public static func selectWithDiagnostics(_ reports: [RelevanceReport], context: RelevanceContext?, now: Int64) -> RelevanceSelection {
+        var counts = Dictionary(uniqueKeysWithValues: RelevanceResult.allCases.map { ($0, 0) })
         var seen: Set<String> = []
-        return reports.sorted { $0.observedAt == $1.observedAt ? $0.id < $1.id : $0.observedAt > $1.observedAt }
-            .filter { evaluate($0, context: context, now: now) == .eligible && seen.insert($0.id).inserted }
+        var selected: [RelevanceReport] = []
+        var duplicates = 0
+        for report in reports.sorted(by: { $0.observedAt == $1.observedAt ? $0.id < $1.id : $0.observedAt > $1.observedAt }) {
+            let reason = evaluate(report, context: context, now: now)
+            counts[reason, default: 0] += 1
+            guard reason == .eligible else { continue }
+            if seen.insert(report.id).inserted { selected.append(report) }
+            else { duplicates += 1 }
+        }
+        return RelevanceSelection(reports: selected, diagnostics: RelevanceDiagnostics(decisionCounts: counts,
+            candidateCount: reports.count, duplicateCount: duplicates, selectedCount: selected.count))
     }
 }
 private enum Sphere {

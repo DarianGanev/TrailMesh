@@ -13,6 +13,13 @@ data class RelevanceContext(val manualArea: Area? = null, val gpsArea: GPSArea? 
 data class RelevantReport(val id: String, val observedAt: Long, val expiresAt: Long, val point: GeoPoint)
 enum class RelevanceDecision { eligible, notRelevant, expired, configurationRequired, invalidConfiguration }
 
+/** Aggregate local diagnostics contain counts only, with no report IDs or geometry. */
+data class RelevanceDiagnostics(
+    val candidateCount: Int,
+    val selectedCount: Int,
+    val decisionCounts: Map<RelevanceDecision, Int>,
+)
+
 object RelevancePolicy {
     private const val RADIUS = 6371008.8
     private const val SAFE = 9007199254740991L
@@ -64,10 +71,26 @@ object RelevancePolicy {
         }
         return RelevanceDecision.notRelevant
     }
-    /** Local display ordering only. Exchange inventories must keep ID ascending order. */
+    /**
+     * Admission and replication permission remain repository responsibilities. This policy
+     * filters verified projections and orders local display results, without relaxing quotas
+     * or forwarding budgets. Exchange inventories must keep ID ascending order.
+     */
     fun select(reports: List<RelevantReport>, context: RelevanceContext?, now: Long): List<RelevantReport> =
         reports.sortedWith(compareByDescending<RelevantReport> { it.observedAt }.thenBy { it.id })
             .filter { evaluate(it,context,now) == RelevanceDecision.eligible }.distinctBy { it.id }
+
+    /** Count each supplied candidate once; selectedCount reflects ID deduplication. */
+    fun diagnostics(reports: List<RelevantReport>, context: RelevanceContext?, now: Long): RelevanceDiagnostics {
+        val counts = RelevanceDecision.values().associateWith { 0 }.toMutableMap()
+        val selectedIDs = mutableSetOf<String>()
+        for (report in reports) {
+            val decision = evaluate(report, context, now)
+            counts[decision] = counts.getValue(decision) + 1
+            if (decision == RelevanceDecision.eligible) selectedIDs.add(report.id)
+        }
+        return RelevanceDiagnostics(reports.size, selectedIDs.size, counts.toMap())
+    }
 
     /** Strict local settings boundary; malformed values produce a typed decision, no diagnostics. */
     fun evaluateLocal(report: RelevantReport, value: Any?, now: Long): RelevanceDecision =

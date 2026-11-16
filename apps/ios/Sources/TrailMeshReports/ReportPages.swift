@@ -86,7 +86,10 @@ extension ReportRepository {
 }
 
 /// Freeze one instance per encounter. Recreate/cancel the encounter when local
-/// interests change. Peer membership and durable receipt semantics stay unchanged.
+/// interests change. Selection filters outgoing inventory/load only; ingress is
+/// admitted independently by the repository, even without local configuration.
+/// Repository signature, quota, clock, expiry and hop checks and the encounter's
+/// frame/byte/transfer budgets remain authoritative. Selection cannot relax them.
 public struct SelectedReportExchangeStore: ReportExchangeStore {
     public let repository: ReportRepository
     public let context: RelevanceContext
