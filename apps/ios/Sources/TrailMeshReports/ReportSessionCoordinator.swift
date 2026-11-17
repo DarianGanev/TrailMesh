@@ -77,6 +77,9 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
     }
     public func start(context: RelevanceContext, publicSharingConsent: Bool) {
         stopTransport()
+        // Explicit user Start begins a fresh retry budget. Automatic foreground
+        // resume and SDK epoch rotation retain this session's bounded cooldowns.
+        cooldowns.removeAll(); cooldownOrder.removeAll()
         self.context = context
         intended = publicSharingConsent
         guard publicSharingConsent else { state = .paused(.consentRequired); changed(); return }
@@ -313,7 +316,7 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
     }
     public func radioFound(endpoint: String, advertisement: Data, epoch: UInt64) {
         guard epoch == radioEpoch, state == .running, let peer = ReportAdvertisement.parse(advertisement)?.sessionID,
-              sessionID < peer, !rotationRequired, !tombstones.contains(endpoint), links[endpoint] == nil,
+              sessionID < peer, eligible(peer), !rotationRequired, !tombstones.contains(endpoint), links[endpoint] == nil,
               !waiting.contains(where: { $0.endpoint == endpoint || $0.peer == peer }), waiting.count < Self.maximumCandidates else { return }
         waiting.append(Candidate(endpoint: endpoint, peer: peer)); fillSlots()
     }

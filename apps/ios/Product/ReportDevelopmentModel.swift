@@ -132,7 +132,7 @@ final class ReportDevelopmentModel: ObservableObject {
                 let device = UIDevice.current
                 let document = ReportSessionExport(deviceModel: Self.hardwareModel, osVersion: device.systemVersion,
                     appBuild: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
-                    sourceCommit: Bundle.main.infoDictionary?["TrailMeshSourceCommit"] as? String,
+                    sourceCommit: nil,
                     sessionID: coordinator.sessionID, state: coordinator.state.exportValue, events: coordinator.events, savedTestReports: verified)
                 let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                 let url = FileManager.default.temporaryDirectory.appendingPathComponent("trailmesh-report-session-" + document.exportID + ".json")

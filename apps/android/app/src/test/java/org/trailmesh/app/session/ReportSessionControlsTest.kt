@@ -2,10 +2,19 @@ package org.trailmesh.app.session
 
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.ApplicationInfo
+import android.net.Uri
+import android.os.Bundle
+import android.os.Looper
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
 import android.widget.CheckBox
 import androidx.test.core.app.ApplicationProvider
+import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.coroutines.CoroutineContext
@@ -94,6 +103,165 @@ class ReportSessionControlsTest {
                 it.start(ReportSessionService.TEST_CONTEXT, true)
                 it.found(it.epoch, "peer", "TMR1|" + "2".repeat(32))
             }
+
+    private fun button(activity: MainActivity, label: String): Button {
+        fun descendants(view: View): Sequence<View> = sequence {
+            yield(view)
+            if (view is ViewGroup)
+                for (i in 0 until view.childCount) yieldAll(descendants(view.getChildAt(i)))
+        }
+        return descendants(activity.findViewById(android.R.id.content))
+            .filterIsInstance<Button>()
+            .single { it.text.toString() == label }
+    }
+
+    private fun awaitMain(condition: () -> Boolean) {
+        val deadline = System.nanoTime() + 10_000_000_000L
+        while (!condition() && System.nanoTime() < deadline) {
+            shadowOf(Looper.getMainLooper()).idle()
+            if (!condition()) Thread.sleep(1)
+        }
+        assertTrue("Asynchronous Activity work did not finish", condition())
+    }
+
+    @Test
+    fun stopBeforeBindingAlsoStopsDelayedSession() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.applicationInfo.flags =
+            context.applicationInfo.flags or ApplicationInfo.FLAG_DEBUGGABLE
+        val service = Robolectric.buildService(ReportSessionService::class.java).get()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val radio = Radio()
+        val owner = coordinator(radio, scope)
+        ReflectionHelpers.setField(service, "coordinator", owner)
+        ReflectionHelpers.setField(service, "ready", true)
+        val controller = Robolectric.buildActivity(MainActivity::class.java).create()
+        try {
+            val activity = controller.get()
+            shadowOf(activity).clearStartedServices()
+            ReflectionHelpers.getField<CheckBox>(activity, "consent").isChecked = true
+            button(activity, "Stop sharing").performClick()
+            val stop = shadowOf(activity).nextStartedService
+            assertNotNull("Stop must reach a service whose binding has not completed", stop)
+            assertEquals(ReportSessionService.ACTION_STOP, stop.action)
+            assertEquals(ComponentName(activity, ReportSessionService::class.java), stop.component)
+            assertNull(
+                "Unchecking consent inside Stop must dispatch shutdown only once",
+                shadowOf(activity).nextStartedService,
+            )
+
+            ReflectionHelpers.getField<ServiceConnection>(activity, "connection")
+                .onServiceConnected(
+                    ComponentName(activity, ReportSessionService::class.java),
+                    service.onBind(null),
+                )
+            assertFalse(ReflectionHelpers.getField<CheckBox>(activity, "consent").isChecked)
+            assertEquals(ReportSessionState.stopped, owner.state)
+            assertFalse(owner.isLive(radio.requests.single()))
+        } finally {
+            controller.destroy()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun exportSurvivesRecreation() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.applicationInfo.flags =
+            context.applicationInfo.flags or ApplicationInfo.FLAG_DEBUGGABLE
+        val service = Robolectric.buildService(ReportSessionService::class.java).get()
+        shadowOf(context as android.app.Application)
+            .setComponentNameAndServiceForBindService(
+                ComponentName(service, ReportSessionService::class.java),
+                service.onBind(null),
+            )
+        val reference =
+            "trailmesh-report-export-" + UUID.randomUUID().toString().replace("-", "") + ".json"
+        val snapshot = File(context.cacheDir, reference)
+        val expected =
+            "{\"schema\":\"trailmesh.report-session-log\",\"events\":[]}"
+                .toByteArray(Charsets.UTF_8)
+        snapshot.writeBytes(expected)
+        val initialState = Bundle().apply { putString("pending_export_file", reference) }
+        var controller = Robolectric.buildActivity(MainActivity::class.java).create(initialState)
+        try {
+            val state = Bundle()
+            controller.saveInstanceState(state)
+            assertEquals(reference, state.getString("pending_export_file"))
+            assertFalse(
+                "Saved state must contain only the snapshot reference",
+                state.toString().contains("trailmesh.report-session-log"),
+            )
+            controller.destroy()
+            controller = Robolectric.buildActivity(MainActivity::class.java).create(state)
+            val restored = controller.get()
+            val uri = Uri.parse("content://exports/test.json")
+            val output = ByteArrayOutputStream()
+            shadowOf(restored.contentResolver).registerOutputStream(uri, output)
+            deliverExportResult(restored, android.app.Activity.RESULT_OK, Intent().setData(uri))
+            awaitMain { !snapshot.exists() }
+            assertArrayEquals(expected, output.toByteArray())
+            val finishedState = Bundle()
+            controller.saveInstanceState(finishedState)
+            assertNull(finishedState.getString("pending_export_file"))
+        } finally {
+            controller.destroy()
+            snapshot.delete()
+        }
+    }
+
+    @Test
+    fun cancelledExportDeletesSnapshotAndRejectsForeignReference() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.applicationInfo.flags =
+            context.applicationInfo.flags or ApplicationInfo.FLAG_DEBUGGABLE
+        val service = Robolectric.buildService(ReportSessionService::class.java).get()
+        shadowOf(context as android.app.Application)
+            .setComponentNameAndServiceForBindService(
+                ComponentName(service, ReportSessionService::class.java),
+                service.onBind(null),
+            )
+        val reference =
+            "trailmesh-report-export-" + UUID.randomUUID().toString().replace("-", "") + ".json"
+        val snapshot = File(context.cacheDir, reference).apply { writeText("{\"events\":[]}") }
+        val controller =
+            Robolectric.buildActivity(MainActivity::class.java)
+                .create(Bundle().apply { putString("pending_export_file", reference) })
+        try {
+            deliverExportResult(controller.get(), android.app.Activity.RESULT_CANCELED, Intent())
+            awaitMain { !snapshot.exists() }
+        } finally {
+            controller.destroy()
+            snapshot.delete()
+        }
+        val outside = File(context.filesDir, "outside.json").apply { writeText("retain") }
+        val foreign =
+            Robolectric.buildActivity(MainActivity::class.java)
+                .create(
+                    Bundle().apply { putString("pending_export_file", "../files/outside.json") },
+                )
+        try {
+            val state = Bundle()
+            foreign.saveInstanceState(state)
+            assertNull(state.getString("pending_export_file"))
+            deliverExportResult(foreign.get(), android.app.Activity.RESULT_CANCELED, Intent())
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals("retain", outside.readText())
+        } finally {
+            foreign.destroy()
+            outside.delete()
+        }
+    }
+
+    private fun deliverExportResult(activity: MainActivity, result: Int, data: Intent) {
+        ReflectionHelpers.callInstanceMethod<Any>(
+            activity,
+            "onActivityResult",
+            ReflectionHelpers.ClassParameter.from(Int::class.javaPrimitiveType!!, 11),
+            ReflectionHelpers.ClassParameter.from(Int::class.javaPrimitiveType!!, result),
+            ReflectionHelpers.ClassParameter.from(Intent::class.java, data),
+        )
+    }
 
     @Test
     fun activeBindingReflectsConsentAndUncheckingStopsSharingImmediately() {

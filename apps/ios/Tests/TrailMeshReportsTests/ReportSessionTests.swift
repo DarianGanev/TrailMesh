@@ -121,6 +121,52 @@ final class ReportSessionTests: XCTestCase {
         XCTAssertFalse(try radio.sent.contains { if case .close = try ExchangeWire.decode($0.0).body { return true }; return false }, "Old-generation output must never dispatch after Resume")
         coordinator.stop()
     }
+    func testCoolingAndFailureExhaustedPeersDoNotConsumeWaitingSlots() throws {
+        let repository = try ReportRepository(path: ":memory:"), radio = FakeReportRadio(), clock = SessionTestClock()
+        let coordinator = ReportSessionCoordinator(repository: repository, radio: radio, monotonic: { clock.value }, temporaryID: { "11111111111111111111111111111111" }, jitter: { 1 })
+        coordinator.start(context: area, publicSharingConsent: true)
+        // Retain 32 distinct cooldowns across idle SDK epoch rotations.
+        for i in 0..<32 {
+            let epoch = coordinator.radioEpoch
+            coordinator.radioFound(endpoint: "failed\(i)", advertisement: advertisement(i), epoch: epoch)
+            coordinator.radioDisconnected(endpoint: "failed\(i)", epoch: epoch)
+        }
+        let epoch = coordinator.radioEpoch
+        for i in 100..<104 { coordinator.radioFound(endpoint: "healthy\(i)", advertisement: advertisement(i), epoch: epoch) }
+        XCTAssertEqual(coordinator.activeLinkCount, 4)
+        for i in 0..<32 { coordinator.radioFound(endpoint: "rediscovered\(i)", advertisement: advertisement(i), epoch: epoch) }
+        XCTAssertEqual(coordinator.waitingCandidateCount, 0, "Cooling peers must not fill the bounded waiting queue")
+        coordinator.radioFound(endpoint: "fresh", advertisement: advertisement(104), epoch: epoch)
+        XCTAssertEqual(coordinator.waitingCandidateCount, 1)
+        coordinator.radioDisconnected(endpoint: "healthy100", epoch: epoch)
+        XCTAssertTrue(radio.connects.contains("fresh"))
+        coordinator.radioDisconnected(endpoint: "healthy101", epoch: epoch)
+        // A five-failure peer stays ineligible even after its time delay passes.
+        for i in 0..<5 {
+            clock.value += 30001
+            coordinator.radioFound(endpoint: "exhausted\(i)", advertisement: advertisement(200), epoch: epoch)
+            XCTAssertTrue(radio.connects.contains("exhausted\(i)"))
+            coordinator.radioDisconnected(endpoint: "exhausted\(i)", epoch: epoch)
+        }
+        clock.value += 30001
+        coordinator.radioFound(endpoint: "exhaustedAgain", advertisement: advertisement(200), epoch: epoch)
+        XCTAssertEqual(coordinator.waitingCandidateCount, 0)
+        XCTAssertEqual(coordinator.activeLinkCount, 3)
+        coordinator.radioFound(endpoint: "newEligible", advertisement: advertisement(201), epoch: epoch)
+        XCTAssertEqual(coordinator.activeLinkCount, 4)
+        XCTAssertTrue(radio.connects.contains("newEligible"))
+        coordinator.setForeground(false)
+        coordinator.setForeground(true)
+        coordinator.radioFound(endpoint: "automaticResumeExhausted", advertisement: advertisement(200), epoch: coordinator.radioEpoch)
+        XCTAssertEqual(coordinator.activeLinkCount, 0, "Automatic foreground resume must preserve the retry ceiling")
+        XCTAssertEqual(coordinator.waitingCandidateCount, 0)
+        coordinator.stop()
+        coordinator.start(context: area, publicSharingConsent: true)
+        coordinator.radioFound(endpoint: "explicitRestartRetry", advertisement: advertisement(200), epoch: coordinator.radioEpoch)
+        XCTAssertEqual(coordinator.activeLinkCount, 1, "Explicit user restart must begin a fresh retry budget")
+        XCTAssertTrue(radio.connects.contains("explicitRestartRetry"))
+        coordinator.stop()
+    }
     func testSharedProductSessionProfile() throws {
         let url = try XCTUnwrap(TestResources.bundle.url(forResource: "session-v1-profile", withExtension: "json"))
         let profile = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
@@ -306,6 +352,7 @@ final class ReportSessionTests: XCTestCase {
         XCTAssertEqual(coordinator.activeLinkCount, 1)
         XCTAssertFalse(radio.disconnected.contains("peer"))
         for (_, endpoint, ticket) in radio.sent { coordinator.radioSent(ticket: ticket, succeeded: true, endpoint: endpoint, epoch: epoch) }
+        for _ in 0..<1000 { if coordinator.activeLinkCount == 0 { break }; try await Task.sleep(for: .milliseconds(1)) }
         XCTAssertEqual(coordinator.activeLinkCount, 0)
         XCTAssertTrue(radio.disconnected.contains("peer"))
         coordinator.stop()
