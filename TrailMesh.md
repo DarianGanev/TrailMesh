@@ -616,7 +616,7 @@ The sender rechecks eligibility after a request. The receiver reserves at most o
 
 For an offered hop budget `H`, the receiving store saves `H - 1` in additive schema v4 forwarding metadata. Duplicate input can reduce but never increase that budget. Zero-hop reports remain readable but cannot be advertised or forwarded. The immutable author hop cap, signed bytes, ID and observation time remain unchanged. Existing pre-exchange rows without forwarding metadata retain their author cap. These cooperative hop counters do not constrain hostile relays.
 
-The caller supplies monotonic elapsed time for five-second negotiation, ten-second idle and thirty-second encounter limits and must drive timeout ticks when the link is quiet. Interrupted partial objects are discarded and retried from byte zero after reconnect. Completed objects are reconciled against the repository. Native fake-link tests exercise this contract; physical radio/session integration and relay evidence remain #27 and #4.
+The caller supplies monotonic elapsed time for five-second negotiation, ten-second idle and thirty-second encounter limits and must drive timeout ticks when the link is quiet. Interrupted partial objects are discarded and retried from byte zero after reconnect. Completed objects are reconciled against the repository. Native fake-link tests exercise this contract. Product radio adapters connect these engines to Nearby cluster; physical session and relay acceptance remain #27 and #4.
 
 The [API 26 storage measurement](apps/android/benchmark-results/report-store-api26-v1.json) uses 5,154 signed synthetic reports near the 25 MiB logical budget. Full verified map/history/forwarding queries held the repository lock for about 12 seconds and delayed concurrent ingestion; a bounded eight-candidate inventory page took about 26 ms. This emulator result requires a map/history pagination or reviewed snapshot strategy before UI/radio integration in #26/#27. Preserve integrity and clock checks while addressing contention. The measurement does not establish physical-device performance or radio behavior.
 
@@ -631,6 +631,29 @@ The [local relevance profile](protocol/relevance-v1-profile.json) defines equiva
 Selection does not replace signature, expiry, quarantine, quota or forwarding checks. The encounter freezes its local context and rechecks outgoing eligibility when loading bytes. Changing interests requires replacing the affected encounter. Local candidate selection sorts newest observations first, then ID. Exchange inventories retain the existing ascending-ID wire contract and advance through empty filtered pages using the last inspected raw candidate.
 
 Native map/history page APIs verify at most 64 raw candidates plus one unverified lookahead. They return a continuation cursor even when expiry or bounds remove every result. Observation-descending and ID-ascending index seeks release database access after each page. Additive schema v5 introduces the matching index while preserving signed bytes and v4 forwarding state. Existing full-result APIs remain available for compatibility; production consumers use bounded operations. The hiking interface and offline-map work remain separate milestone tasks.
+
+#### Product session development test
+
+The native product targets include a development panel for creating explicitly marked synthetic signed reports, consenting to public sharing, starting and stopping sessions, inspecting saved reports and exporting redacted evidence. The fixed synthetic area is centered on Sofia. Reports created by this control use a one-hour lifetime and a three-step forwarding cap. The [session profile](protocol/session-v1-profile.json) fixes the separate product service, temporary advertisement format, resource bounds and diagnostic fields.
+
+Each product session supports four connecting or active neighbors and a bounded waiting queue. Android uses a user-started foreground service with a Stop notification. The initial iPhone product mode requires the app in the foreground and pauses its radio work when backgrounded. Returning to the foreground resumes retained session intent. Process termination requires reopening and explicit Resume. Record the exact lifecycle state during each physical run.
+
+Public-sharing consent allows compatible nearby participants to receive eligible signed public reports. Those participants have unverified identities. The report signature protects its immutable contents under the author's key. Exact route geometry stays local. The diagnostic export contains fixed event codes and verified hashes of saved synthetic reports. The export action is explicit and user initiated.
+
+Use matching product APK and unsigned iPhone artifacts from one successful Quality run. Record the source commit, artifact checksums, model and OS from each device export, permission settings, radios and physical observations. The current target devices are an iPhone 17, Redmi Note 11 Pro 5G and an OPPO phone. Capture the OPPO model and each actual OS version from the exports.
+
+1. Keep the iPhone app open. On A and B, create different signed test reports and start public sharing with consent. Record A's report ID and confirm both phones save the other's report.
+2. Export A's evidence. Stop A and remove it from radio range or disable its Bluetooth. Keep C stopped until this step is complete.
+3. Terminate B's application process, reopen it and inspect its saved report list before starting another encounter. Confirm A's original report remains, then Resume B.
+4. Start C and allow B and C to exchange. Confirm C saves A's original report. Export B after its restart and export C.
+5. Corroborate the original report ID, canonical-core hash, original-wire hash and observation time using the command below. Record A's absence, B's process restart and the encounter order in the physical evidence.
+6. Run a separate three-phone concurrent test. Observe at least one phone with two active neighbors, then disconnect one neighbor while another continues. Record connection overlap, slot refill, Stop and radio/permission recovery outcomes.
+
+```text
+python -m tools.transport.validate_report_logs phone-a.json phone-b-after-restart.json phone-c.json --bundle-id ORIGINAL_REPORT_ID
+```
+
+Automated coordinator tests exercise concurrent signed-report transfers, duplicate admission, interruption, clock changes and bounded recovery with fake radios and native databases. Physical radio, range and lifecycle acceptance is recorded under #4 and #54. The hiking interface and prepared-map acceptance remain under #26 and #52.
 
 ## 11. Bundle format and validation
 

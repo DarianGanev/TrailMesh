@@ -365,3 +365,77 @@ extension ExchangeSessionTests {
         XCTAssertFalse(disconnectedTerminal)
     }
 }
+
+extension ExchangeSessionTests {
+    func testCoalescedGracefulCompletionKeepsEntireFinalBatchLive() async throws {
+        let store = try ReportRepository(path: ":memory:")
+        let session = ExchangeSession(store: store, nonce: Data(repeating: 1, count: 16), generation: 1, wallClock: { 0 })
+        _ = await session.start(elapsed: 0)
+        let hello = ExchangeFrame(source: Data(repeating: 2, count: 16), destination: Data(repeating: 0, count: 16), body: .hello(features: 1, maxFrame: 16384, maxChunk: 1024))
+        _ = await session.receive(try ExchangeWire.encode(hello), generation: 1, elapsed: 1)
+        var coalesced = try Self.remote(.summary(page: 0, more: false, entries: []))
+        coalesced.append(try Self.remote(.request([])))
+        coalesced.append(try Self.remote(.done))
+        let actions = await session.receive(coalesced, generation: 1, elapsed: 2)
+        var dispatchable: [ExchangeBody] = []
+        for action in actions { if await session.isLive(action) { dispatchable.append(try ExchangeWire.decode(action.bytes).body) } }
+        XCTAssertEqual(dispatchable, [.request([]), .done, .close(0)])
+        let reason = await session.failureReason
+        XCTAssertNil(reason)
+        await session.cancel()
+        for action in actions {
+            let live = await session.isLive(action)
+            XCTAssertFalse(live, "Cancellation must invalidate every final-batch action")
+        }
+    }
+    func testCoalescedProtocolFailureDoesNotKeepEarlierNormalReplyLive() async throws {
+        let store = try ReportRepository(path: ":memory:")
+        let session = ExchangeSession(store: store, nonce: Data(repeating: 1, count: 16), generation: 1, wallClock: { 0 })
+        _ = await session.start(elapsed: 0)
+        let hello = ExchangeFrame(source: Data(repeating: 2, count: 16), destination: Data(repeating: 0, count: 16), body: .hello(features: 1, maxFrame: 16384, maxChunk: 1024))
+        _ = await session.receive(try ExchangeWire.encode(hello), generation: 1, elapsed: 1)
+        var coalesced = try Self.remote(.summary(page: 0, more: false, entries: []))
+        coalesced.append(try Self.remote(.summary(page: 0, more: false, entries: [])))
+        let actions = await session.receive(coalesced, generation: 1, elapsed: 2)
+        var dispatchable: [ExchangeBody] = []
+        for action in actions { if await session.isLive(action) { dispatchable.append(try ExchangeWire.decode(action.bytes).body) } }
+        XCTAssertEqual(dispatchable, [.close(3)], "Protocol failures must discard earlier normal replies")
+        await session.disconnect()
+        for action in actions {
+            let live = await session.isLive(action)
+            XCTAssertFalse(live)
+        }
+    }
+}
+
+extension ExchangeSessionTests {
+    func testSeparateCallbackGracefulCloseKeepsEarlierUndispatchedRepliesLive() async throws {
+        let store = try ReportRepository(path: ":memory:")
+        let session = ExchangeSession(store: store, nonce: Data(repeating: 1, count: 16), generation: 1, wallClock: { 0 })
+        _ = await session.start(elapsed: 0)
+        let hello = ExchangeFrame(source: Data(repeating: 2, count: 16), destination: Data(repeating: 0, count: 16), body: .hello(features: 1, maxFrame: 16384, maxChunk: 1024))
+        _ = await session.receive(try ExchangeWire.encode(hello), generation: 1, elapsed: 1)
+        let request = await session.receive(try Self.remote(.summary(page: 0, more: false, entries: [])), generation: 1, elapsed: 2)
+        let done = await session.receive(try Self.remote(.request([])), generation: 1, elapsed: 3)
+        // Separate callbacks can finish before an earlier result's actor hop has
+        // reached radio dispatch. Both earlier replies must remain dispatchable.
+        let close = await session.receive(try Self.remote(.done), generation: 1, elapsed: 4)
+        let actions = request + done + close
+        var dispatchable: [ExchangeBody] = []
+        for action in actions { if await session.isLive(action) { dispatchable.append(try ExchangeWire.decode(action.bytes).body) } }
+        XCTAssertEqual(dispatchable, [.request([]), .done, .close(0)])
+        await session.cancel()
+        for action in actions { let live = await session.isLive(action); XCTAssertFalse(live) }
+    }
+    func testPeerCloseStorageReasonIsNotLocalRepositoryFailure() async throws {
+        let store = try ReportRepository(path: ":memory:")
+        let session = ExchangeSession(store: store, nonce: Data(repeating: 1, count: 16), generation: 1, wallClock: { 0 })
+        _ = await session.start(elapsed: 0)
+        let hello = ExchangeFrame(source: Data(repeating: 2, count: 16), destination: Data(repeating: 0, count: 16), body: .hello(features: 1, maxFrame: 16384, maxChunk: 1024))
+        _ = await session.receive(try ExchangeWire.encode(hello), generation: 1, elapsed: 1)
+        _ = await session.receive(try Self.remote(.close(4)), generation: 1, elapsed: 2)
+        let completion = await session.completion
+        XCTAssertEqual(completion?.failureReason, 4)
+        XCTAssertEqual(completion?.localRepositoryFailure, false)
+    }
+}

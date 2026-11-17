@@ -47,11 +47,20 @@ extension ReportRepository: ReportExchangeStore {
     public func inventoryPage(after: String?, limit: Int = 8, now: Int64) throws -> ExchangeInventoryPage {
         try selectedInventoryPage(after: after, limit: limit, now: now, context: nil)
     }
+    public func inventoryPage(after: String?, limit: Int = 8, clock: @Sendable () -> Int64) throws -> ExchangeInventoryPage {
+        try selectedInventoryPage(after: after, limit: limit, clock: clock, context: nil)
+    }
     func selectedInventoryPage(after: String?, limit: Int, now: Int64, context: RelevanceContext?) throws -> ExchangeInventoryPage {
+        try selectedInventoryPage(after: after, limit: limit, clock: { now }, context: context)
+    }
+    func selectedInventoryPage(after: String?, limit: Int, clock: @Sendable () -> Int64, context: RelevanceContext?) throws -> ExchangeInventoryPage {
+        let validationNow = clock()
         try Task.checkCancellation()
-        guard (1...8).contains(limit), (0...9_007_199_254_740_991).contains(now) else { throw ReportStoreError.clock }
+        guard (1...8).contains(limit), (0...9_007_199_254_740_991).contains(validationNow) else { throw ReportStoreError.clock }
         if let after { _ = try ExchangeWire.idBytes(after) }
         return try database.write { db in
+            let now = clock()
+            guard (0...9_007_199_254_740_991).contains(now), now >= validationNow else { throw ReportStoreError.clock }
             try Self.observeClock(db, now: now)
             let start: String?
             if let after { start = after }
@@ -101,10 +110,16 @@ extension ReportRepository: ReportExchangeStore {
         }
     }
     public func currentIDs(_ ids: [String], now: Int64) throws -> Set<String> {
+        try currentIDs(ids, clock: { now })
+    }
+    public func currentIDs(_ ids: [String], clock: @Sendable () -> Int64) throws -> Set<String> {
+        let validationNow = clock()
         guard ids.count <= 8 else { throw ExchangeWireError.malformed }
         // Membership includes exhausted reports: receiving a duplicate must not reset its budget.
-        guard (0...9_007_199_254_740_991).contains(now) else { throw ReportStoreError.clock }
+        guard (0...9_007_199_254_740_991).contains(validationNow) else { throw ReportStoreError.clock }
         return try database.write { db in
+            let now = clock()
+            guard (0...9_007_199_254_740_991).contains(now), now >= validationNow else { throw ReportStoreError.clock }
             try Self.observeClock(db, now: now)
             var present: Set<String> = []
             for id in ids {
