@@ -15,6 +15,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  map-region-build:
+    name: Prepare real offline Rila data
+    needs: change-detection
+    if: needs.change-detection.outputs.android == 'true' || needs.change-detection.outputs.ios == 'true'
+    uses: ./.github/workflows/map-region.yml
+
   change-detection:
     name: Change detection
     runs-on: ubuntu-latest
@@ -42,10 +48,10 @@ jobs:
 
           android=false
           ios=false
-          if grep -Eq '^(\.github/workflows/quality\.yml|apps/|probes/transport/android/|protocol/|tools/protocol/|tools/transport/|tools/ci/)' <<< "$changed_paths"; then
+          if grep -Eq '^(\.github/workflows/quality\.yml|apps/|probes/transport/android/|protocol/|tools/protocol/|tools/transport/|tools/maps/|tools/ci/)' <<< "$changed_paths"; then
             android=true
           fi
-          if grep -Eq '^(\.github/workflows/quality\.yml|apps/|probes/transport/ios/|protocol/|tools/protocol/|tools/transport/)' <<< "$changed_paths"; then
+          if grep -Eq '^(\.github/workflows/quality\.yml|apps/|probes/transport/ios/|protocol/|tools/protocol/|tools/transport/|tools/maps/)' <<< "$changed_paths"; then
             ios=true
           fi
 
@@ -95,6 +101,8 @@ jobs:
           PY
       - name: Run protocol admission and vector tests
         run: python -m unittest discover -s tools/protocol -p 'test_*.py'
+      - name: Validate offline region contracts
+        run: python -m unittest discover -s tools/maps -p 'test_*.py'
       - name: Run bounded exchange contract tests
         run: python -m unittest discover -s tools/transport -p 'test_*.py'
 
@@ -182,7 +190,7 @@ jobs:
 
   android-product-devices:
     name: Android product API ${{ matrix.api }}
-    needs: [change-detection, android-product]
+    needs: [change-detection, android-product, map-region-build]
     if: needs.change-detection.outputs.android == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -202,6 +210,11 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.11'
+      - name: Download verified regional test resources
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: TrailMesh-Rila-region
+          path: ${{ runner.temp }}/Rila
       - name: Enable KVM access
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -234,7 +247,12 @@ jobs:
             grep -Fx 'target=android-${{ matrix.api }}' "$HOME/.android/avd/test.ini"
           script: |
             test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "$(printf '%s' '${{ matrix.api }}' | cut -d . -f 1)"
-            cd apps/android && ./gradlew --no-daemon connectedDebugAndroidTest
+            adb shell mkdir -p /data/local/tmp/trailmesh-map-pack
+            adb push "$RUNNER_TEMP/Rila/pack/." /data/local/tmp/trailmesh-map-pack/
+            adb push "$RUNNER_TEMP/Rila/smoke.json" /data/local/tmp/trailmesh-map-pack/smoke.json
+            adb shell svc wifi disable
+            adb shell svc data disable
+            cd apps/android && ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.trailmeshMapPack=/data/local/tmp/trailmesh-map-pack -Pandroid.testInstrumentationRunnerArguments.trailmeshRequireMapPack=true -Pandroid.testInstrumentationRunnerArguments.trailmeshManifestSha256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")"
             python tools/ci/check_junit.py apps/android/app/build/outputs/androidTest-results/connected
             adb install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
             adb install -t -r apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
@@ -243,6 +261,11 @@ jobs:
             adb shell am force-stop org.trailmesh.app
             adb shell am instrument -w -r -e class org.trailmesh.app.persistence.ProcessRestartInstrumentedTest -e phase verify org.trailmesh.app.test/androidx.test.runner.AndroidJUnitRunner > "$RUNNER_TEMP/process-restart.txt"
             cat "$RUNNER_TEMP/process-restart.txt" && grep -Eq 'OK \(1 test\)' "$RUNNER_TEMP/process-restart.txt"
+            adb shell am force-stop org.trailmesh.app
+            adb shell am instrument -w -r -e class org.trailmesh.app.maps.OfflineRegionSmokeTest -e trailmeshMapPack /data/local/tmp/trailmesh-map-pack -e trailmeshRequireMapPack true -e trailmeshMapPhase verify -e trailmeshManifestSha256 "$(cat "$RUNNER_TEMP/Rila/manifest.sha256")" org.trailmesh.app.test/androidx.test.runner.AndroidJUnitRunner > "$RUNNER_TEMP/map-restart.txt"
+            cat "$RUNNER_TEMP/map-restart.txt" && grep -Eq 'OK \(1 test\)' "$RUNNER_TEMP/map-restart.txt"
+            adb exec-out run-as org.trailmesh.app cat files/offline-smoke-snapshot.png > "$RUNNER_TEMP/offline-map-api-${{ matrix.api }}.png"
+            adb exec-out run-as org.trailmesh.app cat files/offline-smoke-evidence.json > "$RUNNER_TEMP/offline-map-api-${{ matrix.api }}.json"
       - name: Upload device test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -251,6 +274,7 @@ jobs:
           path: |
             apps/android/app/build/outputs/androidTest-results/
             apps/android/app/build/reports/androidTests/
+            ${{ runner.temp }}/offline-map-api-*
             ${{ runner.temp }}/process-restart.txt
             ${{ runner.temp }}/process-store.txt
           if-no-files-found: error
@@ -366,6 +390,7 @@ jobs:
           cmp ../../protocol/exchange-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/exchange-v1-vectors.json
           cmp ../../protocol/relevance-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/relevance-v1-vectors.json
           cmp ../../protocol/session-v1-profile.json Tests/TrailMeshReportsTests/Fixtures/session-v1-profile.json
+          cmp ../../protocol/maps/region-v1-vectors.json Tests/TrailMeshMapsTests/Fixtures/region-v1-vectors.json
       - name: Test the product repository
         env:
           TRAILMESH_TEST_REPORT_OUTPUT: ${{ runner.temp }}/trailmesh-authored-report.json
@@ -394,10 +419,10 @@ jobs:
 
   ios-product-simulator:
     name: iOS product simulator tests
-    needs: change-detection
+    needs: [change-detection, map-region-build]
     if: needs.change-detection.outputs.ios == 'true'
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: apps/ios
@@ -407,6 +432,11 @@ jobs:
           persist-credentials: false
       - name: Select Xcode with Swift 6.1
         run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+      - name: Download verified regional test resources
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: TrailMesh-Rila-region
+          path: ${{ runner.temp }}/Rila
       - name: Check vectors and select simulator
         id: simulator
         shell: bash
@@ -425,13 +455,52 @@ jobs:
           xcodebuild test -project Product/TrailMesh.xcodeproj -scheme TrailMesh \
             -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
             -derivedDataPath "$RUNNER_TEMP/TrailMeshProductTests" \
+            -resultBundlePath "$RUNNER_TEMP/TrailMeshMapTests.xcresult" \
+            TRAILMESH_MAP_PACK="$RUNNER_TEMP/Rila/pack" \
+            TRAILMESH_MAP_MANIFEST_SHA256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")" \
             ARCHS=arm64 CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO \
             | tee "$RUNNER_TEMP/trailmesh-simulator-test.log"
           grep -Eq 'Executed [1-9][0-9]* tests?, with 0 failures' "$RUNNER_TEMP/trailmesh-simulator-test.log"
+          grep -Eq 'testRealGraphColdOpenRouteAndSnapshot.*passed' "$RUNNER_TEMP/trailmesh-simulator-test.log"
+      - name: Reopen the saved region after stopping the app process
+        shell: bash
+        run: |
+          set -o pipefail
+          xcrun simctl terminate '${{ steps.simulator.outputs.id }}' org.trailmesh.ios || true
+          xcodebuild test-without-building -project Product/TrailMesh.xcodeproj -scheme TrailMesh \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
+            -derivedDataPath "$RUNNER_TEMP/TrailMeshProductTests" \
+            -resultBundlePath "$RUNNER_TEMP/TrailMeshMapRestart.xcresult" \
+            -only-testing:TrailMeshTests/NativeOfflineMapsTests/testRealGraphColdOpenRouteAndSnapshot \
+            TRAILMESH_MAP_PACK="$RUNNER_TEMP/Rila/pack" \
+            TRAILMESH_MAP_MANIFEST_SHA256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")" \
+            ARCHS=arm64 CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO \
+            | tee "$RUNNER_TEMP/trailmesh-map-restart.log"
+          grep -Eq 'testRealGraphColdOpenRouteAndSnapshot.*passed' "$RUNNER_TEMP/trailmesh-map-restart.log"
+          xcrun xcresulttool export attachments --path "$RUNNER_TEMP/TrailMeshMapRestart.xcresult" --output-path "$RUNNER_TEMP/MapScreenshots"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          evidence = Path(os.environ['RUNNER_TEMP'], 'MapScreenshots')
+          assert any(b'Reopened existing verified app-private pack' in p.read_bytes() for p in evidence.rglob('*') if p.is_file()), 'Restart test must reuse the saved pack'
+          assert any(p.suffix == '.png' for p in evidence.rglob('*')), 'Offline map screenshot is required'
+          PY
+      - name: Retain offline map screenshots and native test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TrailMesh-iOS-offline-map-results
+          path: |
+            ${{ runner.temp }}/TrailMeshMapTests.xcresult
+            ${{ runner.temp }}/TrailMeshMapRestart.xcresult
+            ${{ runner.temp }}/MapScreenshots/
+            apps/ios/Product/TrailMesh.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          if-no-files-found: error
+          retention-days: 7
 
   ios-product-minimum:
-    name: iOS 16.1 product compatibility
-    needs: change-detection
+    name: iOS 16.4 product compatibility
+    needs: [change-detection, map-region-build]
     if: needs.change-detection.outputs.ios == 'true'
     runs-on: macos-15
     timeout-minutes: 45
@@ -444,21 +513,26 @@ jobs:
           persist-credentials: false
       - name: Select Xcode with Swift 6.1
         run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+      - name: Download verified regional test resources
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: TrailMesh-Rila-region
+          path: ${{ runner.temp }}/Rila
       - name: Install the minimum supported iOS simulator runtime
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/TrailMeshIOS16"
           xcrun simctl list >/dev/null
-          xcodebuild -downloadPlatform iOS -buildVersion 16.1 -exportPath "$RUNNER_TEMP/TrailMeshIOS16"
+          xcodebuild -downloadPlatform iOS -buildVersion 16.4 -exportPath "$RUNNER_TEMP/TrailMeshIOS16"
       - name: Create the minimum-version simulator
         id: simulator
         shell: bash
         run: |
-          runtime_id="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=json.load(sys.stdin)["runtimes"]; m=[x["identifier"] for x in r if x.get("version") == "16.1" and x.get("isAvailable")]; print(m[0] if m else "")')"
+          runtime_id="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=json.load(sys.stdin)["runtimes"]; m=[x["identifier"] for x in r if x.get("version") == "16.4" and x.get("isAvailable")]; print(m[0] if m else "")')"
           test -n "$runtime_id"
           simulator_id="$(xcrun simctl create TrailMesh-iOS16 com.apple.CoreSimulator.SimDeviceType.iPhone-14 "$runtime_id")"
           echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
-      - name: Run report repository tests on iOS 16.1
+      - name: Run report repository tests on iOS 16.4
         shell: bash
         run: |
           set -o pipefail
@@ -469,9 +543,12 @@ jobs:
           xcodebuild test -project Product/TrailMesh.xcodeproj -scheme TrailMesh \
             -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
             -derivedDataPath "$RUNNER_TEMP/TrailMeshProductMinimum" \
+            TRAILMESH_MAP_PACK="$RUNNER_TEMP/Rila/pack" \
+            TRAILMESH_MAP_MANIFEST_SHA256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")" \
             ARCHS=arm64 CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO \
             | tee "$RUNNER_TEMP/trailmesh-ios16-test.log"
           grep -Eq 'Executed [1-9][0-9]* tests?, with 0 failures' "$RUNNER_TEMP/trailmesh-ios16-test.log"
+          grep -Eq 'testRealGraphColdOpenRouteAndSnapshot.*passed' "$RUNNER_TEMP/trailmesh-ios16-test.log"
 
   ios-product-package:
     name: Unsigned iPhone product package

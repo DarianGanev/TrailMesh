@@ -72,6 +72,10 @@ python -m unittest discover -s tools/transport -p "test_*.py"
 
 On a Mac with Xcode 16.4 and Swift 6.1, run the iPhone product repository tests with `cd apps/ios && swift test`. The product app project is `apps/ios/Product/TrailMesh.xcodeproj`; its bundle identifier and unsigned CI artifact are distinct from the transport probe. CI also tests the repository on an iPhone simulator. The product target is a development build with public-report session diagnostics. Its physical radio and lifecycle results require the recorded product-session procedure.
 
+The offline hiking backend uses MapLibre Native and a local Valhalla graph. Product iPhone builds require iOS 16.4 or later; the independent report package retains its existing platform floor. [Region tooling](tools/maps/README.md) prepares a licensed Rila map, elevation shading, named-place search index, and routing graph from frozen source data. It includes mapped minor paths, huts and peaks. OpenStreetMap completeness and current trail safety remain separate concerns.
+
+Run `python -m unittest discover -s tools/maps -p "test_*.py"` for map-pack contract checks. The native development diagnostics accept a separately pinned manifest hash and HTTPS release directory, then install verified resources into app-private storage. Native offline tests consume the real prepared region, block renderer HTTP requests, calculate a hut-to-peak route, retain screenshots, and reopen saved resources after process shutdown. Recorded CI and physical-device evidence establish which of those checks have passed. Hiking screens remain tracked in [#26](https://github.com/DarianGanev/TrailMesh/issues/26).
+
 Build and test the Android product with JDK 17 and the Android SDK configured:
 
 ```powershell
