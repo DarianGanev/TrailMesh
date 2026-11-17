@@ -31,6 +31,9 @@ android {
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
 dependencies {
+    implementation("org.maplibre.gl:android-sdk:13.5.4")
+    implementation("io.github.rallista:valhalla-mobile:0.6.6")
+    implementation("com.google.code.gson:gson:2.13.2")
     implementation("com.google.android.gms:play-services-nearby:19.5.1")
     implementation("androidx.room:room-runtime:2.8.5")
     implementation("androidx.room:room-ktx:2.8.5")
@@ -42,6 +45,7 @@ dependencies {
     testImplementation("androidx.test:core:1.7.0")
     testImplementation("androidx.room:room-testing:2.8.5")
     androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("com.squareup.okhttp3:okhttp:4.12.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.room:room-testing:2.8.5")
 }
