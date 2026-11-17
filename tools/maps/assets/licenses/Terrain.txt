@@ -1,0 +1,8 @@
+Terrain elevation pixels: Mapzen Terrain Tiles, AWS Open Data.
+https://registry.opendata.aws/terrain-tiles/
+https://github.com/tilezen/joerd/blob/master/docs/attribution.md
+Europe terrain produced using Copernicus data and information funded by the European Union — EU-DEM layers.
+SRTM terrain data courtesy of the U.S. Geological Survey.
+Copernicus data terms permit free use and redistribution with source acknowledgement:
+https://land.copernicus.eu/en/faq/data-use-terms-and-conditions
+Source imagery identifiers, request URLs and SHA256 hashes are retained in terrain-evidence.json.

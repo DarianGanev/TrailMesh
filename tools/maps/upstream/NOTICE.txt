@@ -1,0 +1,5 @@
+process-openmaptiles.lua and config-openmaptiles.json are unmodified tilemaker v2.4.0 resources.
+https://github.com/systemed/tilemaker/tree/v2.4.0/resources
+Data processing based on the OpenMapTiles schema, copyright 2016 KlokanTech.com and OpenMapTiles contributors, used under CC BY 4.0.
+https://creativecommons.org/licenses/by/4.0/
+TrailMesh applies its hiking modifications at build time; upstream files remain intact for review.

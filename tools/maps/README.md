@@ -1,0 +1,13 @@
+# Offline Rila region
+
+`python -m unittest discover -s tools/maps -p "test_*.py"` runs the strict reference contract tests. `pack.py PACK METADATA` generates a deterministic, hashed manifest after validating local style and named places. Never use a manifest without its separately pinned SHA256.
+
+Run `bash tools/maps/prepare_rila.sh /absolute/output` on Ubuntu 24.04 with osmium-tool 1.16.0-1build1, tilemaker 2.4.0-1build4, Docker, Python osmium 4.1.1 and Pillow 11.3.0. The reusable `map-region.yml` installs these and limits the job to 45 minutes. The build requires several GiB RAM; a 2 GiB WSL instance is insufficient. Output must be outside this checkout. The script never publishes a release.
+
+The immutable Geofabrik Bulgaria PBF dated 2026-11-16 is SHA256 pinned. A complete-ways extract (22.95,41.75,24.05,42.50) feeds tiles, Valhalla 3.9.2 and places. Map extent is not a promise that every path is mapped or safe. Tiles preserve path, footway, steps and track features, names, trail difficulty/visibility attributes, huts and peaks. Wilderness huts extend the upstream OpenMapTiles mapping. Data uses ODbL; the attribution and source URL ship in the pack.
+
+The daylight style has muted vegetation, blue water, rust footpaths, distinct tracks, settlement/hut/peak labels and optional real DEM hillshade. It contains local resource tokens only. Noto Sans Regular glyphs cover Latin, extended Latin and Cyrillic ranges, sourced from MapLibre demotiles commit `c071b1914cb6f0ee8a8014d51a906ddfd7149848`; OFL and BSD licenses ship alongside them. Glyphs and all other resources are hashed. Rendered quality still requires native screenshot review.
+
+Artifact `TrailMesh-Rila-region` contains `pack/` with native install paths; `release-assets/` with each file flattened to its unique manifest `asset` name; `manifest.sha256`; build evidence; map metadata; and `route-smoke.json`. Smoke endpoints are public OSM Malyovitsa hut and peak selected from that same PBF, retaining Bulgarian/Latin names. They are test data, not a route recommendation. The native smoke must calculate with networking disabled, validate endpoint snapping and geometry, render Cyrillic labels and restart cold. Data-build success alone does not establish these checks.
+
+`build-evidence.json` records source/extract hashes, tool versions and every checked-in pipeline input hash. Builds reproduce the inputs and contract; compressed map/graph byte identity across machines is not asserted. Preserve a validated pack and its exact manifest rather than silently regenerating the same revision. Publish a changed result only under a new immutable revision and catalog hash.
