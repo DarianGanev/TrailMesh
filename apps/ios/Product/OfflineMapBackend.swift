@@ -1,7 +1,6 @@
 import Foundation
 import MapLibre
-import Valhalla
-import ValhallaConfigModels
+import TrailMeshNativeRouting
 import UIKit
 import TrailMeshMaps
 import TrailMeshReports
@@ -33,7 +32,7 @@ final class OfflineHTTPBlocker: URLProtocol {
 /// private serial queue, never the main thread. The graph lease outlives close.
 final class OfflineHikingRouter: @unchecked Sendable {
     private let queue = DispatchQueue(label: "org.trailmesh.offline-routing", qos: .userInitiated)
-    private var engine: Valhalla?
+    private var engine: OfflineNativeRouter?
     private var lease: PackLease?
     private var region: InstalledRegion?
     private var configURL: URL?
@@ -44,18 +43,10 @@ final class OfflineHikingRouter: @unchecked Sendable {
                     closeOnQueue()
                     // Start from the pinned engine defaults, then strip every network
                     // input before handing the JSON to the native parser.
-                    let defaults = try ValhallaConfig(tileExtractTar: region.root.appendingPathComponent("routing.tar"))
-                    let encoded = try JSONEncoder().encode(defaults)
-                    guard var config = try JSONSerialization.jsonObject(with: encoded) as? [String: Any],
-                          var mjolnir = config["mjolnir"] as? [String: Any] else { throw MapFailure.invalidEngine }
-                    mjolnir.removeValue(forKey: "tile_url")
-                    mjolnir.removeValue(forKey: "tile_url_gz")
-                    mjolnir.removeValue(forKey: "tile_dir")
-                    mjolnir["tile_extract"] = region.root.appendingPathComponent("routing.tar").path
-                    config["mjolnir"] = mjolnir
+                    let encoded = try OfflineNativeRouter.configuration(tileExtract: region.root.appendingPathComponent("routing.tar"))
                     let url = FileManager.default.temporaryDirectory.appendingPathComponent("trailmesh-routing-\(UUID().uuidString).json")
-                    try JSONSerialization.data(withJSONObject: config).write(to: url, options: .atomic)
-                    do { engine = try Valhalla(configPath: url.path) }
+                    try encoded.write(to: url, options: .atomic)
+                    do { engine = try OfflineNativeRouter(configPath: url.path) }
                     catch { try? FileManager.default.removeItem(at: url); throw MapFailure.invalidEngine }
                     self.region = region; self.lease = lease; self.configURL = url
                     continuation.resume()
@@ -69,10 +60,10 @@ final class OfflineHikingRouter: @unchecked Sendable {
                 do {
                     guard let region, let engine else { throw MapFailure.unavailable }
                     let request = try HikingRoute.request(from: from, to: to, manifest: region.manifest)
-                    let response: String
+                    let response: Data
                     do { response = try engine.route(rawRequest: request) }
                     catch { throw MapFailure.noRoute }
-                    let route = try HikingRoute.parse(Data(response.utf8), from: from, to: to)
+                    let route = try HikingRoute.parse(response, from: from, to: to)
                     try route.validateCoverage(region.manifest)
                     continuation.resume(returning: route)
                 } catch { continuation.resume(throwing: error) }
@@ -104,11 +95,13 @@ extension HikingRoute {
 @MainActor
 final class OfflineMapSnapshot {
     private var snapshotter: MLNMapSnapshotter?
-    private var lease: PackLease?
+    private var pending: (id: UUID, continuation: CheckedContinuation<UIImage, Error>)?
+    var isRendering: Bool { pending != nil }
+
     func render(region: InstalledRegion, lease: PackLease, center: MapPoint, zoom: Double = 13) async throws -> UIImage {
-        guard snapshotter == nil else { lease.close(); throw MapFailure.busy }
-        self.lease = lease
-        defer { snapshotter = nil; self.lease?.close(); self.lease = nil }
+        guard !isRendering else { lease.close(); throw MapFailure.busy }
+        defer { lease.close() }
+        try Task.checkCancellation()
         OfflineHTTPBlocker.configureRenderer()
         let style = try LocalStyle.resolve(Data(contentsOf: region.root.appendingPathComponent("style.json")), root: region.root, files: Set(region.manifest.files.map(\.path)))
         let runtime = FileManager.default.temporaryDirectory.appendingPathComponent("trailmesh-style-\(UUID().uuidString).json")
@@ -119,14 +112,34 @@ final class OfflineMapSnapshot {
         let options = MLNMapSnapshotOptions(styleURL: runtime, camera: camera, size: CGSize(width: 1024, height: 768))
         options.zoomLevel = zoom
         options.showsAttribution = true
-        let worker = MLNMapSnapshotter(options: options)
-        snapshotter = worker
-        return try await withCheckedThrowingContinuation { continuation in
-            worker.start { snapshot, error in
-                if let error { continuation.resume(throwing: error) }
-                else if let snapshot { continuation.resume(returning: snapshot.image) }
-                else { continuation.resume(throwing: MapFailure.corrupt) }
+        let id = UUID()
+        let image = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UIImage, Error>) in
+                let worker = MLNMapSnapshotter(options: options)
+                snapshotter = worker
+                pending = (id, continuation)
+                worker.start { [weak self] snapshot, error in
+                    Task { @MainActor in
+                        if let error { self?.finish(id, with: .failure(error)) }
+                        else if let snapshot { self?.finish(id, with: .success(snapshot.image)) }
+                        else { self?.finish(id, with: .failure(MapFailure.corrupt)) }
+                    }
+                }
             }
+        } onCancel: {
+            Task { @MainActor in self.finish(id, with: .failure(CancellationError())) }
         }
+        try Task.checkCancellation()
+        return image
+    }
+
+    private func finish(_ id: UUID, with result: Result<UIImage, Error>) {
+        guard let active = pending, active.id == id else { return }
+        pending = nil
+        // MapLibre 7.0.0 synchronously destroys the native snapshotter in cancel().
+        // Tear it down before resuming the caller and releasing its pack lease.
+        snapshotter?.cancel()
+        snapshotter = nil
+        active.continuation.resume(with: result)
     }
 }

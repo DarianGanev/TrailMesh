@@ -1,6 +1,7 @@
 #if os(iOS)
 import XCTest
 import TrailMeshMaps
+import TrailMeshReports
 @testable import TrailMesh
 
 final class NativeOfflineMapsTests: XCTestCase {
@@ -55,11 +56,18 @@ final class NativeOfflineMapsTests: XCTestCase {
             let route = try await router.route(from: smoke.from, to: smoke.to)
             XCTAssertGreaterThan(route.points.count, 2)
             XCTAssertGreaterThan(route.distanceKm, 0)
+            let context = RelevanceContext(route: try route.reportRelevance())
+            let near = route.points[route.points.count / 2]
+            let nearReport = RelevanceReport(id: "rila-route", observedAt: 100, expiresAt: 200, latitude: near.latE7, longitude: near.lonE7)
+            let sofiaReport = RelevanceReport(id: "sofia", observedAt: 100, expiresAt: 200, latitude: 426977000, longitude: 233219000)
+            XCTAssertEqual(RelevancePolicy.evaluate(nearReport, context: context, now: 100), .eligible)
+            XCTAssertEqual(RelevancePolicy.evaluate(sofiaReport, context: context, now: 100), .notRelevant)
             do { try await store.remove(region); XCTFail("graph lease must block removal") }
             catch { XCTAssertEqual(error as? MapFailure, .busy) }
             await router.close()
         }
         let snapshot = OfflineMapSnapshot()
+        await assertSnapshotCancellation(snapshot, region: region, center: smoke.to)
         let image = try await snapshot.render(region: region, lease: try await store.lease(region), center: smoke.to)
         let png = try XCTUnwrap(image.pngData())
         XCTAssertGreaterThan(png.count, 10000, "Snapshot needs visual review for trails, labels and attribution")
@@ -70,5 +78,32 @@ final class NativeOfflineMapsTests: XCTestCase {
         // Core installer tests cover successful removal after releasing leases.
         _ = try await store.verify(root: copy, expectedSHA256: hash)
     }
+
+    @MainActor
+    private func assertSnapshotCancellation(_ snapshot: OfflineMapSnapshot, region: InstalledRegion, center: MapPoint) async {
+        let leases = PackLeases()
+        let key = region.manifest.id
+        let completed = expectation(description: "Cancelled snapshot completes within its deadline")
+        let task = Task { @MainActor in
+            defer { completed.fulfill() }
+            do {
+                _ = try await snapshot.render(region: region, lease: leases.acquire(key), center: center)
+                XCTFail("A cancelled snapshot must not return an image")
+            } catch is CancellationError {
+                XCTAssertFalse(snapshot.isRendering)
+                XCTAssertNoThrow(try leases.withRemoval(key) {})
+            } catch {
+                XCTFail("Unexpected snapshot error: \(error)")
+            }
+        }
+        for _ in 0..<100 where !snapshot.isRendering {
+            await Task.yield()
+        }
+        XCTAssertTrue(snapshot.isRendering)
+        XCTAssertThrowsError(try leases.withRemoval(key) {}) { XCTAssertEqual($0 as? MapFailure, .busy) }
+        task.cancel()
+        await fulfillment(of: [completed], timeout: 5)
+    }
+
 }
 #endif
