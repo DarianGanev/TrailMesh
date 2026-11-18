@@ -8,7 +8,7 @@ import unittest
 
 
 class AndroidOfflinePreparationTests(unittest.TestCase):
-    def run_helper(self, failures, code, marker=True):
+    def run_helper(self, failures, code, marker=True, api="37.0"):
         bash = shutil.which("bash")
         if os.name == "nt":
             bash = r"C:\Program Files\Git\bin\bash.exe"
@@ -18,7 +18,23 @@ class AndroidOfflinePreparationTests(unittest.TestCase):
             fake = root / "adb.sh"
             fake.write_text("""#!/usr/bin/env bash
 set -eu
+if [[ "$1" == root ]]; then
+  [[ "$API" == 26 ]] || exit 1
+  touch "$STATE.root"
+  exit 1
+fi
+if [[ "$1" == shell && "$2" == id ]]; then
+  if [[ -f "$STATE.root" ]]; then echo 0; else echo 2000; fi
+  exit 0
+fi
+if [[ "$*" == 'shell cmd connectivity airplane-mode enable' ]]; then
+  [[ "$API" == 37.0 ]]
+  touch "$STATE.airplane"
+  exit 0
+fi
 if [[ "$1" == shell && "$2" == svc* ]]; then
+  if [[ "$API" == 26 ]]; then test -f "$STATE.root"; fi
+  if [[ "$API" == 37.0 ]]; then test -f "$STATE.airplane"; fi
   count=$(cat "$STATE" 2>/dev/null || echo 0)
   count=$((count + 1)); echo "$count" > "$STATE"
   if (( count <= FAILURES )); then
@@ -32,16 +48,21 @@ exit 0
 """, encoding="utf-8")
             fake.chmod(0o755)
             environment = dict(os.environ, ADB_BIN=fake.as_posix(),
-                               STATE=(root / "calls").as_posix(),
+                               STATE=(root / "calls").as_posix(), API=api,
                                FAILURES=str(failures), CODE=str(code),
                                MARKER="yes" if marker else "no",
                                TRAILMESH_ANDROID_RETRY_DELAY_SECONDS="0",
                                RUNNER_TEMP=root.as_posix())
             script = Path(__file__).with_name("prepare_android_offline.sh")
-            result = subprocess.run([bash, str(script)], env=environment,
+            result = subprocess.run([bash, str(script), api], env=environment,
                                     capture_output=True, text=True, timeout=15)
             count = int((root / "calls").read_text())
             return result, count
+
+    def test_oreo_reconnects_as_root_before_disabling_radios(self):
+        result, count = self.run_helper(0, 0, api="26")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(count, 2)
 
     def test_confirmed_guest_kill_retries_then_disables_both_radios(self):
         result, count = self.run_helper(1, 137)

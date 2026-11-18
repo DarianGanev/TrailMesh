@@ -1,5 +1,6 @@
 package org.trailmesh.app.maps
 
+import android.app.Instrumentation
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
@@ -28,7 +29,7 @@ import org.maplibre.android.snapshotter.MapSnapshotter
 @RunWith(AndroidJUnit4::class)
 class OfflineRegionSmokeTest {
     @Test
-    fun realPackColdLocalSearchNativeRouteAndSnapshotWithoutHttp() {
+    fun realPackColdLocalSearchAndNativeRouteWithoutHttp() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val args = InstrumentationRegistry.getArguments()
         val path = args.getString("trailmeshMapPack")
@@ -47,13 +48,15 @@ class OfflineRegionSmokeTest {
         fun assertOffline() {
             val activeCapabilities = connectivity.activeNetwork?.let(connectivity::getNetworkCapabilities)
             assertFalse(
-                "the emulator still has an active Internet-capable network",
+                "the emulator still has an active Internet-capable network: $activeCapabilities",
                 activeCapabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true,
             )
         }
         assertOffline()
         val root = File(context.filesDir, "offline-smoke-regions")
         val verifyOnly = args.getString("trailmeshMapPhase") == "verify"
+        val renderMap = args.getString("trailmeshMapRender") != "false"
+        assertTrue("only the API 26 emulator may request route-only coverage", renderMap || android.os.Build.VERSION.SDK_INT == 26)
         if (!verifyOnly) root.deleteRecursively()
         else assertTrue("cold restart lost installed pack", root.isDirectory)
         val parsed = RegionManifest.parse(manifest, hash)
@@ -95,38 +98,6 @@ class OfflineRegionSmokeTest {
         try {
             assertEquals(hash, File(lease.region.directory, "manifest.sha256").readText())
             assertTrue(lease.region.places().search(smoke["query"].str()).isNotEmpty())
-            val attempts = AtomicInteger()
-            val client =
-                OkHttpClient.Builder()
-                    .addInterceptor {
-                        attempts.incrementAndGet()
-                        throw IOException("HTTP disabled by offline proof")
-                    }
-                    .build()
-            val cacheReady = CountDownLatch(1)
-            var cacheError: String? = null
-            val coldCache =
-                File(context.cacheDir, "offline-smoke-map-${System.nanoTime()}").apply { mkdirs() }
-            instrumentation.runOnMainSync {
-                MapLibre.getInstance(context)
-                HttpRequestUtil.setOkHttpClient(client)
-                org.maplibre.android.storage.FileSource.setResourcesCachePath(
-                    context,
-                    coldCache.absolutePath,
-                    object : org.maplibre.android.storage.FileSource.ResourcesCachePathChangeCallback {
-                        override fun onSuccess(path: String) {
-                            cacheReady.countDown()
-                        }
-
-                        override fun onError(message: String) {
-                            cacheError = message
-                            cacheReady.countDown()
-                        }
-                    },
-                )
-            }
-            assertTrue("cold renderer cache timed out", cacheReady.await(30, TimeUnit.SECONDS))
-            assertNull(cacheError)
             val router =
                 RegionRouter(
                     restarted,
@@ -159,94 +130,132 @@ class OfflineRegionSmokeTest {
                         "seconds=${route.seconds} points=${route.points.size} startSnapMeters=$startSnapMeters " +
                         "endSnapMeters=$endSnapMeters activeInternet=false",
                 )
-                val latch = CountDownLatch(1)
-                var error: String? = null
-                var bitmap: android.graphics.Bitmap? = null
-                var snapshotter: MapSnapshotter? = null
-                val missing = mutableListOf<String>()
-                val style = lease.region.style()
-                instrumentation.runOnMainSync {
-                    val options =
-                        MapSnapshotter.Options(1024, 768)
-                            .withStyleBuilder(Style.Builder().fromJson(style))
-                            .withCameraPosition(
-                                CameraPosition.Builder()
-                                    .target(LatLng(start.latE7 / 1e7, start.lonE7 / 1e7))
-                                    .zoom(13.0)
-                                    .build()
-                            )
-                            .withAttribution(true)
-                    snapshotter = MapSnapshotter(context, options)
-                    snapshotter!!.setObserver(
-                        object : MapSnapshotter.Observer {
-                            override fun onDidFinishLoadingStyle() {}
-
-                            override fun onStyleImageMissing(id: String) {
-                                missing.add(id)
-                            }
-                        }
-                    )
-                    snapshotter!!.start(
-                        { snapshot ->
-                            bitmap = snapshot.bitmap
-                            latch.countDown()
-                        },
-                        { message ->
-                            error = message
-                            latch.countDown()
-                        },
-                    )
-                }
-                try {
-                    assertTrue("snapshot timed out", latch.await(120, TimeUnit.SECONDS))
-                    assertNull(error)
-                    assertNotNull(bitmap)
-                    assertTrue("missing style images: $missing", missing.isEmpty())
-                    val image = bitmap!!
-                    val colors = mutableSetOf<Int>()
-                    for (y in 0 until image.height step 8) for (x in 0 until image.width step 8) colors
-                        .add(image.getPixel(x, y))
-                    assertTrue("blank map snapshot", colors.size > 32)
-                    File(context.filesDir, "offline-smoke-snapshot.png").outputStream().use {
-                        image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
-                    }
-                    assertEquals("map attempted HTTP requests", 0, attempts.get())
-                    assertOffline()
-                    File(context.filesDir, "offline-smoke-evidence.json")
-                        .writeText(
-                            MapJson.encode(
-                                mapOf(
-                                    "format" to 1,
-                                    "phase" to if (verifyOnly) "verify" else "install",
-                                    "manifestSha256" to hash,
-                                    "androidApi" to android.os.Build.VERSION.SDK_INT,
-                                    "renderer" to "13.5.4",
-                                    "router" to "0.6.6",
-                                    "routePointCount" to route.points.size,
-                                    "routeDistanceKm" to route.distanceKm,
-                                    "routeSeconds" to route.seconds,
-                                    "startSnapMeters" to startSnapMeters,
-                                    "endSnapMeters" to endSnapMeters,
-                                    "maximumHikingDifficulty" to maximumDifficulty,
-                                    "defaultDifficultyEngineCode" to rejected?.engineCode,
-                                    "activeInternetNetwork" to false,
-                                    "httpAttempts" to attempts.get(),
-                                    "snapshotDistinctColors" to colors.size,
-                                    "attribution" to parsed.attribution,
-                                )
+                val snapshotColors =
+                    if (renderMap) renderSnapshot(instrumentation, lease.region.style(), start) else null
+                assertOffline()
+                File(context.filesDir, "offline-smoke-evidence.json")
+                    .writeText(
+                        MapJson.encode(
+                            mapOf(
+                                "format" to 1,
+                                "phase" to if (verifyOnly) "verify" else "install",
+                                "manifestSha256" to hash,
+                                "androidApi" to android.os.Build.VERSION.SDK_INT,
+                                "renderer" to snapshotColors?.let { "13.5.4" },
+                                "router" to "0.6.6",
+                                "routePointCount" to route.points.size,
+                                "routeDistanceKm" to route.distanceKm,
+                                "routeSeconds" to route.seconds,
+                                "startSnapMeters" to startSnapMeters,
+                                "endSnapMeters" to endSnapMeters,
+                                "maximumHikingDifficulty" to maximumDifficulty,
+                                "defaultDifficultyEngineCode" to rejected?.engineCode,
+                                "activeInternetNetwork" to false,
+                                "httpAttempts" to snapshotColors?.let { 0 },
+                                "snapshotDistinctColors" to snapshotColors,
+                                "attribution" to parsed.attribution,
                             )
                         )
-                } finally {
-                    instrumentation.runOnMainSync { snapshotter?.cancel() }
-                }
+                    )
             } finally {
                 router.closeAsync().get(30, TimeUnit.SECONDS)
             }
         } finally {
-            try {
-                lease.close()
-            } finally {
-                instrumentation.runOnMainSync { HttpRequestUtil.setOkHttpClient(null) }
+            lease.close()
+        }
+    }
+
+    private fun renderSnapshot(instrumentation: Instrumentation, style: String, start: MapPoint): Int {
+        val context = instrumentation.targetContext
+        val attempts = AtomicInteger()
+        val client =
+            OkHttpClient.Builder()
+                .addInterceptor {
+                    attempts.incrementAndGet()
+                    throw IOException("HTTP disabled by offline proof")
+                }
+                .build()
+        val cacheReady = CountDownLatch(1)
+        var cacheError: String? = null
+        val coldCache =
+            File(context.cacheDir, "offline-smoke-map-${System.nanoTime()}").apply { mkdirs() }
+        val latch = CountDownLatch(1)
+        var error: String? = null
+        var bitmap: android.graphics.Bitmap? = null
+        var snapshotter: MapSnapshotter? = null
+        val missing = mutableListOf<String>()
+        try {
+            instrumentation.runOnMainSync {
+                MapLibre.getInstance(context)
+                HttpRequestUtil.setOkHttpClient(client)
+                org.maplibre.android.storage.FileSource.setResourcesCachePath(
+                    context,
+                    coldCache.absolutePath,
+                    object : org.maplibre.android.storage.FileSource.ResourcesCachePathChangeCallback {
+                        override fun onSuccess(path: String) {
+                            cacheReady.countDown()
+                        }
+
+                        override fun onError(message: String) {
+                            cacheError = message
+                            cacheReady.countDown()
+                        }
+                    },
+                )
+            }
+            assertTrue("cold renderer cache timed out", cacheReady.await(30, TimeUnit.SECONDS))
+            assertNull(cacheError)
+            instrumentation.runOnMainSync {
+                val options =
+                    MapSnapshotter.Options(1024, 768)
+                        .withStyleBuilder(Style.Builder().fromJson(style))
+                        .withCameraPosition(
+                            CameraPosition.Builder()
+                                .target(LatLng(start.latE7 / 1e7, start.lonE7 / 1e7))
+                                .zoom(13.0)
+                                .build()
+                        )
+                        .withAttribution(true)
+                val worker = MapSnapshotter(context, options)
+                snapshotter = worker
+                worker.setObserver(
+                    object : MapSnapshotter.Observer {
+                        override fun onDidFinishLoadingStyle() {}
+
+                        override fun onStyleImageMissing(id: String) {
+                            missing.add(id)
+                        }
+                    }
+                )
+                worker.start(
+                    { snapshot ->
+                        bitmap = snapshot.bitmap
+                        latch.countDown()
+                    },
+                    { message ->
+                        error = message
+                        latch.countDown()
+                    },
+                )
+            }
+            assertTrue("snapshot timed out", latch.await(120, TimeUnit.SECONDS))
+            assertNull(error)
+            assertNotNull(bitmap)
+            assertTrue("missing style images: $missing", missing.isEmpty())
+            val image = bitmap!!
+            val colors = mutableSetOf<Int>()
+            for (y in 0 until image.height step 8) for (x in 0 until image.width step 8) colors
+                .add(image.getPixel(x, y))
+            assertTrue("blank map snapshot", colors.size > 32)
+            File(context.filesDir, "offline-smoke-snapshot.png").outputStream().use {
+                image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+            }
+            assertEquals("map attempted HTTP requests", 0, attempts.get())
+            return colors.size
+        } finally {
+            instrumentation.runOnMainSync {
+                snapshotter?.cancel()
+                HttpRequestUtil.setOkHttpClient(null)
             }
         }
     }

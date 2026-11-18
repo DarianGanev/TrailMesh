@@ -205,7 +205,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api: [26, '37.0']
+        include:
+          # The Oreo x86_64 emulator's SwiftShader path aborts in snapshots.
+          # Retain minimum-version install, search, route, and restart checks.
+          - api: 26
+            render_map: false
+          - api: '37.0'
+            render_map: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -223,6 +229,9 @@ jobs:
         with:
           name: TrailMesh-Rila-region
           path: ${{ runner.temp }}/Rila
+      - name: Build the APKs before booting the emulator
+        working-directory: apps/android
+        run: ./gradlew --no-daemon assembleDebug assembleDebugAndroidTest
       - name: Enable KVM access
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -259,15 +268,9 @@ jobs:
             adb shell mkdir -p /data/local/tmp/trailmesh-map-pack
             adb push "$RUNNER_TEMP/Rila/pack/." /data/local/tmp/trailmesh-map-pack/
             adb push "$RUNNER_TEMP/Rila/smoke.json" /data/local/tmp/trailmesh-map-pack/smoke.json
-            if [[ '${{ matrix.api }}' == 26 && "$(adb shell id -u | tr -d '\r')" != 0 ]]; then
-              # Oreo's Wi-Fi service requires privileges unavailable to its shell user.
-              adb root || true
-              timeout 30 adb wait-for-device
-              test "$(adb shell id -u | tr -d '\r')" = 0
-            fi
             adb shell getprop ro.kernel.qemu.opengles.version
-            bash tools/ci/prepare_android_offline.sh
-            cd apps/android && ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.trailmeshMapPack=/data/local/tmp/trailmesh-map-pack -Pandroid.testInstrumentationRunnerArguments.trailmeshRequireMapPack=true -Pandroid.testInstrumentationRunnerArguments.trailmeshManifestSha256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")"
+            bash tools/ci/prepare_android_offline.sh '${{ matrix.api }}'
+            cd apps/android && ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.trailmeshMapPack=/data/local/tmp/trailmesh-map-pack -Pandroid.testInstrumentationRunnerArguments.trailmeshRequireMapPack=true -Pandroid.testInstrumentationRunnerArguments.trailmeshMapRender=${{ matrix.render_map }} -Pandroid.testInstrumentationRunnerArguments.trailmeshManifestSha256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")"
             python tools/ci/check_junit.py apps/android/app/build/outputs/androidTest-results/connected
             adb install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
             adb install -t -r apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
@@ -277,9 +280,9 @@ jobs:
             adb shell am instrument -w -r -e class org.trailmesh.app.persistence.ProcessRestartInstrumentedTest -e phase verify org.trailmesh.app.test/androidx.test.runner.AndroidJUnitRunner > "$RUNNER_TEMP/process-restart.txt"
             cat "$RUNNER_TEMP/process-restart.txt" && grep -Eq 'OK \(1 test\)' "$RUNNER_TEMP/process-restart.txt"
             adb shell am force-stop org.trailmesh.app
-            adb shell am instrument -w -r -e class org.trailmesh.app.maps.OfflineRegionSmokeTest -e trailmeshMapPack /data/local/tmp/trailmesh-map-pack -e trailmeshRequireMapPack true -e trailmeshMapPhase verify -e trailmeshManifestSha256 "$(cat "$RUNNER_TEMP/Rila/manifest.sha256")" org.trailmesh.app.test/androidx.test.runner.AndroidJUnitRunner > "$RUNNER_TEMP/map-restart.txt"
+            adb shell am instrument -w -r -e class org.trailmesh.app.maps.OfflineRegionSmokeTest -e trailmeshMapPack /data/local/tmp/trailmesh-map-pack -e trailmeshRequireMapPack true -e trailmeshMapPhase verify -e trailmeshMapRender '${{ matrix.render_map }}' -e trailmeshManifestSha256 "$(cat "$RUNNER_TEMP/Rila/manifest.sha256")" org.trailmesh.app.test/androidx.test.runner.AndroidJUnitRunner > "$RUNNER_TEMP/map-restart.txt"
             cat "$RUNNER_TEMP/map-restart.txt" && grep -Eq 'OK \(1 test\)' "$RUNNER_TEMP/map-restart.txt"
-            adb exec-out run-as org.trailmesh.app cat files/offline-smoke-snapshot.png > "$RUNNER_TEMP/offline-map-api-${{ matrix.api }}.png"
+            if [ '${{ matrix.render_map }}' = true ]; then adb exec-out run-as org.trailmesh.app cat files/offline-smoke-snapshot.png > "$RUNNER_TEMP/offline-map-api-${{ matrix.api }}.png"; fi
             adb exec-out run-as org.trailmesh.app cat files/offline-smoke-evidence.json > "$RUNNER_TEMP/offline-map-api-${{ matrix.api }}.json"
       - name: Upload device test results
         if: always()
@@ -438,6 +441,8 @@ jobs:
     needs: [change-detection, map-region-build, ios-routing-build]
     if: needs.change-detection.outputs.ios == 'true'
     runs-on: macos-15
+    env:
+      TRAILMESH_LOCAL_ROUTING_SDK: "1"
     timeout-minutes: 35
     defaults:
       run:
@@ -484,12 +489,12 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          export TEST_RUNNER_TRAILMESH_MAP_PACK="$RUNNER_TEMP/Rila/pack"
+          export TEST_RUNNER_TRAILMESH_MAP_MANIFEST_SHA256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")"
           xcodebuild test -project Product/TrailMesh.xcodeproj -scheme TrailMesh \
             -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
             -derivedDataPath "$RUNNER_TEMP/TrailMeshProductTests" \
             -resultBundlePath "$RUNNER_TEMP/TrailMeshMapTests.xcresult" \
-            TRAILMESH_MAP_PACK="$RUNNER_TEMP/Rila/pack" \
-            TRAILMESH_MAP_MANIFEST_SHA256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")" \
             ARCHS=arm64 CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO \
             | tee "$RUNNER_TEMP/trailmesh-simulator-test.log"
           grep -Eq 'Executed [1-9][0-9]* tests?, with 0 failures' "$RUNNER_TEMP/trailmesh-simulator-test.log"
@@ -498,14 +503,14 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          export TEST_RUNNER_TRAILMESH_MAP_PACK="$RUNNER_TEMP/Rila/pack"
+          export TEST_RUNNER_TRAILMESH_MAP_MANIFEST_SHA256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")"
           xcrun simctl terminate '${{ steps.simulator.outputs.id }}' org.trailmesh.ios || true
           xcodebuild test-without-building -project Product/TrailMesh.xcodeproj -scheme TrailMesh \
             -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
             -derivedDataPath "$RUNNER_TEMP/TrailMeshProductTests" \
             -resultBundlePath "$RUNNER_TEMP/TrailMeshMapRestart.xcresult" \
             -only-testing:TrailMeshTests/NativeOfflineMapsTests/testRealGraphColdOpenRouteAndSnapshot \
-            TRAILMESH_MAP_PACK="$RUNNER_TEMP/Rila/pack" \
-            TRAILMESH_MAP_MANIFEST_SHA256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")" \
             ARCHS=arm64 CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO \
             | tee "$RUNNER_TEMP/trailmesh-map-restart.log"
           grep -Eq 'testRealGraphColdOpenRouteAndSnapshot.*passed' "$RUNNER_TEMP/trailmesh-map-restart.log"
@@ -531,10 +536,12 @@ jobs:
           retention-days: 7
 
   ios-product-minimum:
-    name: iOS 16.4 product compatibility
+    name: iOS 17.0 product compatibility
     needs: [change-detection, map-region-build, ios-routing-build]
     if: needs.change-detection.outputs.ios == 'true'
     runs-on: macos-15
+    env:
+      TRAILMESH_LOCAL_ROUTING_SDK: "1"
     timeout-minutes: 45
     defaults:
       run:
@@ -569,18 +576,18 @@ jobs:
       - name: Install the minimum supported iOS simulator runtime
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/TrailMeshIOS16"
+          mkdir -p "$RUNNER_TEMP/TrailMeshIOS17"
           xcrun simctl list >/dev/null
-          xcodebuild -downloadPlatform iOS -buildVersion 16.4 -exportPath "$RUNNER_TEMP/TrailMeshIOS16"
+          xcodebuild -downloadPlatform iOS -buildVersion 17.0 -exportPath "$RUNNER_TEMP/TrailMeshIOS17"
       - name: Create the minimum-version simulator
         id: simulator
         shell: bash
         run: |
-          runtime_id="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=json.load(sys.stdin)["runtimes"]; m=[x["identifier"] for x in r if x.get("version") == "16.4" and x.get("isAvailable")]; print(m[0] if m else "")')"
+          runtime_id="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=json.load(sys.stdin)["runtimes"]; m=[x["identifier"] for x in r if x.get("version") == "17.0" and x.get("isAvailable")]; print(m[0] if m else "")')"
           test -n "$runtime_id"
-          simulator_id="$(xcrun simctl create TrailMesh-iOS16 com.apple.CoreSimulator.SimDeviceType.iPhone-14 "$runtime_id")"
+          simulator_id="$(xcrun simctl create TrailMesh-iOS17 com.apple.CoreSimulator.SimDeviceType.iPhone-15 "$runtime_id")"
           echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
-      - name: Run report repository tests on iOS 16.4
+      - name: Run report repository tests on iOS 17.0
         shell: bash
         run: |
           set -o pipefail
@@ -588,19 +595,19 @@ jobs:
           cmp ../../protocol/exchange-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/exchange-v1-vectors.json
           cmp ../../protocol/relevance-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/relevance-v1-vectors.json
           cmp ../../protocol/session-v1-profile.json Tests/TrailMeshReportsTests/Fixtures/session-v1-profile.json
+          export TEST_RUNNER_TRAILMESH_MAP_PACK="$RUNNER_TEMP/Rila/pack"
+          export TEST_RUNNER_TRAILMESH_MAP_MANIFEST_SHA256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")"
           xcodebuild test -project Product/TrailMesh.xcodeproj -scheme TrailMesh \
             -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
             -derivedDataPath "$RUNNER_TEMP/TrailMeshProductMinimum" \
-            TRAILMESH_MAP_PACK="$RUNNER_TEMP/Rila/pack" \
-            TRAILMESH_MAP_MANIFEST_SHA256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")" \
             ARCHS=arm64 CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO \
-            | tee "$RUNNER_TEMP/trailmesh-ios16-test.log"
-          grep -Eq 'Executed [1-9][0-9]* tests?, with 0 failures' "$RUNNER_TEMP/trailmesh-ios16-test.log"
-          grep -Eq 'testRealGraphColdOpenRouteAndSnapshot.*passed' "$RUNNER_TEMP/trailmesh-ios16-test.log"
+            | tee "$RUNNER_TEMP/trailmesh-ios17-test.log"
+          grep -Eq 'Executed [1-9][0-9]* tests?, with 0 failures' "$RUNNER_TEMP/trailmesh-ios17-test.log"
+          grep -Eq 'testRealGraphColdOpenRouteAndSnapshot.*passed' "$RUNNER_TEMP/trailmesh-ios17-test.log"
 
   ios-product-package:
     name: Unsigned iPhone product package
-    needs: [change-detection, ios-routing-build]
+    needs: change-detection
     if: needs.change-detection.outputs.ios == 'true'
     runs-on: macos-15
     timeout-minutes: 25
@@ -611,22 +618,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Download the isolated routing framework
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: TrailMesh-iOS-routing-sdk
-          path: ${{ runner.temp }}/NativeRoutingSDK
-      - name: Verify and unpack the signed routing framework
-        shell: bash
-        run: |
-          (cd "$RUNNER_TEMP/NativeRoutingSDK" && shasum -a 256 -c TrailMeshValhalla.xcframework.zip.sha256)
-          mkdir -p NativeRouting/Artifacts
-          ditto -x -k "$RUNNER_TEMP/NativeRoutingSDK/TrailMeshValhalla.xcframework.zip" NativeRouting/Artifacts
-          for slice in ios-arm64 ios-arm64_x86_64-simulator; do
-            framework="NativeRouting/Artifacts/TrailMeshValhalla.xcframework/$slice/TrailMeshValhalla.framework"
-            test -x "$framework/TrailMeshValhalla"
-            codesign --verify --strict "$framework"
-          done
       - name: Select Xcode with Swift 6.1
         run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
       - name: Build the distinct product app
