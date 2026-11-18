@@ -155,7 +155,8 @@ def generate(root, metadata):
         require(not p.is_symlink(),'symlink')
         if p.is_file() and p.name!='manifest.json':
             path=p.relative_to(root).as_posix()
-            files.append(dict(path=path,asset=path.replace('/','--'),bytes=p.stat().st_size,sha256=sha256_file(p)))
+            asset = re.sub(r'[^A-Za-z0-9._-]', '-', path.replace('/', '--')).strip('.')
+            files.append(dict(path=path,asset=asset,bytes=p.stat().st_size,sha256=sha256_file(p)))
     m=validate_manifest(dict(metadata,files=files))
     places = validate_places(parse_json((root/'places.json').read_bytes(),RESOURCE_MAX_BYTES['places.json']),m['boundsE7'])
     validate_style(parse_json((root/'style.json').read_bytes(),RESOURCE_MAX_BYTES['style.json']),m,places['places'])

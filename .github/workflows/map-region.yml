@@ -27,7 +27,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y osmium-tool=1.16.0-1build1 tilemaker=2.4.0-1build4 lua5.4
-          python -m pip install osmium==4.1.1 pillow==11.3.0
+          python -m pip install -r tools/maps/requirements.txt osmium==4.1.1 pillow==11.3.0
       - name: Validate contract tests
         run: python -m unittest discover -s tools/maps -p 'test_*.py'
       - name: Build frozen OSM region

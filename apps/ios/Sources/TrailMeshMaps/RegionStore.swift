@@ -25,6 +25,8 @@ final class PackRedirectPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sen
 }
 
 public struct HTTPSPackTransport: PackTransport {
+    private enum ResumeFailure: Error { case rangeNotSatisfiable }
+
     private let makeConfiguration: @Sendable () -> URLSessionConfiguration
     public init() { makeConfiguration = { .ephemeral } }
     init(makeConfiguration: @escaping @Sendable () -> URLSessionConfiguration) {
@@ -43,6 +45,7 @@ public struct HTTPSPackTransport: PackTransport {
         if offset == 0 { try Data().write(to: destination) }
         var request = URLRequest(url: url)
         request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        let fullRequest = request
         if offset > 0 {
             request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
             request.setValue(savedValidator, forHTTPHeaderField: "If-Range")
@@ -52,8 +55,16 @@ public struct HTTPSPackTransport: PackTransport {
         let session = URLSession(configuration: configuration, delegate: PackRedirectPolicy(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         let download = Task {
-            try await receive(session: session, request: request, destination: destination, validatorURL: validatorURL,
-                              expectedBytes: expectedBytes, offset: offset, savedValidator: savedValidator, cancellation: cancellation)
+            do {
+                try await receive(session: session, request: request, destination: destination, validatorURL: validatorURL,
+                                  expectedBytes: expectedBytes, offset: offset, savedValidator: savedValidator, cancellation: cancellation)
+            } catch ResumeFailure.rangeNotSatisfiable {
+                try cancellation.check()
+                try fm.removeItem(at: validatorURL)
+                try Data().write(to: destination)
+                try await receive(session: session, request: fullRequest, destination: destination, validatorURL: validatorURL,
+                                  expectedBytes: expectedBytes, offset: 0, savedValidator: nil, cancellation: cancellation)
+            }
         }
         let handler: UUID
         do {
@@ -84,8 +95,13 @@ public struct HTTPSPackTransport: PackTransport {
         let transfer = stream.task
         try await withTaskCancellationHandler {
             try cancellation.check()
-            guard let http = response as? HTTPURLResponse, http.url?.scheme == "https", http.url?.user == nil, http.url?.password == nil,
-                  [200, 206].contains(http.statusCode), http.value(forHTTPHeaderField: "Content-Encoding").map({ $0 == "identity" }) ?? true else { throw MapFailure.corrupt }
+            guard let http = response as? HTTPURLResponse, PackRedirectPolicy.allowed(http.url) else { throw MapFailure.corrupt }
+            if offset > 0, http.statusCode == 416 {
+                transfer.cancel()
+                throw ResumeFailure.rangeNotSatisfiable
+            }
+            guard [200, 206].contains(http.statusCode),
+                  http.value(forHTTPHeaderField: "Content-Encoding").map({ $0 == "identity" }) ?? true else { throw MapFailure.corrupt }
             var written: Int64 = 0
             if http.statusCode == 206 {
                 guard offset > 0, http.value(forHTTPHeaderField: "ETag") == savedValidator,

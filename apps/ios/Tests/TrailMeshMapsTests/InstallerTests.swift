@@ -47,6 +47,35 @@ private final class StalledPackProtocol: URLProtocol, @unchecked Sendable {
     override func stopLoading() {}
 }
 
+private final class RejectedRangePackProtocol: URLProtocol, @unchecked Sendable {
+    static let payload = Data([1, 2, 3])
+    static let validator = "\"stale\""
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let url = request.url!
+        let range = request.value(forHTTPHeaderField: "Range")
+        let status: Int
+        if let range {
+            XCTAssertEqual(range, "bytes=2-")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "If-Range"), Self.validator)
+            status = 416
+        } else {
+            XCTAssertNil(request.value(forHTTPHeaderField: "If-Range"))
+            status = url.path == "/reject" ? 416 : 200
+        }
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Accept-Encoding"), "identity")
+        NotificationCenter.default.post(name: Notification.Name("RejectedRangePackProtocol-\(url.path)-\(range == nil ? "full" : "range")"), object: nil)
+        let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if status == 200 { client?.urlProtocol(self, didLoad: Self.payload) }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
 private actor PausedFixtureTransport: PackTransport {
     let files: [String: Data]
     private var started = false
@@ -254,6 +283,40 @@ final class InstallerTests: XCTestCase {
         _ = try await store.install(manifestData: data, expectedSHA256: hash, releaseDirectory: URL(string: "https://example.com/release/")!, transport: FixtureTransport(files: files, cancel: false))
         XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("rila/v1/manifest.json").path))
     }
+    func testRejectedRangeRestartsWithOneFullGET() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let transport = HTTPSPackTransport {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [RejectedRangePackProtocol.self]
+            return configuration
+        }
+        for path in ["recover", "reject"] {
+            let destination = root.appendingPathComponent(path)
+            let validator = destination.appendingPathExtension("etag")
+            try Data([9, 9]).write(to: destination)
+            try Data(RejectedRangePackProtocol.validator.utf8).write(to: validator)
+            let range = expectation(forNotification: Notification.Name("RejectedRangePackProtocol-/\(path)-range"), object: nil)
+            let full = expectation(forNotification: Notification.Name("RejectedRangePackProtocol-/\(path)-full"), object: nil)
+            range.assertForOverFulfill = true
+            full.assertForOverFulfill = true
+            let url = try XCTUnwrap(URL(string: "https://example.com/\(path)"))
+            do {
+                try await transport.fetch(url: url, destination: destination, expectedBytes: 3, cancellation: InstallCancellation())
+                XCTAssertEqual(path, "recover")
+                XCTAssertEqual(try Data(contentsOf: destination), RejectedRangePackProtocol.payload)
+            } catch {
+                XCTAssertEqual(path, "reject")
+                XCTAssertEqual(error as? MapFailure, .corrupt)
+                XCTAssertEqual(try Data(contentsOf: destination), Data())
+            }
+            await fulfillment(of: [range, full], timeout: 5, enforceOrder: true)
+            XCTAssertFalse(fm.fileExists(atPath: validator.path))
+        }
+    }
+
     func testTokenCancelsStalledHTTPSBeforeHeadersAndDuringBody() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

@@ -9,6 +9,40 @@ from fetch_pbf import cache_source
 
 
 class SourceCacheTests(unittest.TestCase):
+    def test_unavailable_primary_uses_verified_archive(self):
+        complete = b"complete source"
+        digest = hashlib.sha256(complete).hexdigest()
+        primary = "https://upstream.example.invalid/source.osm.pbf"
+        archive = "https://archive.example.invalid/source.osm.pbf"
+        for exit_code, status in ((22, "404"), (22, "410"), (22, "503"), (7, "000"), (28, "000")):
+            with self.subTest(exit_code=exit_code, status=status), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "source.osm.pbf"
+                attempted = []
+
+                def download(command, **kwargs):
+                    attempted.append(command[-1])
+                    if command[-1] == primary:
+                        raise subprocess.CalledProcessError(exit_code, command, output=status)
+                    Path(command[-2]).write_bytes(b"!" * len(complete))
+
+                with patch("fetch_pbf.subprocess.run", side_effect=download):
+                    with self.assertRaisesRegex(ValueError, "SHA256"):
+                        cache_source(output, primary, len(complete), digest, fallback_url=archive)
+                self.assertEqual(attempted, [primary, archive])
+                self.assertFalse(output.exists())
+
+                def download_verified(command, **kwargs):
+                    attempted.append(command[-1])
+                    if command[-1] == primary:
+                        raise subprocess.CalledProcessError(exit_code, command, output=status)
+                    Path(command[-2]).write_bytes(complete)
+
+                with patch("fetch_pbf.subprocess.run", side_effect=download_verified):
+                    cache_source(output, primary, len(complete), digest, fallback_url=archive)
+                    cache_source(output, primary, len(complete), digest, fallback_url=archive)
+                self.assertEqual(attempted, [primary, archive, primary, archive])
+                self.assertEqual(output.read_bytes(), complete)
+
     def test_failed_download_retries_then_reuses_verified_cache(self):
         complete = b"complete source"
         digest = hashlib.sha256(complete).hexdigest()

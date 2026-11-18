@@ -62,12 +62,25 @@ class PackTests(unittest.TestCase):
                 p=root/f['path']; p.parent.mkdir(parents=True,exist_ok=True); p.write_bytes(b'real bytes')
             (root/'places.json').write_bytes(encode(dict(format=1,places=[])))
             (root/'style.json').write_bytes(encode(dict(version=8,sources={'osm':dict(type='vector',url='pmtiles://{PACK_ROOT}/map.pmtiles')},layers=[])))
+            glyph = root/'glyphs/Noto Sans Regular/0-255.pbf'
+            glyph.parent.mkdir(parents=True)
+            glyph.write_bytes(b'glyph fixture')
+            (root/'.extra+@,resource').write_bytes(b'extra fixture')
             metadata=manifest(); del metadata['files']
             digest=generate(root,metadata); parsed=parse_manifest((root/'manifest.json').read_bytes(),digest)
             file=next(f for f in parsed['files'] if f['path']=='map.pmtiles')
             self.assertEqual(file['sha256'],hashlib.sha256(b'real bytes').hexdigest())
-            self.assertEqual(next(f for f in parsed['files'] if f['path']=='licenses/OSM.txt')['asset'],'licenses--OSM.txt')
+            assets = {f['path']: f['asset'] for f in parsed['files']}
+            self.assertEqual(assets['licenses/OSM.txt'], 'licenses--OSM.txt')
+            self.assertEqual(assets['glyphs/Noto Sans Regular/0-255.pbf'], 'glyphs--Noto-Sans-Regular--0-255.pbf')
+            self.assertEqual(assets['.extra+@,resource'], 'extra---resource')
             self.assertEqual(generate(root,metadata),digest)
+
+            conflicting = root/'glyphs/Noto-Sans-Regular/0-255.pbf'
+            conflicting.parent.mkdir(parents=True)
+            conflicting.write_bytes(b'another glyph fixture')
+            with self.assertRaisesRegex(ValueError, 'collision'):
+                generate(root,metadata)
 
     def test_checked_in_style_is_closed_and_cyrillic_complete(self):
         assets=Path(__file__).parent/'assets'

@@ -128,7 +128,7 @@ codesign --force --sign - "$OUT/device/TrailMeshValhalla.framework"
 codesign --force --sign - "$OUT/simulator/TrailMeshValhalla.framework"
 codesign --verify --strict --all-architectures "$OUT/device/TrailMeshValhalla.framework"
 codesign --verify --strict --all-architectures "$OUT/simulator/TrailMeshValhalla.framework"
-xcrun lipo -verify_arch arm64 x86_64 "$OUT/simulator/TrailMeshValhalla.framework/TrailMeshValhalla"
+xcrun lipo "$OUT/simulator/TrailMeshValhalla.framework/TrailMeshValhalla" -verify_arch arm64 x86_64
 mkdir -p "$ARTIFACTS"
 xcodebuild -create-xcframework -framework "$OUT/device/TrailMeshValhalla.framework" -framework "$OUT/simulator/TrailMeshValhalla.framework" -output "$ARTIFACTS/TrailMeshValhalla.xcframework"
 (cd "$ARTIFACTS" && ditto -c -k --sequesterRsrc --keepParent TrailMeshValhalla.xcframework "$OUT/TrailMeshValhalla.xcframework.zip")
