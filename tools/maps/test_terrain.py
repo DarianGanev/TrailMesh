@@ -57,7 +57,10 @@ class TerrainTests(unittest.TestCase):
             lock = build_mbtiles(output, [23.36, 42.16, 23.38, 42.18], 10, 10, fetch=fetch)
             with sqlite3.connect(output) as db:
                 self.assertEqual(db.execute("SELECT tile_row FROM tiles").fetchone()[0], 2**10 - 1 - calls[0][2])
-                self.assertEqual(dict(db.execute("SELECT name,value FROM metadata"))["format"], "png")
+                metadata = dict(db.execute("SELECT name,value FROM metadata"))
+                self.assertEqual(metadata["format"], "png")
+                for credit in ("Mapzen Terrain Tiles", "Copernicus EU-DEM", "USGS"):
+                    self.assertRegex(metadata["attribution"], rf'<a href="https://[^"]+">{credit}</a>')
             db.close()
             self.assertEqual(lock["tiles"][0]["imagerySources"], "eudem/test.tif")
             self.assertEqual(len(lock["tiles"][0]["sha256"]), 64)

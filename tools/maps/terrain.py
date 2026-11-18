@@ -25,6 +25,11 @@ ATTRIBUTION = (
     "information funded by the European Union — EU-DEM layers; SRTM terrain "
     "data courtesy of the U.S. Geological Survey."
 )
+ATTRIBUTION_HTML = (
+    '<a href="https://registry.opendata.aws/terrain-tiles/">Mapzen Terrain Tiles</a> / '
+    '<a href="https://land.copernicus.eu/en/faq/data-use-terms-and-conditions">Copernicus EU-DEM</a> / '
+    '<a href="https://www.usgs.gov/">USGS</a>'
+)
 
 
 def tile_coordinates(bounds, min_zoom=10, max_zoom=12):
@@ -141,7 +146,7 @@ def build_mbtiles(output, bounds, min_zoom=10, max_zoom=12, *, fetch=fetch_tile,
             )
             database.executemany("INSERT INTO metadata VALUES (?,?)", {
                 "name": "Rila shaded relief", "description": ATTRIBUTION,
-                "attribution": ATTRIBUTION, "format": "png", "type": "baselayer",
+                "attribution": ATTRIBUTION_HTML, "format": "png", "type": "baselayer",
                 "version": "1", "bounds": ",".join(map(str, bounds)),
                 "minzoom": str(min_zoom), "maxzoom": str(max_zoom), "encoding": "terrarium",
             }.items())

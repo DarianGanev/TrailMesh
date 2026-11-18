@@ -8,9 +8,15 @@ config=json.loads((source/'config-openmaptiles.json').read_text())
 config['layers']={k:v for k,v in config['layers'].items() if 'source' not in v}
 config['layers']['poi']['minzoom']=10
 config['layers']['mountain_peak']['minzoom']=10
+config['layers']['transportation_name_detail']['minzoom']=13
 config['settings']['filemetadata'].pop('tiles',None)
 config['settings']['name']='Rila hiking OSM'
-(out/'config.json').write_text(json.dumps(config))
+# Tilemaker reads settings.metadata for SQLite output. The PMTiles converter
+# carries the attribution through as TileJSON, where the renderer can read it.
+config['settings'].setdefault('metadata', {})['attribution'] = (
+    '<a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>'
+)
+(out/'config.json').write_text(json.dumps(config), encoding='utf-8')
 lua=(source/'process-openmaptiles.lua').read_text()
 lua=lua.replace('additional_languages = { }','additional_languages = { "bg", "en" }')
 lua=lua.replace('"alpine_hut", "aquarium"','"alpine_hut", "wilderness_hut", "aquarium"')

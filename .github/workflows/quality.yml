@@ -259,8 +259,12 @@ jobs:
             adb shell mkdir -p /data/local/tmp/trailmesh-map-pack
             adb push "$RUNNER_TEMP/Rila/pack/." /data/local/tmp/trailmesh-map-pack/
             adb push "$RUNNER_TEMP/Rila/smoke.json" /data/local/tmp/trailmesh-map-pack/smoke.json
-            adb root
-            timeout 30 adb wait-for-device
+            if [[ '${{ matrix.api }}' == 26 && "$(adb shell id -u | tr -d '\r')" != 0 ]]; then
+              # Oreo's Wi-Fi service requires privileges unavailable to its shell user.
+              adb root || true
+              timeout 30 adb wait-for-device
+              test "$(adb shell id -u | tr -d '\r')" = 0
+            fi
             adb shell getprop ro.kernel.qemu.opengles.version
             bash tools/ci/prepare_android_offline.sh
             cd apps/android && ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.trailmeshMapPack=/data/local/tmp/trailmesh-map-pack -Pandroid.testInstrumentationRunnerArguments.trailmeshRequireMapPack=true -Pandroid.testInstrumentationRunnerArguments.trailmeshManifestSha256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")"

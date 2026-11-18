@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -7,6 +8,17 @@ import unittest
 
 
 class TilemakerTests(unittest.TestCase):
+    def test_generated_mbtiles_config_includes_linked_osm_credit_and_trail_names(self):
+        tools = Path(__file__).resolve().parent
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run([sys.executable, tools / "prepare_tilemaker.py", tools / "upstream", directory], check=True)
+            config = json.loads((Path(directory) / "config.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            config["settings"]["metadata"]["attribution"],
+            '<a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>',
+        )
+        self.assertEqual(config["layers"]["transportation_name_detail"]["minzoom"], 13)
+
     def test_generated_lua_prioritizes_huts_and_shelters_on_mixed_tags(self):
         tools = Path(__file__).resolve().parent
         interpreter = shutil.which("lua5.4") or shutil.which("lua")

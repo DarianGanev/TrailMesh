@@ -196,7 +196,7 @@
       "source-layer": "transportation",
       "minzoom": 10,
       "paint": {
-        "line-color": "#a48b67",
+        "line-color": "#886c45",
         "line-width": [
           "interpolate",
           [
@@ -206,13 +206,9 @@
             "zoom"
           ],
           10,
-          1,
+          1.15,
           14,
-          2
-        ],
-        "line-dasharray": [
-          4,
-          2
+          2.35
         ]
       },
       "filter": [
@@ -222,7 +218,11 @@
           "class"
         ],
         "track"
-      ]
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      }
     },
     {
       "id": "trail-halo",
@@ -241,9 +241,9 @@
             "zoom"
           ],
           10,
-          2.5,
+          2.3,
           14,
-          4
+          3.5
         ]
       },
       "filter": [
@@ -262,7 +262,7 @@
       "source-layer": "transportation",
       "minzoom": 10,
       "paint": {
-        "line-color": "#a95c40",
+        "line-color": "#a14c33",
         "line-width": [
           "interpolate",
           [
@@ -272,13 +272,9 @@
             "zoom"
           ],
           10,
-          1.1,
+          1.2,
           14,
-          1.8
-        ],
-        "line-dasharray": [
-          3,
-          1.5
+          1.9
         ]
       },
       "filter": [
@@ -288,7 +284,11 @@
           "class"
         ],
         "path"
-      ]
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      }
     },
     {
       "id": "buildings",
@@ -317,7 +317,7 @@
           "coalesce",
           [
             "get",
-            "name"
+            "name:bg"
           ],
           [
             "get",
@@ -325,7 +325,7 @@
           ],
           [
             "get",
-            "name_int"
+            "name:en"
           ]
         ],
         "text-font": [
@@ -334,14 +334,29 @@
         "text-size": 13,
         "text-max-width": 10,
         "text-padding": 4
-      }
+      },
+      "filter": [
+        "any",
+        [
+          "has",
+          "name:bg"
+        ],
+        [
+          "has",
+          "name:latin"
+        ],
+        [
+          "has",
+          "name:en"
+        ]
+      ]
     },
     {
       "id": "water-names",
       "type": "symbol",
       "source": "osm",
       "source-layer": "water_name",
-      "minzoom": 12,
+      "minzoom": 14,
       "paint": {
         "text-color": "#377b91",
         "text-halo-color": "#fffdf5",
@@ -352,7 +367,7 @@
           "coalesce",
           [
             "get",
-            "name"
+            "name:bg"
           ],
           [
             "get",
@@ -360,7 +375,7 @@
           ],
           [
             "get",
-            "name_int"
+            "name:en"
           ]
         ],
         "text-font": [
@@ -369,7 +384,22 @@
         "text-size": 12,
         "text-max-width": 10,
         "text-padding": 4
-      }
+      },
+      "filter": [
+        "any",
+        [
+          "has",
+          "name:bg"
+        ],
+        [
+          "has",
+          "name:latin"
+        ],
+        [
+          "has",
+          "name:en"
+        ]
+      ]
     },
     {
       "id": "peaks",
@@ -390,7 +420,7 @@
             "coalesce",
             [
               "get",
-              "name"
+              "name:bg"
             ],
             [
               "get",
@@ -398,7 +428,7 @@
             ],
             [
               "get",
-              "name_int"
+              "name:en"
             ]
           ]
         ],
@@ -408,7 +438,22 @@
         "text-size": 13,
         "text-max-width": 10,
         "text-padding": 4
-      }
+      },
+      "filter": [
+        "any",
+        [
+          "has",
+          "name:bg"
+        ],
+        [
+          "has",
+          "name:latin"
+        ],
+        [
+          "has",
+          "name:en"
+        ]
+      ]
     },
     {
       "id": "huts",
@@ -422,17 +467,35 @@
         "text-halo-width": 1.6
       },
       "filter": [
-        "in",
+        "all",
         [
-          "get",
-          "subclass"
+          "in",
+          [
+            "get",
+            "subclass"
+          ],
+          [
+            "literal",
+            [
+              "alpine_hut",
+              "wilderness_hut",
+              "shelter"
+            ]
+          ]
         ],
         [
-          "literal",
+          "any",
           [
-            "alpine_hut",
-            "wilderness_hut",
-            "shelter"
+            "has",
+            "name:bg"
+          ],
+          [
+            "has",
+            "name:latin"
+          ],
+          [
+            "has",
+            "name:en"
           ]
         ]
       ],
@@ -444,7 +507,7 @@
             "coalesce",
             [
               "get",
-              "name"
+              "name:bg"
             ],
             [
               "get",
@@ -452,7 +515,7 @@
             ],
             [
               "get",
-              "name_int"
+              "name:en"
             ]
           ]
         ],
@@ -469,23 +532,41 @@
       "type": "symbol",
       "source": "osm",
       "source-layer": "transportation_name",
-      "minzoom": 14,
+      "minzoom": 13,
       "paint": {
         "text-color": "#8a6956",
         "text-halo-color": "#fffdf5",
         "text-halo-width": 1.6
       },
       "filter": [
-        "in",
+        "all",
         [
-          "get",
-          "class"
+          "in",
+          [
+            "get",
+            "class"
+          ],
+          [
+            "literal",
+            [
+              "path",
+              "track"
+            ]
+          ]
         ],
         [
-          "literal",
+          "any",
           [
-            "path",
-            "track"
+            "has",
+            "name:bg"
+          ],
+          [
+            "has",
+            "name:latin"
+          ],
+          [
+            "has",
+            "name:en"
           ]
         ]
       ],
@@ -494,7 +575,7 @@
           "coalesce",
           [
             "get",
-            "name"
+            "name:bg"
           ],
           [
             "get",
@@ -502,7 +583,7 @@
           ],
           [
             "get",
-            "name_int"
+            "name:en"
           ]
         ],
         "text-font": [
@@ -510,7 +591,9 @@
         ],
         "text-size": 11,
         "text-max-width": 10,
-        "text-padding": 4
+        "text-padding": 4,
+        "symbol-placement": "line",
+        "symbol-spacing": 350
       }
     }
   ]
