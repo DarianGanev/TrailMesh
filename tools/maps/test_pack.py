@@ -76,6 +76,33 @@ class PackTests(unittest.TestCase):
             m['files'].append(dict(path=p.relative_to(assets).as_posix(),asset=p.name+'-'+str(len(m['files'])),bytes=p.stat().st_size,sha256=hashlib.sha256(p.read_bytes()).hexdigest()))
         validate_manifest(m)
         validate_style(json.loads((Path(__file__).parent/'style.json').read_text(encoding='utf-8')),m)
+
+    def test_generator_requires_glyph_ranges_used_by_place_names_and_aliases(self):
+        source = Path(__file__).parent
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for path in (source/'assets').rglob('*.pbf'):
+                glyph = root/path.relative_to(source/'assets')
+                glyph.parent.mkdir(parents=True, exist_ok=True)
+                glyph.write_bytes(path.read_bytes())
+            for path in ('map.pmtiles', 'routing.tar', 'licenses/OSM.txt'):
+                output = root/path
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_bytes(b'fixture')
+            (root/'style.json').write_bytes((source/'style.json').read_bytes())
+            (root/'places.json').write_bytes(encode(dict(format=1, places=[
+                dict(id='node/11147926305', name='Fountain', aliases=['King Ferdinand\u2019s fountain'],
+                     kind='water', latE7=421700000, lonE7=233600000),
+            ])))
+            metadata = manifest()
+            del metadata['files']
+            glyph = root/'glyphs/Noto Sans Regular/8192-8447.pbf'
+            digest = hashlib.sha256(glyph.read_bytes()).hexdigest()
+            self.assertEqual(digest, 'f061e5b4e42e5925228534d8822b423a029569263db09f5ce44573600d45295f')
+            generate(root,metadata)
+            glyph.unlink()
+            with self.assertRaisesRegex(ValueError, 'missing glyph range: .*8192-8447'):
+                generate(root,metadata)
     def test_valid_manifest(self):
         self.assertEqual(validate_manifest(manifest())['id'], 'rila')
 

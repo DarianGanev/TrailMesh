@@ -17,6 +17,7 @@ struct MapDevelopmentView: View {
     @State private var installing = false
     @State private var start: Place?
     @State private var finish: Place?
+    @State private var maximumHikingDifficulty = 2
     @State private var selectedRoute: HikingRoute?
     @State private var operation: Task<Void, Never>?
     @State private var cancellation = InstallCancellation()
@@ -50,6 +51,11 @@ struct MapDevelopmentView: View {
                         }
                     }
                     Text("Start: \(start?.name ?? "unset"); finish: \(finish?.name ?? "unset")")
+                    Picker("Maximum hiking difficulty", selection: $maximumHikingDifficulty) {
+                        ForEach(0...6, id: \.self) { level in
+                            Text(level == 2 ? "2 (default)" : String(level)).tag(level)
+                        }
+                    }.disabled(busy)
                     Button("Calculate new route offline") { operation = Task { await route(installed) } }.disabled(start == nil || finish == nil || busy)
                     Button("Snapshot region center offline") { operation = Task { await snapshot(installed) } }.disabled(busy)
                     Text("Full geometry remains local. The relevance bridge explicitly rejects routes above 2048 points instead of truncating them.")
@@ -101,11 +107,16 @@ struct MapDevelopmentView: View {
     }
     @MainActor private func route(_ region: InstalledRegion) async {
         guard let start, let finish else { return }
+        let difficulty = maximumHikingDifficulty
         busy = true; defer { busy = false }
         let router = OfflineHikingRouter()
         do {
             try await router.open(region, lease: try await store.lease(region))
-            let result = try await router.route(from: MapPoint(latE7: start.latE7, lonE7: start.lonE7), to: MapPoint(latE7: finish.latE7, lonE7: finish.lonE7))
+            let result = try await router.route(
+                from: MapPoint(latE7: start.latE7, lonE7: start.lonE7),
+                to: MapPoint(latE7: finish.latE7, lonE7: finish.lonE7),
+                maximumHikingDifficulty: difficulty
+            )
             selectedRoute = result
             do {
                 _ = try result.reportRelevance()

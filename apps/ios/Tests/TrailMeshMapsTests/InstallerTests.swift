@@ -126,7 +126,7 @@ final class InstallerTests: XCTestCase {
         let replacement = try await restarted.install(manifestData: data, expectedSHA256: hash, releaseDirectory: release, transport: FixtureTransport(files: files, cancel: false))
         _ = try await restarted.verify(root: replacement.root, expectedSHA256: hash)
     }
-    func testCleanupFailureAfterRemovalDoesNotStrandFinalRevision() async throws {
+    func testRemovalReclaimsRetiredPackContainingSymlink() async throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let outside = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -137,30 +137,65 @@ final class InstallerTests: XCTestCase {
         let (data, files) = try fixture(), hash = RegionManifest.digest(data)
         let store = RegionStore(root: root)
         let release = URL(string: "https://example.com/release/")!
-        let installed = try await store.install(manifestData: data, expectedSHA256: hash, releaseDirectory: release, transport: FixtureTransport(files: files, cancel: false))
-        // Force the no-follow cleanup check to fail after retirement.
+        let transport = FixtureTransport(files: files, cancel: false)
+        let installed = try await store.install(manifestData: data, expectedSHA256: hash, releaseDirectory: release, transport: transport)
         try fm.createSymbolicLink(at: installed.root.appendingPathComponent("escape"), withDestinationURL: outside)
         try await store.remove(installed)
         XCTAssertFalse(fm.fileExists(atPath: installed.root.path))
-        XCTAssertFalse(try fm.contentsOfDirectory(atPath: root.appendingPathComponent(".trash").path).isEmpty)
-        _ = try await store.install(manifestData: data, expectedSHA256: hash, releaseDirectory: release, transport: FixtureTransport(files: files, cancel: false))
+        XCTAssertTrue(try fm.contentsOfDirectory(atPath: root.appendingPathComponent(".trash").path).isEmpty)
         XCTAssertEqual(try Data(contentsOf: sentinel), Data([42]))
+        _ = try await store.install(manifestData: data, expectedSHA256: hash, releaseDirectory: release, transport: transport)
     }
-    func testTrashSymlinkNeverDeletesExternalDataOrBlocksReinstall() async throws {
+
+    func testRecoveryReclaimsRetiredTreesAndLinksWithoutFollowingTargets() async throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let outside = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? fm.removeItem(at: root); try? fm.removeItem(at: outside) }
-        try fm.createDirectory(at: root.appendingPathComponent(".trash/interrupted"), withIntermediateDirectories: true)
-        try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+        let trash = root.appendingPathComponent(".trash")
+        let interrupted = trash.appendingPathComponent("interrupted")
+        let healthy = trash.appendingPathComponent("healthy")
+        for dir in [outside, interrupted, healthy] {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
         let sentinel = outside.appendingPathComponent("keep")
         try Data([42]).write(to: sentinel)
-        try fm.createSymbolicLink(at: root.appendingPathComponent(".trash/interrupted/escape"), withDestinationURL: outside)
-        let (data, files) = try fixture(), hash = RegionManifest.digest(data)
+        for dir in [interrupted, healthy] {
+            try Data([9]).write(to: dir.appendingPathComponent("routing.tar"))
+        }
+        try fm.createSymbolicLink(at: interrupted.appendingPathComponent("escape"), withDestinationURL: outside)
+        try fm.createSymbolicLink(at: interrupted.appendingPathComponent("broken"), withDestinationURL: outside.appendingPathComponent("missing"))
+        try fm.createSymbolicLink(at: trash.appendingPathComponent("retired-link"), withDestinationURL: outside)
         let store = RegionStore(root: root)
-        _ = try await store.install(manifestData: data, expectedSHA256: hash, releaseDirectory: URL(string: "https://example.com/release/")!, transport: FixtureTransport(files: files, cancel: false))
+        _ = await store.discover(catalog: [:])
+        XCTAssertTrue(try fm.contentsOfDirectory(atPath: trash.path).isEmpty)
         XCTAssertEqual(try Data(contentsOf: sentinel), Data([42]))
-        XCTAssertTrue(fm.fileExists(atPath: root.appendingPathComponent(".trash/interrupted/escape").path))
+        XCTAssertFalse(fm.fileExists(atPath: outside.appendingPathComponent("missing").path))
+    }
+
+    func testRecoveryContinuesAfterRetiredTreeCannotBeDeleted() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let trash = root.appendingPathComponent(".trash")
+        let blocked = trash.appendingPathComponent("a-blocked")
+        let healthy = trash.appendingPathComponent("b-healthy")
+        defer {
+            try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: blocked.path)
+            try? fm.removeItem(at: root)
+        }
+        for dir in [blocked, healthy] {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            try Data([9]).write(to: dir.appendingPathComponent("routing.tar"))
+        }
+        try fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: blocked.path)
+        try XCTSkipIf(fm.isWritableFile(atPath: blocked.path), "filesystem allows deletion despite directory permissions")
+        let store = RegionStore(root: root)
+        _ = await store.discover(catalog: [:])
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: trash.path), ["a-blocked"])
+        XCTAssertEqual(try Data(contentsOf: blocked.appendingPathComponent("routing.tar")), Data([9]))
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: blocked.path)
+        _ = await store.discover(catalog: [:])
+        XCTAssertTrue(try fm.contentsOfDirectory(atPath: trash.path).isEmpty)
     }
     private func fixture() throws -> (Data, [String: Data]) {
         var archive = Data(repeating: 0, count: 127)

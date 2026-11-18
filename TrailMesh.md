@@ -966,7 +966,7 @@ Do not assume any MBTiles or PMTiles file can be opened by every renderer/versio
 
 The user selects a start and destination by local place search or map coordinates. Compute the hiking route on the phone using the installed region graph. Return graph-derived geometry, distance, and estimated walking time. Distinguish missing data, outside coverage, a distant path snap, and no connected route. Never replace routing failure with a straight line presented as a walking route.
 
-Use pedestrian routing with access, restriction, and construction checks enabled. The initial hiking difficulty ceiling is Valhalla level 2. Missing difficulty tags do not establish easy or safe terrain. Routing uses dated map data and cannot establish current trail conditions.
+Use pedestrian routing with access, restriction, and construction checks enabled. Valhalla defaults to difficulty level 2, with an explicit selection from 0 through 6. The mapped Malyovitsa summit approach requires level 3 for the demonstration route. Missing difficulty tags do not establish easy or safe terrain. Routing uses dated map data and cannot establish current trail conditions.
 
 Keep full route geometry locally for map display. The existing relevance contract permits at most 2048 E7 points. A longer route requires tested bounded-error simplification or an explicit route-too-complex result. Do not truncate or sparsely sample it, which would silently change report selection. Exact route geometry must not be transmitted during report encounters or diagnostic export.
 

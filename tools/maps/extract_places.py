@@ -47,6 +47,10 @@ if __name__=='__main__':
     open(sys.argv[2],'wb').write(encode(doc))
     candidates=[p for p in doc['places'] if any('мальовиц' in s.lower() or 'malyovits' in s.lower() or 'maliovits' in s.lower() for s in [p['name']]+p['aliases'])]
     hut=next(p for p in candidates if p['kind']=='hut'); peak=next(p for p in candidates if p['kind']=='peak')
-    smoke=dict(format=1,description='Public OSM Malyovitsa hut to peak; graph verification only, not a safety recommendation',start=hut,end=peak,
+    # Summit approaches in this extract include a SAC 3 path. The normal SAC 2
+    # cap excludes it, so the smoke route must deliberately opt in to SAC 3.
+    smoke=dict(format=1,maximumHikingDifficulty=3,
+               description='Public OSM Malyovitsa hut to peak, explicit mapped difficulty 3; graph verification only, not a safety recommendation',
+               start=hut,end=peak,
                **{'from':{'latE7':hut['latE7'],'lonE7':hut['lonE7']},'to':{'latE7':peak['latE7'],'lonE7':peak['lonE7']},'query':'Мальовица'})
     open(sys.argv[3],'wb').write(encode(smoke))

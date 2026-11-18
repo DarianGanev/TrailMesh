@@ -205,8 +205,8 @@ public actor RegionStore {
         guard index.places.allSatisfy({ manifest.contains(MapPoint(latE7: $0.latE7, lonE7: $0.lonE7)) }) else { throw MapFailure.corrupt }
         return InstalledRegion(manifest: manifest, root: directory)
     }
-    // Only retired directories live here. Publication and retirement share the
-    // root's lock; cleanup never touches a ready revision or follows a symlink.
+    // Retirement and cleanup share the root's lock so only retired entries
+    // are cleaned and no two stores try to delete the same tree.
     private func recoverAbandonedRemovals() {
         leases.withMaintenance { try? cleanTrash() }
     }
@@ -215,11 +215,12 @@ public actor RegionStore {
         let trash = root.appendingPathComponent(".trash")
         try safeDirectory(trash)
         guard fm.fileExists(atPath: trash.path) else { return }
-        for retired in try fm.contentsOfDirectory(at: trash, includingPropertiesForKeys: nil) {
-            try safeDirectory(retired)
-            guard let walker = fm.enumerator(at: retired, includingPropertiesForKeys: [.isSymbolicLinkKey], options: []) else { throw MapFailure.corrupt }
-            for case let child as URL in walker { try safeDirectory(child) }
-            try fm.removeItem(at: retired)
+        for name in try fm.contentsOfDirectory(atPath: trash.path).sorted() {
+            guard name != ".", name != "..", !name.contains("/") else { continue }
+            // The parent was validated above. Keep the child path lexical:
+            // Darwin's recursive removal unlinks symlinks without following them.
+            // A failed entry can be retried without holding up other retirements.
+            try? fm.removeItem(atPath: trash.path + "/" + name)
         }
     }
     public func remove(_ region: InstalledRegion) throws {

@@ -5,7 +5,12 @@ import TrailMeshReports
 @testable import TrailMesh
 
 final class NativeOfflineMapsTests: XCTestCase {
-    private struct Smoke: Decodable { let from: MapPoint; let to: MapPoint; let query: String }
+    private struct Smoke: Decodable {
+        let from: MapPoint
+        let to: MapPoint
+        let query: String
+        let maximumHikingDifficulty: Int
+    }
     @MainActor
     func testOfflineHTTPBlockerFailsClosed() async throws {
         OfflineHTTPBlocker.reset()
@@ -34,10 +39,13 @@ final class NativeOfflineMapsTests: XCTestCase {
             throw MapFailure.corrupt
         }
         let external = URL(fileURLWithPath: path)
+        let manifest = try RegionManifest.parse(
+            Data(contentsOf: external.appendingPathComponent("manifest.json")), expectedSHA256: hash
+        )
         let smoke = try JSONDecoder().decode(Smoke.self, from: Data(contentsOf: external.deletingLastPathComponent().appendingPathComponent("smoke.json")))
         let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("offline-map-smoke/\(hash)")
-        let copy = root.appendingPathComponent("rila/fixture")
+        let copy = root.appendingPathComponent(manifest.key)
         let reopened = FileManager.default.fileExists(atPath: copy.path)
         if !reopened {
             try FileManager.default.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -48,12 +56,22 @@ final class NativeOfflineMapsTests: XCTestCase {
         let store = RegionStore(root: root)
         OfflineHTTPBlocker.reset()
         OfflineHTTPBlocker.configureRenderer()
-        let region = try await store.verify(root: copy, expectedSHA256: hash)
+        let region = try await store.openInstalled(id: manifest.id, revision: manifest.revision, expectedSHA256: hash)
         XCTAssertFalse(try PlaceIndex(data: Data(contentsOf: copy.appendingPathComponent("places.json"))).search(smoke.query).isEmpty)
         let router = OfflineHikingRouter()
-        for _ in 0..<2 {
+        for attempt in 0..<2 {
             try await router.open(region, lease: try await store.lease(region))
-            let route = try await router.route(from: smoke.from, to: smoke.to)
+            if attempt == 0 {
+                do {
+                    _ = try await router.route(from: smoke.from, to: smoke.to)
+                    XCTFail("The summit fixture requires an explicit higher hiking difficulty")
+                } catch {
+                    XCTAssertEqual(error as? MapFailure, .noRoute)
+                }
+            }
+            let route = try await router.route(
+                from: smoke.from, to: smoke.to, maximumHikingDifficulty: smoke.maximumHikingDifficulty
+            )
             XCTAssertGreaterThan(route.points.count, 2)
             XCTAssertGreaterThan(route.distanceKm, 0)
             let context = RelevanceContext(route: try route.reportRelevance())
@@ -76,7 +94,7 @@ final class NativeOfflineMapsTests: XCTestCase {
         XCTAssertEqual(OfflineHTTPBlocker.attempts, 0, "A complete local pack must not attempt HTTP/HTTPS")
         // Keep the verified pack for a second invocation after process shutdown.
         // Core installer tests cover successful removal after releasing leases.
-        _ = try await store.verify(root: copy, expectedSHA256: hash)
+        _ = try await store.openInstalled(id: manifest.id, revision: manifest.revision, expectedSHA256: hash)
     }
 
     @MainActor

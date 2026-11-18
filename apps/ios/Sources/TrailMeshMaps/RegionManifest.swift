@@ -2,7 +2,7 @@ import Foundation
 import CryptoKit
 
 public enum MapFailure: Error, Equatable, Sendable {
-    case unavailable, corrupt, space, cancelled, outsideCoverage, noRoute, invalidEngine, busy, relevanceTooComplex
+    case unavailable, corrupt, space, cancelled, outsideCoverage, noRoute, invalidEngine, busy, relevanceTooComplex, invalidDifficulty
 }
 
 public struct MapPoint: Equatable, Codable, Sendable {

@@ -58,7 +58,7 @@ build_slice() {
   printf 'framework module TrailMeshValhalla { umbrella header "TrailMeshValhalla.h" export * }\n' > "$framework/Modules/module.modulemap"
   cp -R "$OUT/tzdata" "$framework/tzdata"
   cp -R "$PACKAGE/Licenses" "$framework/Licenses"
-  xcrun --sdk "$sdk" clang++ -std=c++17 -arch "$arch" -target "$target" \
+  xcrun --sdk "$sdk" clang++ -std=c++20 -arch "$arch" -target "$target" \
     -isysroot "$(xcrun --sdk "$sdk" --show-sdk-path)" -fvisibility=hidden -fvisibility-inlines-hidden -DUSE_OS_TZDB=0 -DHAS_REMOTE_API=0 -DAUTO_DOWNLOAD=0 \
     -I"$BRIDGE/include" -I"$headers" -c "$BRIDGE/router.cpp" -o "$OUT/$identifier/router.o"
   xcrun --sdk "$sdk" clang++ -dynamiclib -arch "$arch" -target "$target" \

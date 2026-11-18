@@ -28,7 +28,8 @@ enum class MapError {
     RELEVANCE_TOO_COMPLEX,
 }
 
-class MapFailure(val reason: MapError) : Exception(reason.name)
+class MapFailure(val reason: MapError, val engineCode: Long? = null) :
+    Exception(if (engineCode == null) reason.name else "${reason.name} (Valhalla code $engineCode)")
 
 internal fun need(ok: Boolean, reason: MapError = MapError.CORRUPT) {
     if (!ok) throw MapFailure(reason)

@@ -197,6 +197,41 @@ class RegionSafetyTest {
         }
     }
 
+    @Test
+    fun `only recognized native route errors are no route`() {
+        val point = MapPoint(420000000, 230000000)
+        for ((code, reason) in listOf(171 to MapError.NO_ROUTE, 442 to MapError.NO_ROUTE,
+                                     -1 to MapError.INVALID_ENGINE, 500 to MapError.INVALID_ENGINE)) {
+            failure(reason) {
+                RouteParser.parse("""{"code":$code,"message":"native detail"}""", point, point)
+            }
+        }
+    }
+
+    @Test
+    fun `explicit hiking difficulty preserves other route options`() {
+        val bounds = BoundsE7(230000000, 420000000, 240000000, 430000000)
+        val start = MapPoint(421887569, 233742538)
+        val end = MapPoint(421738164, 233630233)
+        fun request(difficulty: Int? = null): Map<String, Any?> {
+            val raw = if (difficulty == null) RouteParser.request(start, end, bounds)
+                      else RouteParser.request(start, end, bounds, difficulty)
+            return MapJson.parse(raw.toByteArray(), 4096).obj()
+        }
+        val defaults = request()
+        val explicit = request(3)
+        assertEquals(defaults - "costing_options", explicit - "costing_options")
+        assertEquals(listOf(100L, 100L), explicit["locations"].arr().map { it.obj()["search_cutoff"].integer() })
+        for ((document, expected) in listOf(defaults to 2L, explicit to 3L, request(0) to 0L, request(6) to 6L)) {
+            val pedestrian = document["costing_options"].obj()["pedestrian"].obj()
+            assertEquals(expected, pedestrian["max_hiking_difficulty"].integer())
+            assertEquals(0L, pedestrian["use_ferry"].integer())
+        }
+        for (difficulty in listOf(-1, 7)) {
+            assertThrows(IllegalArgumentException::class.java) { request(difficulty) }
+        }
+    }
+
     private fun failure(reason: MapError, block: () -> Unit) {
         try {
             block()

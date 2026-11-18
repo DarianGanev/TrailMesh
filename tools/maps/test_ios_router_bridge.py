@@ -11,7 +11,7 @@ class IOSRouterBridgeTests(unittest.TestCase):
     def test_opaque_boundary_contains_exceptions_and_bounds_owned_output(self):
         compiler = shutil.which("g++") or shutil.which("clang++")
         if not compiler:
-            self.skipTest("C++17 compiler required for native bridge boundary regression")
+            self.skipTest("C++20 compiler required for native bridge boundary regression")
         with tempfile.TemporaryDirectory(prefix="trailmesh-bridge-") as directory:
             work = Path(directory)
             (work / "include").mkdir()
@@ -70,7 +70,7 @@ int main() {
 }
 ''')
             executable = work / ("bridge-test.exe" if __import__("os").name == "nt" else "bridge-test")
-            subprocess.run([compiler, "-std=c++17", "-I" + str(work),
+            subprocess.run([compiler, "-std=c++20", "-I" + str(work),
                             "-I" + str(ROOT / "apps/ios/NativeRouting/Bridge/include"),
                             str(ROOT / "apps/ios/NativeRouting/Bridge/router.cpp"),
                             str(work / "test.cpp"), "-o", str(executable)], check=True, capture_output=True)

@@ -1,10 +1,14 @@
 package org.trailmesh.app.maps
 
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import okhttp3.OkHttpClient
@@ -39,6 +43,15 @@ class OfflineRegionSmokeTest {
             args.getString("trailmeshManifestSha256")
                 ?: File(source, "manifest.sha256").readText().trim().substringBefore(' ')
         val context = instrumentation.targetContext
+        val connectivity = requireNotNull(context.getSystemService(ConnectivityManager::class.java))
+        fun assertOffline() {
+            val activeCapabilities = connectivity.activeNetwork?.let(connectivity::getNetworkCapabilities)
+            assertFalse(
+                "the emulator still has an active Internet-capable network",
+                activeCapabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true,
+            )
+        }
+        assertOffline()
         val root = File(context.filesDir, "offline-smoke-regions")
         val verifyOnly = args.getString("trailmeshMapPhase") == "verify"
         if (!verifyOnly) root.deleteRecursively()
@@ -74,6 +87,8 @@ class OfflineRegionSmokeTest {
             val p = smoke[key].obj()
             return MapPoint(p["latE7"].integer(), p["lonE7"].integer())
         }
+        val maximumDifficulty = smoke["maximumHikingDifficulty"].integer()
+        assertTrue("fixture must demonstrate an explicit hiking difficulty above the default", maximumDifficulty in 3L..6L)
         val start = point("from")
         val end = point("to")
         val lease = restarted.acquire(parsed.id, parsed.revision)
@@ -120,7 +135,12 @@ class OfflineRegionSmokeTest {
                     NativeValhallaFactory(File(context.cacheDir, "smoke-router")),
                 )
             try {
-                val route = router.route(start, end).get(120, TimeUnit.SECONDS)
+                val rejected = assertThrows(ExecutionException::class.java) {
+                    router.route(start, end).get(120, TimeUnit.SECONDS)
+                }.cause as? MapFailure
+                assertEquals(MapError.NO_ROUTE, rejected?.reason)
+                assertEquals(171L, rejected?.engineCode)
+                val route = router.route(start, end, maximumDifficulty.toInt()).get(120, TimeUnit.SECONDS)
                 assertTrue(route.distanceKm > 0)
                 assertTrue(route.seconds > 0)
                 assertTrue(route.points.size >= 2)
@@ -130,6 +150,15 @@ class OfflineRegionSmokeTest {
                 val sofiaReport = nearReport.copy(id = "sofia", point = GeoPoint(426977000, 233219000))
                 assertEquals(RelevanceDecision.eligible, RelevancePolicy.evaluate(nearReport, relevance, 100))
                 assertEquals(RelevanceDecision.notRelevant, RelevancePolicy.evaluate(sofiaReport, relevance, 100))
+                val startSnapMeters = RouteParser.distance(start, route.points.first())
+                val endSnapMeters = RouteParser.distance(end, route.points.last())
+                assertOffline()
+                Log.i(
+                    "TrailMeshOfflineSmoke",
+                    "difficulty=$maximumDifficulty defaultCode=${rejected?.engineCode} routeKm=${route.distanceKm} " +
+                        "seconds=${route.seconds} points=${route.points.size} startSnapMeters=$startSnapMeters " +
+                        "endSnapMeters=$endSnapMeters activeInternet=false",
+                )
                 val latch = CountDownLatch(1)
                 var error: String? = null
                 var bitmap: android.graphics.Bitmap? = null
@@ -182,6 +211,7 @@ class OfflineRegionSmokeTest {
                         image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
                     }
                     assertEquals("map attempted HTTP requests", 0, attempts.get())
+                    assertOffline()
                     File(context.filesDir, "offline-smoke-evidence.json")
                         .writeText(
                             MapJson.encode(
@@ -193,6 +223,13 @@ class OfflineRegionSmokeTest {
                                     "renderer" to "13.5.4",
                                     "router" to "0.6.6",
                                     "routePointCount" to route.points.size,
+                                    "routeDistanceKm" to route.distanceKm,
+                                    "routeSeconds" to route.seconds,
+                                    "startSnapMeters" to startSnapMeters,
+                                    "endSnapMeters" to endSnapMeters,
+                                    "maximumHikingDifficulty" to maximumDifficulty,
+                                    "defaultDifficultyEngineCode" to rejected?.engineCode,
+                                    "activeInternetNetwork" to false,
                                     "httpAttempts" to attempts.get(),
                                     "snapshotDistinctColors" to colors.size,
                                     "attribution" to parsed.attribution,

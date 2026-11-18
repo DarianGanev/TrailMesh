@@ -2,6 +2,7 @@ package org.trailmesh.app.maps
 
 import android.app.Activity
 import android.os.Bundle
+import android.text.InputType
 import android.widget.*
 import java.io.File
 import org.maplibre.android.MapLibre
@@ -49,6 +50,9 @@ class MapsDiagnosticsActivity : Activity() {
         val pinnedHash = field("Catalog manifest SHA-256")
         val query = field("Local place name, Cyrillic or Latin")
         val endpoints = field("from latE7,lonE7,to latE7,lonE7")
+        val difficulty = field("Maximum mapped hiking difficulty (0–6, default 2)").apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+        }
         output = TextView(this)
         content.addView(output)
         fun job(block: () -> String) {
@@ -115,6 +119,13 @@ class MapsDiagnosticsActivity : Activity() {
         }
         button("Calculate local hiking route") {
             val requestedEndpoints = endpoints.text.toString()
+            val difficultyInput = difficulty.text.toString().trim()
+            val maximumDifficulty = if (difficultyInput.isEmpty()) RouteParser.DEFAULT_HIKING_DIFFICULTY
+                                    else difficultyInput.toIntOrNull()
+            if (maximumDifficulty == null || maximumDifficulty !in 0..6) {
+                output.text = "Enter a hiking difficulty between 0 and 6."
+                return@button
+            }
             job {
                 val region = selected ?: throw MapFailure(MapError.UNAVAILABLE)
                 val e = requestedEndpoints.split(',').map { it.trim().toLong() }
@@ -128,7 +139,7 @@ class MapsDiagnosticsActivity : Activity() {
                             NativeValhallaFactory(File(cacheDir, "offline-router")),
                         )
                         .also { router = it }
-                val route = r.route(MapPoint(e[0], e[1]), MapPoint(e[2], e[3])).get()
+                val route = r.route(MapPoint(e[0], e[1]), MapPoint(e[2], e[3]), maximumDifficulty).get()
                 val relevance =
                     try {
                         route.relevance()
@@ -136,7 +147,7 @@ class MapsDiagnosticsActivity : Activity() {
                     } catch (_: MapFailure) {
                         "relevance too complex"
                     }
-                "Local route: ${route.distanceKm} km, ${route.seconds} seconds, ${route.points.size} points; $relevance. No safety or live-condition guarantee."
+                "Local route: ${route.distanceKm} km, ${route.seconds} seconds, ${route.points.size} points with maximum mapped difficulty $maximumDifficulty; $relevance. No safety or live-condition guarantee."
             }
         }
         val preview = ImageView(this)

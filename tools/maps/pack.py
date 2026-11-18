@@ -94,7 +94,7 @@ def validate_places(doc,bounds):
     return doc
 
 
-def validate_style(style,manifest):
+def validate_style(style,manifest,places=()):
     require(isinstance(style,dict) and style.get('version')==8,'style version')
     require(not ({'imports','terrain'} & set(style)),'unsupported style imports/terrain')
     paths={f['path'] for f in manifest['files']}
@@ -127,9 +127,14 @@ def validate_style(style,manifest):
             if 'text-field' in layout:
                 font=layout.get('text-font'); require(isinstance(font,list) and font and all(isinstance(f,str) for f in font),'literal text font')
                 fonts.add(','.join(font))
-        for font in fonts:
-            for interval in ('0-255','256-511','1024-1279'):
-                require('glyphs/'+font+'/'+interval+'.pbf' in paths,'missing Latin/Cyrillic glyph range')
+        blocks = {0, 256, 1024}  # Baseline Latin, extended Latin and Cyrillic.
+        for place in places:
+            for name in (place['name'], *place['aliases']):
+                blocks.update(ord(character) // 256 * 256 for character in name)
+        for font in sorted(fonts):
+            for start in sorted(blocks):
+                path = f'glyphs/{font}/{start}-{start + 255}.pbf'
+                require(path in paths, f'missing glyph range: {path}')
     return style
 
 
@@ -152,8 +157,8 @@ def generate(root, metadata):
             path=p.relative_to(root).as_posix()
             files.append(dict(path=path,asset=path.replace('/','--'),bytes=p.stat().st_size,sha256=sha256_file(p)))
     m=validate_manifest(dict(metadata,files=files))
-    validate_places(parse_json((root/'places.json').read_bytes(),RESOURCE_MAX_BYTES['places.json']),m['boundsE7'])
-    validate_style(parse_json((root/'style.json').read_bytes(),RESOURCE_MAX_BYTES['style.json']),m)
+    places = validate_places(parse_json((root/'places.json').read_bytes(),RESOURCE_MAX_BYTES['places.json']),m['boundsE7'])
+    validate_style(parse_json((root/'style.json').read_bytes(),RESOURCE_MAX_BYTES['style.json']),m,places['places'])
     raw=encode(m); require(len(raw)<=262144,'manifest bytes')
     (root/'manifest.json').write_bytes(raw)
     return hashlib.sha256(raw).hexdigest()

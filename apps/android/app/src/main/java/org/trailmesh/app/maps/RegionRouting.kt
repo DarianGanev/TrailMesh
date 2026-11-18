@@ -55,8 +55,10 @@ object RouteParser {
         try {
             need(s.length <= 4 * 1024 * 1024, MapError.INVALID_ENGINE)
             val o = MapJson.parse(s.toByteArray(Charsets.UTF_8), 4 * 1024 * 1024).obj()
-            if (o.containsKey("error") || o.containsKey("error_code") || o.containsKey("code"))
-                throw MapFailure(MapError.NO_ROUTE)
+            if (o.containsKey("error") || o.containsKey("error_code") || o.containsKey("code")) {
+                val code = (o["error_code"] ?: o["code"])?.integer()
+                throw engineFailure(code)
+            }
             val trip = o["trip"].obj()
             need(trip["status"].integer() == 0L, MapError.NO_ROUTE)
             need(trip["units"].str() == "kilometers", MapError.INVALID_ENGINE)
@@ -78,7 +80,23 @@ object RouteParser {
             throw MapFailure(MapError.INVALID_ENGINE)
         }
 
-    fun request(a: MapPoint, b: MapPoint, bounds: BoundsE7): String {
+    internal const val DEFAULT_HIKING_DIFFICULTY = 2
+
+    internal fun engineFailure(code: Long?): MapFailure {
+        val reason = when (code) {
+            170L, 171L, 441L, 442L -> MapError.NO_ROUTE
+            else -> MapError.INVALID_ENGINE
+        }
+        return MapFailure(reason, code)
+    }
+
+    fun request(
+        a: MapPoint,
+        b: MapPoint,
+        bounds: BoundsE7,
+        maximumHikingDifficulty: Int = DEFAULT_HIKING_DIFFICULTY,
+    ): String {
+        require(maximumHikingDifficulty in 0..6) { "Hiking difficulty must be between 0 and 6" }
         need(bounds.contains(a) && bounds.contains(b), MapError.OUTSIDE_COVERAGE)
         return MapJson.encode(
             mapOf(
@@ -92,7 +110,10 @@ object RouteParser {
                     },
                 "costing" to "pedestrian",
                 "costing_options" to
-                    mapOf("pedestrian" to mapOf("max_hiking_difficulty" to 2, "use_ferry" to 0)),
+                    mapOf(
+                        "pedestrian" to
+                            mapOf("max_hiking_difficulty" to maximumHikingDifficulty, "use_ferry" to 0)
+                    ),
                 "units" to "kilometers",
                 "format" to "json",
                 "shape_format" to "polyline6",
@@ -132,14 +153,18 @@ class RegionRouter(
     private var closed = false
 
     @Synchronized
-    fun route(start: MapPoint, end: MapPoint): Future<HikingRoute> {
+    fun route(
+        start: MapPoint,
+        end: MapPoint,
+        maximumHikingDifficulty: Int = RouteParser.DEFAULT_HIKING_DIFFICULTY,
+    ): Future<HikingRoute> {
         if (closed)
             return CompletableFuture<HikingRoute>().apply {
                 completeExceptionally(MapFailure(MapError.UNAVAILABLE))
             }
         return worker.submit<HikingRoute> {
             val l = lease ?: store.acquire(id, revision).also { lease = it }
-            val request = RouteParser.request(start, end, l.region.manifest.bounds)
+            val request = RouteParser.request(start, end, l.region.manifest.bounds, maximumHikingDifficulty)
             try {
                 val e =
                     engine

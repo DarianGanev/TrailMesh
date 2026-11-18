@@ -41,9 +41,39 @@ final class MapsTests: XCTestCase {
         }
         XCTAssertTrue(RegionManifest.safePath("glyphs/Noto Sans/1024-1279.pbf"))
     }
+    func testRouteRequestKeepsDefaultDifficultyAndBoundsExplicitSelection() throws {
+        let manifest = RegionManifest(
+            format: 1, id: "rila", revision: "test", name: "Rila", dataDate: "2026-11-16",
+            boundsE7: [0, 0, 100, 100], minZoom: 0, maxZoom: 14, engine: "valhalla-3.9.2",
+            attribution: "Test", files: []
+        )
+        let from = MapPoint(latE7: 10, lonE7: 20), to = MapPoint(latE7: 30, lonE7: 40)
+        func encodedDifficulty(_ request: String) throws -> Int {
+            let result = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(request.utf8)) as? [String: Any])
+            let options = try XCTUnwrap(result["costing_options"] as? [String: [String: Int]])
+            XCTAssertEqual(options["pedestrian"]?["use_ferry"], 0)
+            let locations = try XCTUnwrap(result["locations"] as? [[String: Double]])
+            XCTAssertEqual(locations.compactMap { $0["search_cutoff"] }, [100, 100])
+            return try XCTUnwrap(options["pedestrian"]?["max_hiking_difficulty"])
+        }
+        XCTAssertEqual(try encodedDifficulty(HikingRoute.request(from: from, to: to, manifest: manifest)), 2)
+        for difficulty in [0, 3, 6] {
+            let request = try HikingRoute.request(from: from, to: to, manifest: manifest, maximumHikingDifficulty: difficulty)
+            XCTAssertEqual(try encodedDifficulty(request), difficulty)
+        }
+        for difficulty in [-1, 7] {
+            XCTAssertThrowsError(try HikingRoute.request(from: from, to: to, manifest: manifest, maximumHikingDifficulty: difficulty)) {
+                XCTAssertEqual($0 as? MapFailure, .invalidDifficulty)
+            }
+        }
+    }
     func testRouteErrorBodyAndMalformedJSONHaveDistinctFailures() {
         let point = MapPoint(latE7: 0, lonE7: 0)
         for (body, expected) in [(#"{"error_code":442,"error":"No path could be found"}"#, MapFailure.noRoute),
+                                 (#"{"code":442,"error":"No path could be found"}"#, MapFailure.noRoute),
+                                 (#"{"code":-1,"error":"unknown exception"}"#, MapFailure.invalidEngine),
+                                 (#"{"code":999,"error":"unknown error"}"#, MapFailure.invalidEngine),
+                                 (#"{"error":"missing error code"}"#, MapFailure.invalidEngine),
                                  ("malformed", MapFailure.invalidEngine)] {
             XCTAssertThrowsError(try HikingRoute.parse(Data(body.utf8), from: point, to: point)) {
                 XCTAssertEqual($0 as? MapFailure, expected)

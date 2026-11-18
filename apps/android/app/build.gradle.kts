@@ -31,7 +31,7 @@ android {
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
 dependencies {
-    implementation("org.maplibre.gl:android-sdk:13.5.4")
+    implementation("org.maplibre.gl:android-sdk-opengl:13.5.4")
     implementation("io.github.rallista:valhalla-mobile:0.6.6")
     implementation("com.google.code.gson:gson:2.13.2")
     implementation("com.google.android.gms:play-services-nearby:19.5.1")

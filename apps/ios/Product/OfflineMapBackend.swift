@@ -54,15 +54,17 @@ final class OfflineHikingRouter: @unchecked Sendable {
             }
         }
     }
-    func route(from: MapPoint, to: MapPoint) async throws -> HikingRoute {
+    func route(from: MapPoint, to: MapPoint, maximumHikingDifficulty: Int = 2) async throws -> HikingRoute {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
                 do {
                     guard let region, let engine else { throw MapFailure.unavailable }
-                    let request = try HikingRoute.request(from: from, to: to, manifest: region.manifest)
+                    let request = try HikingRoute.request(
+                        from: from, to: to, manifest: region.manifest, maximumHikingDifficulty: maximumHikingDifficulty
+                    )
                     let response: Data
                     do { response = try engine.route(rawRequest: request) }
-                    catch { throw MapFailure.noRoute }
+                    catch { throw MapFailure.invalidEngine }
                     let route = try HikingRoute.parse(response, from: from, to: to)
                     try route.validateCoverage(region.manifest)
                     continuation.resume(returning: route)
