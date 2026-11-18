@@ -3,7 +3,7 @@ import XCTest
 
 final class ManifestVectorTests: XCTestCase {
     func testSharedLiteralManifestVectors() throws {
-        let url = try XCTUnwrap(Bundle.module.url(forResource: "region-v1-vectors", withExtension: "json", subdirectory: "Fixtures"))
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "region-v1-vectors", withExtension: "json"))
         let input = try Data(contentsOf: url)
         let cases = try literalCases(input)
         XCTAssertGreaterThan(cases.count, 10)

@@ -184,6 +184,19 @@ class RegionSafetyTest {
         assertTrue(safePath("glyphs-Noto Sans Regular-1024-1279.pbf"))
     }
 
+    @Test
+    fun `absent region is unavailable and malformed region is corrupt`() {
+        val root = Files.createTempDirectory("region-missing").toFile()
+        try {
+            val store = RegionStore(root)
+            failure(MapError.UNAVAILABLE) { store.acquire("rila", "v1") }
+            File(root, "rila--v1").mkdir()
+            failure(MapError.CORRUPT) { store.acquire("rila", "v1") }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun failure(reason: MapError, block: () -> Unit) {
         try {
             block()

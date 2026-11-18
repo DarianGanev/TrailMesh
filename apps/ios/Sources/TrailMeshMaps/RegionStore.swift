@@ -25,8 +25,14 @@ final class PackRedirectPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sen
 }
 
 public struct HTTPSPackTransport: PackTransport {
-    public init() {}
+    private let makeConfiguration: @Sendable () -> URLSessionConfiguration
+    public init() { makeConfiguration = { .ephemeral } }
+    init(makeConfiguration: @escaping @Sendable () -> URLSessionConfiguration) {
+        self.makeConfiguration = makeConfiguration
+    }
     public func fetch(url: URL, destination: URL, expectedBytes: Int64, cancellation: InstallCancellation) async throws {
+        try cancellation.check()
+        guard PackRedirectPolicy.allowed(url) else { throw MapFailure.corrupt }
         let fm = FileManager.default
         let validatorURL = destination.appendingPathExtension("etag")
         if (try? validatorURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true { throw MapFailure.corrupt }
@@ -41,39 +47,75 @@ public struct HTTPSPackTransport: PackTransport {
             request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
             request.setValue(savedValidator, forHTTPHeaderField: "If-Range")
         }
-        let configuration = URLSessionConfiguration.ephemeral
+        let configuration = makeConfiguration()
         configuration.urlCache = nil
         let session = URLSession(configuration: configuration, delegate: PackRedirectPolicy(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
-        let (stream, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse, http.url?.scheme == "https", http.url?.user == nil, http.url?.password == nil,
-              [200, 206].contains(http.statusCode), http.value(forHTTPHeaderField: "Content-Encoding").map({ $0 == "identity" }) ?? true else { throw MapFailure.corrupt }
-        var written: Int64 = 0
-        if http.statusCode == 206 {
-            guard offset > 0, http.value(forHTTPHeaderField: "ETag") == savedValidator,
-                  http.value(forHTTPHeaderField: "Content-Range") == "bytes \(offset)-\(expectedBytes - 1)/\(expectedBytes)" else { throw MapFailure.corrupt }
-            written = offset
-        } else {
-            try Data().write(to: destination)
+        let download = Task {
+            try await receive(session: session, request: request, destination: destination, validatorURL: validatorURL,
+                              expectedBytes: expectedBytes, offset: offset, savedValidator: savedValidator, cancellation: cancellation)
         }
-        if let etag = http.value(forHTTPHeaderField: "ETag"), etag.hasPrefix("\""), etag.hasSuffix("\""), etag.utf8.count <= 512, !etag.contains("\n") {
-            try Data(etag.utf8).write(to: validatorURL, options: .atomic)
-        } else { try? fm.removeItem(at: validatorURL) }
-        let handle = try FileHandle(forWritingTo: destination)
-        defer { try? handle.close() }
-        try handle.seek(toOffset: UInt64(written))
-        var buffer = Data(); buffer.reserveCapacity(65536)
-        for try await byte in stream {
+        let handler: UUID
+        do {
+            handler = try cancellation.onCancel { download.cancel() }
+        } catch {
+            download.cancel()
+            _ = await download.result
+            throw error
+        }
+        defer { cancellation.removeHandler(handler) }
+        do {
+            try await withTaskCancellationHandler {
+                try await download.value
+            } onCancel: {
+                download.cancel()
+            }
+        } catch {
             try cancellation.check()
-            written += 1
-            guard written <= expectedBytes else { throw MapFailure.corrupt }
-            buffer.append(byte)
-            if buffer.count == 65536 { try handle.write(contentsOf: buffer); buffer.removeAll(keepingCapacity: true) }
+            throw error
         }
-        try handle.write(contentsOf: buffer)
-        try handle.synchronize()
-        guard written == expectedBytes else { throw MapFailure.corrupt }
-        try? fm.removeItem(at: validatorURL)
+    }
+
+    private func receive(session: URLSession, request: URLRequest, destination: URL, validatorURL: URL,
+                         expectedBytes: Int64, offset: Int64, savedValidator: String?, cancellation: InstallCancellation) async throws {
+        let fm = FileManager.default
+        try cancellation.check()
+        let (stream, response) = try await session.bytes(for: request)
+        let transfer = stream.task
+        try await withTaskCancellationHandler {
+            try cancellation.check()
+            guard let http = response as? HTTPURLResponse, http.url?.scheme == "https", http.url?.user == nil, http.url?.password == nil,
+                  [200, 206].contains(http.statusCode), http.value(forHTTPHeaderField: "Content-Encoding").map({ $0 == "identity" }) ?? true else { throw MapFailure.corrupt }
+            var written: Int64 = 0
+            if http.statusCode == 206 {
+                guard offset > 0, http.value(forHTTPHeaderField: "ETag") == savedValidator,
+                      http.value(forHTTPHeaderField: "Content-Range") == "bytes \(offset)-\(expectedBytes - 1)/\(expectedBytes)" else { throw MapFailure.corrupt }
+                written = offset
+            } else {
+                try Data().write(to: destination)
+            }
+            if let etag = http.value(forHTTPHeaderField: "ETag"), etag.hasPrefix("\""), etag.hasSuffix("\""), etag.utf8.count <= 512, !etag.contains("\n") {
+                try Data(etag.utf8).write(to: validatorURL, options: .atomic)
+            } else { try? fm.removeItem(at: validatorURL) }
+            let handle = try FileHandle(forWritingTo: destination)
+            defer { try? handle.close() }
+            try handle.seek(toOffset: UInt64(written))
+            var buffer = Data(); buffer.reserveCapacity(65536)
+            for try await byte in stream {
+                try cancellation.check()
+                written += 1
+                guard written <= expectedBytes else { throw MapFailure.corrupt }
+                buffer.append(byte)
+                if buffer.count == 65536 { try handle.write(contentsOf: buffer); buffer.removeAll(keepingCapacity: true) }
+            }
+            try cancellation.check()
+            try handle.write(contentsOf: buffer)
+            try handle.synchronize()
+            guard written == expectedBytes else { throw MapFailure.corrupt }
+            try? fm.removeItem(at: validatorURL)
+        } onCancel: {
+            transfer.cancel()
+        }
     }
 }
 
@@ -106,6 +148,7 @@ public actor RegionStore {
         defer { leases.endInstallation(manifest.key) }
         let fm = FileManager.default
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        recoverAbandonedRemovals()
         let final = root.appendingPathComponent(manifest.key)
         let staging = root.appendingPathComponent(".staging/\(manifest.id)-\(manifest.revision)-\(expectedSHA256)")
         try safeDirectory(staging); try safeDirectory(final)
@@ -141,6 +184,7 @@ public actor RegionStore {
         return InstalledRegion(manifest: manifest, root: final)
     }
     public func verify(root directory: URL, expectedSHA256: String) throws -> InstalledRegion {
+        recoverAbandonedRemovals()
         try safeDirectory(directory)
         let manifestURL = directory.appendingPathComponent("manifest.json")
         try safeDirectory(manifestURL)
@@ -161,9 +205,43 @@ public actor RegionStore {
         guard index.places.allSatisfy({ manifest.contains(MapPoint(latE7: $0.latE7, lonE7: $0.lonE7)) }) else { throw MapFailure.corrupt }
         return InstalledRegion(manifest: manifest, root: directory)
     }
+    // Only retired directories live here. Publication and retirement share the
+    // root's lock; cleanup never touches a ready revision or follows a symlink.
+    private func recoverAbandonedRemovals() {
+        leases.withMaintenance { try? cleanTrash() }
+    }
+    private func cleanTrash() throws {
+        let fm = FileManager.default
+        let trash = root.appendingPathComponent(".trash")
+        try safeDirectory(trash)
+        guard fm.fileExists(atPath: trash.path) else { return }
+        for retired in try fm.contentsOfDirectory(at: trash, includingPropertiesForKeys: nil) {
+            try safeDirectory(retired)
+            guard let walker = fm.enumerator(at: retired, includingPropertiesForKeys: [.isSymbolicLinkKey], options: []) else { throw MapFailure.corrupt }
+            for case let child as URL in walker { try safeDirectory(child) }
+            try fm.removeItem(at: retired)
+        }
+    }
     public func remove(_ region: InstalledRegion) throws {
-        try safeDirectory(region.root)
-        try leases.withRemoval(region.manifest.key) { try FileManager.default.removeItem(at: region.root) }
+        let final = root.appendingPathComponent(region.manifest.key)
+        guard region.root.standardizedFileURL == final.standardizedFileURL else { throw MapFailure.corrupt }
+        try remove(id: region.manifest.id, revision: region.manifest.revision)
+    }
+    /// Retire a known revision even if its manifest or assets can no longer be read.
+    public func remove(id: String, revision: String) throws {
+        let key = try regionKey(id: id, revision: revision)
+        let final = root.appendingPathComponent(key)
+        try safeDirectory(final)
+        try leases.withRemoval(key) {
+            guard FileManager.default.fileExists(atPath: final.path) else { throw MapFailure.unavailable }
+            let trash = root.appendingPathComponent(".trash")
+            try safeDirectory(trash)
+            try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+            // A crash or recursive-delete failure after this atomic same-volume
+            // rename leaves no partial final revision to poison a reinstall.
+            try FileManager.default.moveItem(at: final, to: trash.appendingPathComponent(UUID().uuidString))
+            try? cleanTrash()
+        }
     }
     public func lease(_ region: InstalledRegion) throws -> PackLease {
         try safeDirectory(region.root)
@@ -171,12 +249,23 @@ public actor RegionStore {
             guard FileManager.default.fileExists(atPath: region.root.path) else { throw MapFailure.unavailable }
         }
     }
-    /// Reopen a pinned immutable revision without consulting the network.
-    public func openInstalled(id: String, revision: String, expectedSHA256: String) throws -> InstalledRegion {
+    public func search(_ query: String, in region: InstalledRegion) throws -> [Place] {
+        let lease = try lease(region)
+        defer { lease.close() }
+        let places = region.root.appendingPathComponent("places.json")
+        try safeDirectory(places)
+        return try PlaceIndex(data: Data(contentsOf: places)).search(query)
+    }
+    private func regionKey(id: String, revision: String) throws -> String {
         guard id.utf8.count <= 64, revision.utf8.count <= 64,
               RegionManifest.matches(id, "^[a-z0-9]+(?:-[a-z0-9]+)*$"),
               RegionManifest.matches(revision, "^[a-z0-9]+(?:-[a-z0-9]+)*$") else { throw MapFailure.corrupt }
-        let directory = root.appendingPathComponent("\(id)/\(revision)")
+        return "\(id)/\(revision)"
+    }
+    /// Reopen a pinned immutable revision without consulting the network.
+    public func openInstalled(id: String, revision: String, expectedSHA256: String) throws -> InstalledRegion {
+        let directory = root.appendingPathComponent(try regionKey(id: id, revision: revision))
+        recoverAbandonedRemovals()
         try safeDirectory(directory)
         guard FileManager.default.fileExists(atPath: directory.path) else { throw MapFailure.unavailable }
         return try verify(root: directory, expectedSHA256: expectedSHA256)
@@ -184,7 +273,8 @@ public actor RegionStore {
     /// Catalog supplies trusted manifest pins; unpinned directories are never
     /// promoted after restart, including abandoned staging directories.
     public func discover(catalog: [String: String]) -> [InstalledRegion] {
-        catalog.sorted(by: { $0.key < $1.key }).compactMap { key, hash in
+        recoverAbandonedRemovals()
+        return catalog.sorted(by: { $0.key < $1.key }).compactMap { key, hash in
             guard key.split(separator: "/").count == 2, RegionManifest.safePath(key) else { return nil }
             return try? verify(root: root.appendingPathComponent(key), expectedSHA256: hash)
         }

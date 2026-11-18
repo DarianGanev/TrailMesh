@@ -15,10 +15,18 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Validate complete native map styles
+        working-directory: tools/maps
+        run: |
+          npm ci --ignore-scripts
+          npm run validate-style
       - name: Install bounded regional tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y osmium-tool=1.16.0-1build1 tilemaker=2.4.0-1build4
+          sudo apt-get install -y osmium-tool=1.16.0-1build1 tilemaker=2.4.0-1build4 lua5.4
           python -m pip install osmium==4.1.1 pillow==11.3.0
       - name: Validate contract tests
         run: python -m unittest discover -s tools/maps -p 'test_*.py'
@@ -36,5 +44,6 @@ jobs:
             ${{ runner.temp }}/rila/terrain-evidence.json
             ${{ runner.temp }}/rila/manifest.sha256
             ${{ runner.temp }}/rila/map-metadata.json
+            ${{ runner.temp }}/rila/mbtiles-evidence.json
           retention-days: 14
           if-no-files-found: error

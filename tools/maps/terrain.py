@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 import math
 from pathlib import Path
 import sqlite3
@@ -161,12 +162,14 @@ def build_mbtiles(output, bounds, min_zoom=10, max_zoom=12, *, fetch=fetch_tile,
                 raise ValueError("terrain database integrity failure")
         # On Windows SQLite's context manager commits, but does not close.
         database.close()
-        partial.rename(output)
+        # Linking publishes atomically and fails if another builder already won.
+        os.link(partial, output)
     except BaseException:
         if "database" in locals():
             database.close()
         partial.unlink(missing_ok=True)
         raise
+    partial.unlink()
     return {"format": 1, "source": SOURCE, "accessedAt": datetime.now(timezone.utc).isoformat(),
             "bounds": list(bounds), "minZoom": min_zoom, "maxZoom": max_zoom, "tiles": records}
 

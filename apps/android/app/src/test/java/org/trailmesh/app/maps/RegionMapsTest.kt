@@ -115,6 +115,8 @@ class RegionMapsTest {
         val index = PlaceIndex.parse(b, BoundsE7(230000000, 420000000, 240000000, 430000000))
         assertEquals("Хижа Écho", index.search("echo").single().name)
         assertEquals(1, index.search("хижа").size)
+        assertEquals("node/1", index.search("Echo-Hut").single().id)
+        assertTrue(index.search(" --- ").isEmpty())
         assertTrue(index.search("  ").isEmpty())
         rejects {
             PlaceIndex.parse(

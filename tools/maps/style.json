@@ -124,16 +124,19 @@
         ]
       },
       "filter": [
-        "!in",
+        "!",
         [
-          "get",
-          "class"
-        ],
-        [
-          "literal",
+          "in",
           [
-            "path",
-            "track"
+            "get",
+            "class"
+          ],
+          [
+            "literal",
+            [
+              "path",
+              "track"
+            ]
           ]
         ]
       ],
@@ -165,16 +168,19 @@
         ]
       },
       "filter": [
-        "!in",
+        "!",
         [
-          "get",
-          "class"
-        ],
-        [
-          "literal",
+          "in",
           [
-            "path",
-            "track"
+            "get",
+            "class"
+          ],
+          [
+            "literal",
+            [
+              "path",
+              "track"
+            ]
           ]
         ]
       ],

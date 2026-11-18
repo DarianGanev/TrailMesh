@@ -1920,6 +1920,410 @@
           }
         ]
       }
+    },
+    {
+      "id": "places-bytes-at-limit",
+      "valid": true,
+      "manifest": {
+        "format": 1,
+        "id": "rila",
+        "revision": "2026-11-16",
+        "name": "Rila",
+        "dataDate": "2026-11-16",
+        "boundsE7": [
+          229500000,
+          417500000,
+          240500000,
+          425000000
+        ],
+        "minZoom": 0,
+        "maxZoom": 14,
+        "engine": "valhalla-3.9.2",
+        "attribution": "© OpenStreetMap contributors",
+        "files": [
+          {
+            "path": "map.pmtiles",
+            "asset": "map.pmtiles",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "routing.tar",
+            "asset": "routing.tar",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "places.json",
+            "asset": "places.json",
+            "bytes": 8388608,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "style.json",
+            "asset": "style.json",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "licenses/OSM.txt",
+            "asset": "licenses-OSM.txt",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "glyphs/Noto Sans Regular/0-255.pbf",
+            "asset": "glyphs--Noto Sans Regular--0-255.pbf",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "glyphs/Noto Sans Regular/256-511.pbf",
+            "asset": "glyphs--Noto Sans Regular--256-511.pbf",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "glyphs/Noto Sans Regular/1024-1279.pbf",
+            "asset": "glyphs--Noto Sans Regular--1024-1279.pbf",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite.json",
+            "asset": "sprite.json",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite.png",
+            "asset": "sprite.png",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite@2x.json",
+            "asset": "sprite@2x.json",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite@2x.png",
+            "asset": "sprite@2x.png",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "licenses/A+B, C.txt",
+            "asset": "licenses--A+B, C.txt",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        ]
+      }
+    },
+    {
+      "id": "places-bytes-over-limit",
+      "valid": false,
+      "manifest": {
+        "format": 1,
+        "id": "rila",
+        "revision": "2026-11-16",
+        "name": "Rila",
+        "dataDate": "2026-11-16",
+        "boundsE7": [
+          229500000,
+          417500000,
+          240500000,
+          425000000
+        ],
+        "minZoom": 0,
+        "maxZoom": 14,
+        "engine": "valhalla-3.9.2",
+        "attribution": "© OpenStreetMap contributors",
+        "files": [
+          {
+            "path": "map.pmtiles",
+            "asset": "map.pmtiles",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "routing.tar",
+            "asset": "routing.tar",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "places.json",
+            "asset": "places.json",
+            "bytes": 8388609,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "style.json",
+            "asset": "style.json",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "licenses/OSM.txt",
+            "asset": "licenses-OSM.txt",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "glyphs/Noto Sans Regular/0-255.pbf",
+            "asset": "glyphs--Noto Sans Regular--0-255.pbf",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "glyphs/Noto Sans Regular/256-511.pbf",
+            "asset": "glyphs--Noto Sans Regular--256-511.pbf",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "glyphs/Noto Sans Regular/1024-1279.pbf",
+            "asset": "glyphs--Noto Sans Regular--1024-1279.pbf",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite.json",
+            "asset": "sprite.json",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite.png",
+            "asset": "sprite.png",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite@2x.json",
+            "asset": "sprite@2x.json",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite@2x.png",
+            "asset": "sprite@2x.png",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "licenses/A+B, C.txt",
+            "asset": "licenses--A+B, C.txt",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        ]
+      }
+    },
+    {
+      "id": "style-bytes-at-limit",
+      "valid": true,
+      "manifest": {
+        "format": 1,
+        "id": "rila",
+        "revision": "2026-11-16",
+        "name": "Rila",
+        "dataDate": "2026-11-16",
+        "boundsE7": [
+          229500000,
+          417500000,
+          240500000,
+          425000000
+        ],
+        "minZoom": 0,
+        "maxZoom": 14,
+        "engine": "valhalla-3.9.2",
+        "attribution": "© OpenStreetMap contributors",
+        "files": [
+          {
+            "path": "map.pmtiles",
+            "asset": "map.pmtiles",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "routing.tar",
+            "asset": "routing.tar",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "places.json",
+            "asset": "places.json",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "style.json",
+            "asset": "style.json",
+            "bytes": 1048576,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "licenses/OSM.txt",
+            "asset": "licenses-OSM.txt",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "glyphs/Noto Sans Regular/0-255.pbf",
+            "asset": "glyphs--Noto Sans Regular--0-255.pbf",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "glyphs/Noto Sans Regular/256-511.pbf",
+            "asset": "glyphs--Noto Sans Regular--256-511.pbf",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "glyphs/Noto Sans Regular/1024-1279.pbf",
+            "asset": "glyphs--Noto Sans Regular--1024-1279.pbf",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite.json",
+            "asset": "sprite.json",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite.png",
+            "asset": "sprite.png",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite@2x.json",
+            "asset": "sprite@2x.json",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite@2x.png",
+            "asset": "sprite@2x.png",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "licenses/A+B, C.txt",
+            "asset": "licenses--A+B, C.txt",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        ]
+      }
+    },
+    {
+      "id": "style-bytes-over-limit",
+      "valid": false,
+      "manifest": {
+        "format": 1,
+        "id": "rila",
+        "revision": "2026-11-16",
+        "name": "Rila",
+        "dataDate": "2026-11-16",
+        "boundsE7": [
+          229500000,
+          417500000,
+          240500000,
+          425000000
+        ],
+        "minZoom": 0,
+        "maxZoom": 14,
+        "engine": "valhalla-3.9.2",
+        "attribution": "© OpenStreetMap contributors",
+        "files": [
+          {
+            "path": "map.pmtiles",
+            "asset": "map.pmtiles",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "routing.tar",
+            "asset": "routing.tar",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "places.json",
+            "asset": "places.json",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "style.json",
+            "asset": "style.json",
+            "bytes": 1048577,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "licenses/OSM.txt",
+            "asset": "licenses-OSM.txt",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "glyphs/Noto Sans Regular/0-255.pbf",
+            "asset": "glyphs--Noto Sans Regular--0-255.pbf",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "glyphs/Noto Sans Regular/256-511.pbf",
+            "asset": "glyphs--Noto Sans Regular--256-511.pbf",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "glyphs/Noto Sans Regular/1024-1279.pbf",
+            "asset": "glyphs--Noto Sans Regular--1024-1279.pbf",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite.json",
+            "asset": "sprite.json",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite.png",
+            "asset": "sprite.png",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite@2x.json",
+            "asset": "sprite@2x.json",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "sprite@2x.png",
+            "asset": "sprite@2x.png",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          {
+            "path": "licenses/A+B, C.txt",
+            "asset": "licenses--A+B, C.txt",
+            "bytes": 1,
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        ]
+      }
     }
   ]
 }

@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 MAX_TOTAL = 2147483647
+RESOURCE_MAX_BYTES = {'places.json': 8 * 1024 * 1024, 'style.json': 1024 * 1024}
 REQUIRED = {'map.pmtiles','routing.tar','places.json','style.json','licenses/OSM.txt'}
 FIELDS = {'format','id','revision','name','dataDate','boundsE7','minZoom','maxZoom','engine','attribution','files'}
 
@@ -51,7 +52,8 @@ def validate_manifest(m):
         require(safe_path(f['asset']) and '/' not in f['asset'],'asset')
         require(f['path'].lower() not in paths and f['asset'].lower() not in assets,'collision')
         paths.add(f['path'].lower()); assets.add(f['asset'].lower())
-        require(integer(f['bytes'],1,MAX_TOTAL),'bytes'); total+=f['bytes']
+        require(integer(f['bytes'],1,RESOURCE_MAX_BYTES.get(f['path'], MAX_TOTAL)),'bytes')
+        total+=f['bytes']
         require(isinstance(f['sha256'],str) and re.fullmatch('[0-9a-f]{64}',f['sha256']),'sha256')
     require(total<=MAX_TOTAL and REQUIRED <= {f['path'] for f in m['files']},'budget or required file')
     return m
@@ -88,7 +90,7 @@ def validate_places(doc,bounds):
         require(isinstance(p['aliases'],list) and len(p['aliases'])<=8 and all(string(a,120) for a in p['aliases']),'aliases')
         require(p['kind'] in ('hut','peak','shelter','water','trailhead','place'),'kind')
         require(integer(p['lonE7'],bounds[0],bounds[2]) and integer(p['latE7'],bounds[1],bounds[3]),'place bounds')
-    require(len(encode(doc))<=8*1024*1024,'places bytes')
+    require(len(encode(doc))<=RESOURCE_MAX_BYTES['places.json'],'places bytes')
     return doc
 
 
@@ -150,8 +152,8 @@ def generate(root, metadata):
             path=p.relative_to(root).as_posix()
             files.append(dict(path=path,asset=path.replace('/','--'),bytes=p.stat().st_size,sha256=sha256_file(p)))
     m=validate_manifest(dict(metadata,files=files))
-    validate_places(parse_json((root/'places.json').read_bytes(),8*1024*1024),m['boundsE7'])
-    validate_style(parse_json((root/'style.json').read_bytes(),262144),m)
+    validate_places(parse_json((root/'places.json').read_bytes(),RESOURCE_MAX_BYTES['places.json']),m['boundsE7'])
+    validate_style(parse_json((root/'style.json').read_bytes(),RESOURCE_MAX_BYTES['style.json']),m)
     raw=encode(m); require(len(raw)<=262144,'manifest bytes')
     (root/'manifest.json').write_bytes(raw)
     return hashlib.sha256(raw).hexdigest()

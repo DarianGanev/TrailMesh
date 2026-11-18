@@ -248,6 +248,8 @@ data class RegionManifest(
                         safePath(it.asset) &&
                         !it.asset.contains('/') &&
                         it.bytes in 1..2147483647L &&
+                        (it.path != "style.json" || it.bytes <= MAX_STYLE_BYTES) &&
+                        (it.path != "places.json" || it.bytes <= MAX_PLACE_BYTES) &&
                         it.sha256.matches(Regex("[0-9a-f]{64}"))
                 }
             )
@@ -282,9 +284,12 @@ data class RegionManifest(
     }
 }
 
+internal const val MAX_STYLE_BYTES = 1024 * 1024
+internal const val MAX_PLACE_BYTES = 8 * 1024 * 1024
+
 object ClosedStyle {
     fun resolve(bytes: ByteArray, m: RegionManifest, root: File): String {
-        val style = MapJson.parse(bytes, 8 * 1024 * 1024).obj()
+        val style = MapJson.parse(bytes, MAX_STYLE_BYTES).obj()
         need(
             style["version"].integer() == 8L &&
                 !style.containsKey("imports") &&
@@ -360,15 +365,20 @@ data class MountainPlace(
 )
 
 class PlaceIndex private constructor(private val places: List<MountainPlace>) {
+    private val wordBoundary = Regex("[^\\p{L}\\p{N}]+")
+
+    private fun words(text: String): List<String> =
+        normalize(text).split(wordBoundary).filter { it.isNotEmpty() }
+
     fun search(q: String): List<MountainPlace> {
-        val tokens = normalize(q.trim()).split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val tokens = words(q)
         if (tokens.isEmpty()) return emptyList()
         return places
             .asSequence()
             .filter { p ->
                 val words =
                     (listOf(p.name) + p.aliases).flatMap {
-                        normalize(it).split(Regex("[^\\p{L}\\p{N}]+"))
+                        words(it)
                     }
                 tokens.all { t -> words.any { it.startsWith(t) } }
             }
@@ -383,7 +393,7 @@ class PlaceIndex private constructor(private val places: List<MountainPlace>) {
                 .lowercase(Locale.ROOT)
 
         fun parse(bytes: ByteArray, bounds: BoundsE7): PlaceIndex {
-            val o = MapJson.parse(bytes, 8 * 1024 * 1024).obj()
+            val o = MapJson.parse(bytes, MAX_PLACE_BYTES).obj()
             o.fields("format", "places")
             need(o["format"].integer() == 1L)
             val list = o["places"].arr()

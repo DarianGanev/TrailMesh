@@ -19,4 +19,24 @@ lua=lua.replace('way:Attribute("class", h)','way:Attribute("class", h)\n\t\t\twa
 # Preserve all mapped minor trails at useful hiking zooms, including tracks and steps.
 lua=lua.replace('-- Write to layer','if h == "path" or h == "track" then minzoom = 10 end\n\t\t-- Write to layer')
 lua=lua.replace('if rank>4 then layer="poi_detail" end','if rank>4 and subclass~="alpine_hut" and subclass~="wilderness_hut" and subclass~="shelter" then layer="poi_detail" end')
+poi_function = 'function GetPOIRank(obj)\n\tlocal k,list,v,class,rank'
+if lua.count(poi_function) != 1 or lua.count('for k,list in pairs(poiTags) do') != 1:
+    raise ValueError('unexpected upstream GetPOIRank implementation')
+lua = lua.replace(poi_function, '''-- Lua table traversal order is unspecified. Sort once, then reuse the order.
+local poiTagOrder = {}
+for key in pairs(poiTags) do table.insert(poiTagOrder, key) end
+table.sort(poiTagOrder)
+
+function GetPOIRank(obj)
+	local tourism = obj:Find("tourism")
+	if tourism == "alpine_hut" or tourism == "wilderness_hut" then
+		return poiClassRanks.lodging or 25, "lodging", tourism
+	end
+	if obj:Find("amenity") == "shelter" then
+		local class = poiClasses.shelter or "amenity"
+		return poiClassRanks[class] or 25, class, "shelter"
+	end
+	local v,class,rank''')
+lua = lua.replace('for k,list in pairs(poiTags) do',
+                  'for _,k in ipairs(poiTagOrder) do\n\t\tlocal list = poiTags[k]')
 (out/'process.lua').write_text(lua)

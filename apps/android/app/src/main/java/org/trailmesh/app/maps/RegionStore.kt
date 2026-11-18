@@ -195,10 +195,10 @@ class RegionStore(val root: File, private val freeBytes: () -> Long = { root.usa
             File(dir, f.path)
         )
         val style = File(dir, "style.json")
-        need(style.length() <= 8 * 1024 * 1024)
+        need(style.length() <= MAX_STYLE_BYTES)
         ClosedStyle.resolve(style.readBytes(), m, dir)
         val places = File(dir, "places.json")
-        need(places.length() <= 8 * 1024 * 1024)
+        need(places.length() <= MAX_PLACE_BYTES)
         PlaceIndex.parse(places.readBytes(), m.bounds)
         // Readers must never consume a symlink, including an unlisted path injected after staging.
         Files.walk(dir.toPath()).use { paths -> paths.forEach { need(!Files.isSymbolicLink(it)) } }
@@ -223,14 +223,9 @@ class RegionStore(val root: File, private val freeBytes: () -> Long = { root.usa
     fun acquire(i: String, r: String): RegionLease =
         synchronized(state) {
             val k = key(i, r)
-            val region =
-                try {
-                    verified(File(root, k))
-                } catch (e: MapFailure) {
-                    throw e
-                } catch (_: Exception) {
-                    throw MapFailure(MapError.UNAVAILABLE)
-                }
+            val directory = safe(File(root, k))
+            need(directory.exists(), MapError.UNAVAILABLE)
+            val region = verified(directory)
             state.leases[k] = (state.leases[k] ?: 0) + 1
             RegionLease(region) {
                 synchronized(state) {

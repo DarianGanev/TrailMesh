@@ -34,6 +34,10 @@ public final class PackLeases: @unchecked Sendable {
         guard counts[key, default: 0] == 0, !installing.contains(key) else { throw MapFailure.busy }
         try action()
     }
+    func withMaintenance(_ action: () throws -> Void) rethrows {
+        lock.lock(); defer { lock.unlock() }
+        try action()
+    }
     func beginInstallation(_ key: String) throws {
         lock.lock(); defer { lock.unlock() }
         guard installing.insert(key).inserted else { throw MapFailure.busy }
@@ -69,8 +73,27 @@ final class PackRootRegistry: @unchecked Sendable {
 public final class InstallCancellation: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
+    private var handlers: [UUID: @Sendable () -> Void] = [:]
     public init() {}
-    public func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    public func cancel() {
+        lock.lock()
+        cancelled = true
+        let actions = handlers.values
+        handlers.removeAll()
+        lock.unlock()
+        for action in actions { action() }
+    }
+    func onCancel(_ action: @escaping @Sendable () -> Void) throws -> UUID {
+        lock.lock(); defer { lock.unlock() }
+        guard !cancelled, !Task.isCancelled else { throw MapFailure.cancelled }
+        let id = UUID()
+        handlers[id] = action
+        return id
+    }
+    func removeHandler(_ id: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        handlers.removeValue(forKey: id)
+    }
     public func check() throws { lock.lock(); defer { lock.unlock() }; if cancelled || Task.isCancelled { throw MapFailure.cancelled } }
     func publish(_ action: () throws -> Void) throws {
         lock.lock(); defer { lock.unlock() }

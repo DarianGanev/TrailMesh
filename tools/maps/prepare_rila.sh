@@ -4,20 +4,18 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 OUT=$(realpath -m "${1:?usage: prepare_rila.sh /absolute/output}")
 mkdir -p "$OUT/work" "$OUT/pack" "$OUT/release-assets"
-PBF_SHA=032898493cabce0157fd3e3b907dd7fab78dd1e8ec220759a7b113c67a9b71fe
 PM_SHA=3ed7dbf4ec2e6dfe5e25b6f70d1ffc932729f93c86db353bf514dd71010a312f
 IMAGE=ghcr.io/valhalla/valhalla:3.9.2@sha256:1c68a8c0f870a018b3b04dddee4b21ef2f41d24bbda68fa7b48e2bee053d5eef
 cd "$OUT/work"
-if [[ ! -f bulgaria.osm.pbf ]]; then curl --fail --location --retry 3 https://download.geofabrik.de/europe/bulgaria-261116.osm.pbf -o bulgaria.osm.pbf; fi
-echo "$PBF_SHA  bulgaria.osm.pbf" | sha256sum -c -
-[[ $(stat -c %s bulgaria.osm.pbf) == 177664451 ]]
-osmium extract --bbox 22.95,41.75,24.05,42.50 --strategy complete_ways --overwrite bulgaria.osm.pbf -o rila.osm.pbf
+python3 "$ROOT/tools/maps/fetch_pbf.py" bulgaria.osm.pbf
+osmium extract --bbox 22.95,41.75,24.05,42.50 --set-bounds --strategy complete_ways --overwrite bulgaria.osm.pbf -o rila.osm.pbf
 osmium fileinfo --json rila.osm.pbf > "$OUT/osm-fileinfo.json"
 curl --fail --location --retry 3 https://github.com/protomaps/go-pmtiles/releases/download/v1.31.2/go-pmtiles_1.31.2_Linux_x86_64.tar.gz -o pmtiles.tgz
 echo "$PM_SHA  pmtiles.tgz" | sha256sum -c -
 tar xzf pmtiles.tgz pmtiles
 python3 "$ROOT/tools/maps/prepare_tilemaker.py" "$ROOT/tools/maps/upstream" "$OUT/work"
-tilemaker --input rila.osm.pbf --output rila.mbtiles --config config.json --process process.lua
+tilemaker --input rila.osm.pbf --bbox 22.95,41.75,24.05,42.50 --output rila.mbtiles --config config.json --process process.lua
+python3 "$ROOT/tools/maps/validate_mbtiles.py" rila.mbtiles "$ROOT/tools/maps/rila-metadata.json" > "$OUT/mbtiles-evidence.json"
 ./pmtiles convert rila.mbtiles "$OUT/pack/map.pmtiles"
 ./pmtiles verify "$OUT/pack/map.pmtiles"
 ./pmtiles show "$OUT/pack/map.pmtiles" --metadata > "$OUT/map-metadata.json"
@@ -40,6 +38,7 @@ if [[ -f "$ROOT/tools/maps/terrain.py" ]]; then
   ./pmtiles verify "$OUT/pack/terrain.pmtiles"
 fi
 python3 "$ROOT/tools/maps/finalize.py" "$OUT" "$ROOT"
+node "$ROOT/tools/maps/validate-style.cjs" "$OUT/pack/style.json"
 cp "$OUT/route-smoke.json" "$OUT/smoke.json"
 python3 "$ROOT/tools/maps/pack.py" "$OUT/pack" "$ROOT/tools/maps/rila-metadata.json" | tee "$OUT/manifest.sha256"
 python3 - "$OUT" <<'PY'
@@ -47,4 +46,5 @@ import json,pathlib,shutil,sys
 p=pathlib.Path(sys.argv[1]); m=json.loads((p/'pack/manifest.json').read_text())
 for f in m['files']: shutil.copyfile(p/'pack'/f['path'],p/'release-assets'/f['asset'])
 shutil.copyfile(p/'pack/manifest.json',p/'release-assets/manifest.json')
+shutil.copyfile(p/'work/rila.osm.pbf',p/'release-assets/rila-source.osm.pbf')
 PY

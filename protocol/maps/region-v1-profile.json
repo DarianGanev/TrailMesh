@@ -15,6 +15,7 @@
   "boundsE7": "non-wrapping [west,south,east,north] WGS84; integer coordinates",
   "zoom": [0, 14],
   "places": {"maxBytes": 8388608, "maxCount": 25000, "maxAliases": 8, "nameAndAliasMaxLength": 120, "kinds": ["hut", "peak", "shelter", "water", "trailhead", "place"], "coordinates": "integer WGS84 E7 within pack coverage"},
+  "styleMaxBytes": 1048576,
   "resources": "Closed local PMTiles, glyphs and optional sprite only. Resolve PACK_ROOT only after all hashes verify. No imports, remote images, network URLs or style terrain model.",
   "trust": "Caller pins manifest SHA256 before parsing; every listed file is hashed before atomic publication. Data-build evidence does not establish native offline rendering/routing or physical acceptance."
 }

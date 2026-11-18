@@ -41,6 +41,15 @@ final class MapsTests: XCTestCase {
         }
         XCTAssertTrue(RegionManifest.safePath("glyphs/Noto Sans/1024-1279.pbf"))
     }
+    func testRouteErrorBodyAndMalformedJSONHaveDistinctFailures() {
+        let point = MapPoint(latE7: 0, lonE7: 0)
+        for (body, expected) in [(#"{"error_code":442,"error":"No path could be found"}"#, MapFailure.noRoute),
+                                 ("malformed", MapFailure.invalidEngine)] {
+            XCTAssertThrowsError(try HikingRoute.parse(Data(body.utf8), from: point, to: point)) {
+                XCTAssertEqual($0 as? MapFailure, expected)
+            }
+        }
+    }
     func testPolylineBoundsAndPrecision() throws {
         XCTAssertEqual(try HikingRoute.decodePolyline6("??SS"), [MapPoint(latE7: 0, lonE7: 0), MapPoint(latE7: 100, lonE7: 100)])
         for shape in ["?", "~~~~~~~~~~~~~~~~~~~~?", "\u{00e9}?"] {
@@ -53,6 +62,8 @@ final class MapsTests: XCTestCase {
         let places = try PlaceIndex(data: Data(json.utf8))
         XCTAssertEqual(places.search("elan").map(\.id), ["node/2", "node/1"])
         XCTAssertEqual(places.search("хи").first?.id, "node/2")
+        XCTAssertEqual(places.search("elan-hut").first?.id, "node/2")
+        XCTAssertTrue(places.search(" --- ").isEmpty)
         XCTAssertTrue(places.search(" ").isEmpty)
     }
     func testStyleRejectsExternalResources() throws {

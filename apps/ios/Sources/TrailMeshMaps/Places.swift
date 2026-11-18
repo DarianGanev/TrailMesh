@@ -26,12 +26,15 @@ public struct PlaceIndex: Sendable {
     private static func normalized(_ text: String) -> String {
         text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
     }
+    private static func words(_ text: String) -> [Substring] {
+        normalized(text).split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+    }
     public func search(_ query: String, limit: Int = 50) -> [Place] {
-        let tokens = Self.normalized(query).split(whereSeparator: { $0.isWhitespace })
+        let tokens = Self.words(query)
         guard !tokens.isEmpty, limit > 0 else { return [] }
         return Array(places.filter { place in
             ([place.name] + place.aliases).contains { name in
-                let words = Self.normalized(name).split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                let words = Self.words(name)
                 return tokens.allSatisfy { token in words.contains { $0.hasPrefix(token) } }
             }
         }.prefix(min(limit, 50)))

@@ -74,5 +74,18 @@ class TerrainTests(unittest.TestCase):
             self.assertFalse(output.exists())
             self.assertFalse(output.with_suffix(".mbtiles.partial").exists())
 
+    def test_publication_preserves_a_concurrently_created_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "terrain.mbtiles"
+
+            def fetch(*args):
+                output.write_bytes(b"published by another builder")
+                return png(), {}
+
+            with self.assertRaises(FileExistsError):
+                build_mbtiles(output, [23.36, 42.16, 23.38, 42.18], 10, 10, fetch=fetch)
+            self.assertEqual(output.read_bytes(), b"published by another builder")
+            self.assertFalse(output.with_suffix(".mbtiles.partial").exists())
+
 if __name__ == "__main__":
     unittest.main()

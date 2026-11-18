@@ -14,6 +14,7 @@ struct MapDevelopmentView: View {
     @State private var places: [Place] = []
     @State private var image: UIImage?
     @State private var busy = false
+    @State private var installing = false
     @State private var start: Place?
     @State private var finish: Place?
     @State private var selectedRoute: HikingRoute?
@@ -31,21 +32,21 @@ struct MapDevelopmentView: View {
                 Button("Open installed region offline") { operation = Task { await openInstalled() } }.disabled(busy)
                 Text("After restart, enter the region ID, revision and pinned hash to reopen saved data without a connection.")
                 Button("Install verified region") { operation = Task { await install() } }.disabled(busy)
-                Button("Cancel install") { cancellation.cancel() }.disabled(!busy)
+                Button("Cancel install") { cancellation.cancel(); operation?.cancel() }.disabled(!installing)
                 Text(status).accessibilityAddTraits(.updatesFrequently)
             }
             if let installed {
                 Section("Local places") {
                     Text(installed.manifest.attribution)
                     TextField("Search mountain names", text: $query)
-                    Button("Search offline") { do { places = try PlaceIndex(data: Data(contentsOf: installed.root.appendingPathComponent("places.json"))).search(query) } catch { status = "Search failed: \(error)" } }
+                    Button("Search offline") { operation = Task { await search(installed) } }.disabled(busy)
                     ForEach(places, id: \.id) { place in
                         VStack(alignment: .leading) {
                             Text("\(place.name) · \(place.kind)")
                             HStack {
                                 Button("Set start") { start = place }.buttonStyle(.borderless)
                                 Button("Set finish") { finish = place }.buttonStyle(.borderless)
-                            }
+                            }.disabled(busy)
                         }
                     }
                     Text("Start: \(start?.name ?? "unset"); finish: \(finish?.name ?? "unset")")
@@ -59,7 +60,10 @@ struct MapDevelopmentView: View {
             .onDisappear { cancellation.cancel(); operation?.cancel() }
     }
     @MainActor private func install() async {
-        busy = true; cancellation = InstallCancellation(); defer { busy = false }
+        busy = true
+        installing = true
+        cancellation = InstallCancellation()
+        defer { busy = false; installing = false }
         do {
             guard let url = URL(string: directory), url.scheme == "https" else { throw MapFailure.corrupt }
             let request = URLRequest(url: url.appendingPathComponent("manifest.json"))
@@ -69,7 +73,7 @@ struct MapDevelopmentView: View {
             for try await byte in bytes { try cancellation.check(); guard data.count < 262144 else { throw MapFailure.corrupt }; data.append(byte) }
             installed = try await store.install(manifestData: data, expectedSHA256: manifestHash, releaseDirectory: url, cancellation: cancellation)
             if let installed { regionID = installed.manifest.id; revision = installed.manifest.revision }
-            start = nil; finish = nil; selectedRoute = nil
+            start = nil; finish = nil; selectedRoute = nil; places = []; image = nil
             status = "Verified and saved locally. Disable networking before smoke checks."
         } catch { status = "Install failed: \(error)" }
     }
@@ -80,6 +84,11 @@ struct MapDevelopmentView: View {
             start = nil; finish = nil; selectedRoute = nil; places = []; image = nil
             status = "Reopened and revalidated installed region entirely offline."
         } catch { status = "Offline open failed: \(error)" }
+    }
+    @MainActor private func search(_ region: InstalledRegion) async {
+        busy = true; defer { busy = false }
+        do { places = try await store.search(query, in: region) }
+        catch { status = "Search failed: \(error)" }
     }
     @MainActor private func snapshot(_ region: InstalledRegion) async {
         busy = true; defer { busy = false }
