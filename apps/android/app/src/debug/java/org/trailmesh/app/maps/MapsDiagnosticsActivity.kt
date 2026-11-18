@@ -46,8 +46,12 @@ class MapsDiagnosticsActivity : Activity() {
                 }
             )
         }
-        val base = field("HTTPS region release directory (ends in /)")
-        val pinnedHash = field("Catalog manifest SHA-256")
+        val base = field("HTTPS region release directory (ends in /)").apply {
+            setText("https://github.com/DarianGanev/TrailMesh/releases/download/maps-rila-osm-2026-11-16-v1/")
+        }
+        val pinnedHash = field("Catalog manifest SHA-256").apply {
+            setText("862f354fa7ee81ba88c841767773607efc91f5c875c564e9faedcb196ac2c10f")
+        }
         val query = field("Local place name, Cyrillic or Latin")
         val endpoints = field("from latE7,lonE7,to latE7,lonE7")
         val difficulty = field("Maximum mapped hiking difficulty (0–6, default 2)").apply {

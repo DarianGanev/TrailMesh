@@ -37,8 +37,21 @@ disable_radio() {
   done
 }
 
+api="${1:?Android API level required}"
+if [[ "$api" == 26 && "$("$ADB_BIN" shell id -u | tr -d '\r')" != 0 ]]; then
+  # Oreo's Wi-Fi service needs privileges unavailable to the shell user.
+  # ADB can disconnect as root takes effect, so verify the reconnected UID.
+  "$ADB_BIN" root || true
+  timeout 30 "$ADB_BIN" wait-for-device
+  test "$("$ADB_BIN" shell id -u | tr -d '\r')" = 0
+fi
 "$ADB_BIN" shell cat /proc/meminfo
+if (( ${api%%.*} >= 30 )); then
+  # Keep cellular off even if the guest tries to reconnect after svc returns.
+  "$ADB_BIN" shell cmd connectivity airplane-mode enable
+fi
 disable_radio wifi
 disable_radio data
+"$ADB_BIN" shell dumpsys connectivity
 # The real-pack instrumentation also verifies that no Internet-capable default
 # network remains before executing the local route and HTTP-blocked renderer.

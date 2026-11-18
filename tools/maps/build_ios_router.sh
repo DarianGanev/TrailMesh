@@ -75,7 +75,7 @@ build_slice() {
 <key>CFBundleIdentifier</key><string>org.trailmesh.native-routing</string>
 <key>CFBundleName</key><string>TrailMeshValhalla</string><key>CFBundleExecutable</key><string>TrailMeshValhalla</string>
 <key>CFBundlePackageType</key><string>FMWK</string><key>CFBundleVersion</key><string>1</string>
-<key>CFBundleShortVersionString</key><string>0.6.6</string><key>MinimumOSVersion</key><string>16.4</string>
+<key>CFBundleShortVersionString</key><string>0.6.6</string><key>MinimumOSVersion</key><string>17.0</string>
 <key>CFBundleSupportedPlatforms</key><array><string>$platform</string></array></dict></plist>
 PLIST
   xcrun nm -arch "$arch" -gUj "$framework/TrailMeshValhalla" | sort > "$OUT/$identifier/exports.txt"
@@ -102,7 +102,7 @@ PYEXPORTS
 import re,sys
 text=open(sys.argv[1]).read()
 assert re.search(r'platform\s+'+sys.argv[2]+r'\s',text), text
-assert re.search(r'minos\s+16\.4(?:\.0)?\s',text), text
+assert re.search(r'minos\s+17\.0(?:\.0)?\s',text), text
 PYPLATFORM
   xcrun otool -arch "$arch" -L "$framework/TrailMeshValhalla" > "$OUT/$identifier/dependencies.txt"
   python3 - "$OUT/$identifier/dependencies.txt" <<'PYDEPS'
@@ -118,9 +118,9 @@ dependencies = {line.strip().split(' (')[0] for line in open(sys.argv[1]).read()
 assert dependencies <= allowed, dependencies - allowed
 PYDEPS
 }
-build_slice iphoneos arm64 arm64-apple-ios16.4 ios-arm64 device
-build_slice iphonesimulator arm64 arm64-apple-ios16.4-simulator ios-arm64_x86_64-simulator sim-arm64
-build_slice iphonesimulator x86_64 x86_64-apple-ios16.4-simulator ios-arm64_x86_64-simulator sim-x86_64
+build_slice iphoneos arm64 arm64-apple-ios17.0 ios-arm64 device
+build_slice iphonesimulator arm64 arm64-apple-ios17.0-simulator ios-arm64_x86_64-simulator sim-arm64
+build_slice iphonesimulator x86_64 x86_64-apple-ios17.0-simulator ios-arm64_x86_64-simulator sim-x86_64
 mkdir -p "$OUT/simulator"
 cp -R "$OUT/sim-arm64/TrailMeshValhalla.framework" "$OUT/simulator/"
 xcrun lipo -create "$OUT/sim-arm64/TrailMeshValhalla.framework/TrailMeshValhalla" "$OUT/sim-x86_64/TrailMeshValhalla.framework/TrailMeshValhalla" -output "$OUT/simulator/TrailMeshValhalla.framework/TrailMeshValhalla"

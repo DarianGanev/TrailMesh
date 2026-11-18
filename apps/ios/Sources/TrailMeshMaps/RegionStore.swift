@@ -50,19 +50,15 @@ public struct HTTPSPackTransport: PackTransport {
             request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
             request.setValue(savedValidator, forHTTPHeaderField: "If-Range")
         }
-        let configuration = makeConfiguration()
-        configuration.urlCache = nil
-        let session = URLSession(configuration: configuration, delegate: PackRedirectPolicy(), delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
         let download = Task {
             do {
-                try await receive(session: session, request: request, destination: destination, validatorURL: validatorURL,
+                try await receive(request: request, destination: destination, validatorURL: validatorURL,
                                   expectedBytes: expectedBytes, offset: offset, savedValidator: savedValidator, cancellation: cancellation)
             } catch ResumeFailure.rangeNotSatisfiable {
                 try cancellation.check()
                 try fm.removeItem(at: validatorURL)
                 try Data().write(to: destination)
-                try await receive(session: session, request: fullRequest, destination: destination, validatorURL: validatorURL,
+                try await receive(request: fullRequest, destination: destination, validatorURL: validatorURL,
                                   expectedBytes: expectedBytes, offset: 0, savedValidator: nil, cancellation: cancellation)
             }
         }
@@ -87,10 +83,14 @@ public struct HTTPSPackTransport: PackTransport {
         }
     }
 
-    private func receive(session: URLSession, request: URLRequest, destination: URL, validatorURL: URL,
+    private func receive(request: URLRequest, destination: URL, validatorURL: URL,
                          expectedBytes: Int64, offset: Int64, savedValidator: String?, cancellation: InstallCancellation) async throws {
         let fm = FileManager.default
         try cancellation.check()
+        let configuration = makeConfiguration()
+        configuration.urlCache = nil
+        let session = URLSession(configuration: configuration, delegate: PackRedirectPolicy(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
         let (stream, response) = try await session.bytes(for: request)
         let transfer = stream.task
         try await withTaskCancellationHandler {

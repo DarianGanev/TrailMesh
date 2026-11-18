@@ -2,12 +2,12 @@
 import SwiftUI
 import TrailMeshMaps
 
-/// Diagnostic inputs are explicit. No catalog pin is invented for unbuilt data.
+/// Starts with the verified Rila release. Other test manifests can be entered explicitly.
 struct MapDevelopmentView: View {
-    @State private var directory = ""
-    @State private var manifestHash = ""
+    @State private var directory = "https://github.com/DarianGanev/TrailMesh/releases/download/maps-rila-osm-2026-11-16-v1/"
+    @State private var manifestHash = "862f354fa7ee81ba88c841767773607efc91f5c875c564e9faedcb196ac2c10f"
     @State private var regionID = "rila"
-    @State private var revision = ""
+    @State private var revision = "osm-2026-11-16-v1"
     @State private var query = ""
     @State private var status = "No offline region installed"
     @State private var installed: InstalledRegion?
@@ -25,13 +25,13 @@ struct MapDevelopmentView: View {
     var body: some View {
         Form {
             Section("Offline backend diagnostics") {
-                Text("Development only. Download a separately generated, trusted Rila pack. Routes and names then use local data. OSM coverage and conditions are not safety guarantees.")
+                Text("Install the verified Rila region, then search places and calculate routes offline.")
                 TextField("HTTPS release directory", text: $directory).textInputAutocapitalization(.never).autocorrectionDisabled()
                 TextField("Pinned manifest SHA-256", text: $manifestHash).textInputAutocapitalization(.never).autocorrectionDisabled()
                 TextField("Region ID", text: $regionID).textInputAutocapitalization(.never).autocorrectionDisabled()
                 TextField("Installed revision", text: $revision).textInputAutocapitalization(.never).autocorrectionDisabled()
                 Button("Open installed region offline") { operation = Task { await openInstalled() } }.disabled(busy)
-                Text("After restart, enter the region ID, revision and pinned hash to reopen saved data without a connection.")
+                Text("Use Open installed region offline after restarting the app.")
                 Button("Install verified region") { operation = Task { await install() } }.disabled(busy)
                 Button("Cancel install") { cancellation.cancel(); operation?.cancel() }.disabled(!installing)
                 Text(status).accessibilityAddTraits(.updatesFrequently)

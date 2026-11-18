@@ -55,6 +55,19 @@ private final class RejectedRangePackProtocol: URLProtocol, @unchecked Sendable 
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         let url = request.url!
+        if url.path == "/recover", var location = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            let hop = location.query.flatMap(Int.init) ?? 0
+            if hop < 3 {
+                location.query = String(hop + 1)
+                var redirect = request
+                redirect.url = location.url!
+                let response = HTTPURLResponse(url: url, statusCode: 302, httpVersion: "HTTP/1.1",
+                                               headerFields: ["Location": redirect.url!.absoluteString])!
+                client?.urlProtocol(self, wasRedirectedTo: redirect, redirectResponse: response)
+                return
+            }
+            XCTAssertEqual(hop, 3)
+        }
         let range = request.value(forHTTPHeaderField: "Range")
         let status: Int
         if let range {
