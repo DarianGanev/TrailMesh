@@ -39,9 +39,17 @@ def cache_source(output, url, size, digest, *, fallback_url=None):
             )
             if not fallback_url or not unavailable:
                 raise
-            print("Frozen Geofabrik extract unavailable; trying its pinned archive.", file=sys.stderr)
-            download.unlink(missing_ok=True)
-            download_from(fallback_url, download)
+            reason = "unavailable"
+        else:
+            if verified(download):
+                download.replace(output)
+                return
+            if not fallback_url:
+                raise ValueError("frozen PBF size or SHA256 mismatch")
+            reason = "failed size or SHA256 verification"
+        print(f"Frozen Geofabrik extract {reason}. Trying its pinned archive.", file=sys.stderr)
+        download.unlink(missing_ok=True)
+        download_from(fallback_url, download)
         if not verified(download):
             raise ValueError("frozen PBF size or SHA256 mismatch")
         download.replace(output)

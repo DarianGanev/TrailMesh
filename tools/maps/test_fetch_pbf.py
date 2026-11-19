@@ -9,6 +9,27 @@ from fetch_pbf import cache_source
 
 
 class SourceCacheTests(unittest.TestCase):
+    def test_mismatched_primary_uses_verified_archive(self):
+        complete = b"complete source"
+        digest = hashlib.sha256(complete).hexdigest()
+        primary = "https://upstream.example.invalid/source.osm.pbf"
+        archive = "https://archive.example.invalid/source.osm.pbf"
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "source.osm.pbf"
+            attempted = []
+
+            def download(command, **kwargs):
+                attempted.append(command[-1])
+                target = Path(command[-2])
+                self.assertFalse(target.exists())
+                target.write_bytes(b"!" * len(complete) if command[-1] == primary else complete)
+
+            with patch("fetch_pbf.subprocess.run", side_effect=download):
+                cache_source(output, primary, len(complete), digest, fallback_url=archive)
+
+            self.assertEqual(attempted, [primary, archive])
+            self.assertEqual(output.read_bytes(), complete)
+
     def test_unavailable_primary_uses_verified_archive(self):
         complete = b"complete source"
         digest = hashlib.sha256(complete).hexdigest()
