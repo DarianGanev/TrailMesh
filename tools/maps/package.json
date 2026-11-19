@@ -1,0 +1,10 @@
+{
+  "name": "trailmesh-map-style-validation",
+  "private": true,
+  "scripts": {
+    "validate-style": "node validate-style.cjs"
+  },
+  "devDependencies": {
+    "@maplibre/maplibre-gl-style-spec": "26.8.0"
+  }
+}

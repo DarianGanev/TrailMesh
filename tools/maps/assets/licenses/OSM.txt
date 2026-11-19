@@ -1,0 +1,9 @@
+© OpenStreetMap contributors. Data is available under the Open Data Commons Open Database License (ODbL) 1.0.
+https://www.openstreetmap.org/copyright
+https://opendatacommons.org/licenses/odbl/1-0/
+Source: Geofabrik Bulgaria extract, 2026-11-16.
+https://download.geofabrik.de/europe/bulgaria-261116.osm.pbf
+SHA256: 032898493cabce0157fd3e3b907dd7fab78dd1e8ec220759a7b113c67a9b71fe
+Map tiles, routing graph and named-place index are derived from this same regional extract.
+The corresponding regional OpenStreetMap source database is available under ODbL 1.0 as rila-source.osm.pbf alongside this pack's release assets.
+OSM data completeness and access tags do not establish trail safety, conditions or legal access.

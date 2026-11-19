@@ -15,6 +15,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  map-region-build:
+    name: Prepare real offline Rila data
+    needs: change-detection
+    if: needs.change-detection.outputs.android == 'true' || needs.change-detection.outputs.ios == 'true'
+    uses: ./.github/workflows/map-region.yml
+
   change-detection:
     name: Change detection
     runs-on: ubuntu-latest
@@ -42,10 +48,10 @@ jobs:
 
           android=false
           ios=false
-          if grep -Eq '^(\.github/workflows/quality\.yml|apps/|probes/transport/android/|protocol/|tools/protocol/|tools/transport/|tools/ci/)' <<< "$changed_paths"; then
+          if grep -Eq '^(\.github/workflows/(quality|map-region|ios-router)\.yml|apps/|probes/transport/android/|protocol/|tools/protocol/|tools/transport/|tools/maps/|tools/ci/)' <<< "$changed_paths"; then
             android=true
           fi
-          if grep -Eq '^(\.github/workflows/quality\.yml|apps/|probes/transport/ios/|protocol/|tools/protocol/|tools/transport/)' <<< "$changed_paths"; then
+          if grep -Eq '^(\.github/workflows/(quality|map-region|ios-router)\.yml|apps/|probes/transport/ios/|protocol/|tools/protocol/|tools/transport/|tools/maps/)' <<< "$changed_paths"; then
             ios=true
           fi
 
@@ -65,8 +71,8 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.11'
-      - name: Install protocol tooling
-        run: python -m pip install --disable-pip-version-check --requirement tools/protocol/requirements.txt
+      - name: Install protocol and map tooling
+        run: python -m pip install --disable-pip-version-check --requirement tools/protocol/requirements.txt --requirement tools/maps/requirements.txt
       - name: Validate fixture JSON
         run: python -m json.tool protocol/fixture-v1.json >/dev/null
       - name: Validate frozen fixture contract
@@ -95,6 +101,10 @@ jobs:
           PY
       - name: Run protocol admission and vector tests
         run: python -m unittest discover -s tools/protocol -p 'test_*.py'
+      - name: Validate offline region contracts
+        run: python -m unittest discover -s tools/maps -p 'test_*.py'
+      - name: Validate CI recovery helpers
+        run: python -m unittest discover -s tools/ci -p 'test_*.py'
       - name: Run bounded exchange contract tests
         run: python -m unittest discover -s tools/transport -p 'test_*.py'
 

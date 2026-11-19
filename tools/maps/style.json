@@ -1,0 +1,600 @@
+{
+  "version": 8,
+  "name": "Rila daylight",
+  "glyphs": "{PACK_ROOT}/glyphs/{fontstack}/{range}.pbf",
+  "sources": {
+    "osm": {
+      "type": "vector",
+      "url": "pmtiles://{PACK_ROOT}/map.pmtiles"
+    }
+  },
+  "layers": [
+    {
+      "id": "paper",
+      "type": "background",
+      "paint": {
+        "background-color": "#f4f1e6"
+      }
+    },
+    {
+      "id": "landcover",
+      "type": "fill",
+      "source": "osm",
+      "source-layer": "landcover",
+      "minzoom": 0,
+      "paint": {
+        "fill-color": [
+          "match",
+          [
+            "get",
+            "class"
+          ],
+          "wood",
+          "#c9d8b7",
+          "grass",
+          "#e0e6c8",
+          "ice",
+          "#e5eff0",
+          "sand",
+          "#ede3cb",
+          "#e8e5d5"
+        ],
+        "fill-opacity": 0.85
+      }
+    },
+    {
+      "id": "landuse",
+      "type": "fill",
+      "source": "osm",
+      "source-layer": "landuse",
+      "minzoom": 0,
+      "paint": {
+        "fill-color": "#e4dfd3",
+        "fill-opacity": 0.65
+      }
+    },
+    {
+      "id": "parks",
+      "type": "line",
+      "source": "osm",
+      "source-layer": "park",
+      "minzoom": 9,
+      "paint": {
+        "line-color": "#7e9c76",
+        "line-width": 1,
+        "line-dasharray": [
+          3,
+          3
+        ]
+      }
+    },
+    {
+      "id": "water",
+      "type": "fill",
+      "source": "osm",
+      "source-layer": "water",
+      "minzoom": 0,
+      "paint": {
+        "fill-color": "#a5cbd3"
+      }
+    },
+    {
+      "id": "streams",
+      "type": "line",
+      "source": "osm",
+      "source-layer": "waterway",
+      "minzoom": 9,
+      "paint": {
+        "line-color": "#80b5c6",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          9,
+          0.5,
+          14,
+          1.5
+        ]
+      }
+    },
+    {
+      "id": "road-casing",
+      "type": "line",
+      "source": "osm",
+      "source-layer": "transportation",
+      "minzoom": 7,
+      "paint": {
+        "line-color": "#b1aa99",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          8,
+          1,
+          14,
+          5
+        ]
+      },
+      "filter": [
+        "!",
+        [
+          "in",
+          [
+            "get",
+            "class"
+          ],
+          [
+            "literal",
+            [
+              "path",
+              "track"
+            ]
+          ]
+        ]
+      ],
+      "layout": {
+        "line-join": "round",
+        "line-cap": "round"
+      }
+    },
+    {
+      "id": "roads",
+      "type": "line",
+      "source": "osm",
+      "source-layer": "transportation",
+      "minzoom": 7,
+      "paint": {
+        "line-color": "#fffaf0",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          8,
+          0.5,
+          14,
+          3
+        ]
+      },
+      "filter": [
+        "!",
+        [
+          "in",
+          [
+            "get",
+            "class"
+          ],
+          [
+            "literal",
+            [
+              "path",
+              "track"
+            ]
+          ]
+        ]
+      ],
+      "layout": {
+        "line-join": "round",
+        "line-cap": "round"
+      }
+    },
+    {
+      "id": "tracks",
+      "type": "line",
+      "source": "osm",
+      "source-layer": "transportation",
+      "minzoom": 10,
+      "paint": {
+        "line-color": "#886c45",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          10,
+          1.15,
+          14,
+          2.35
+        ]
+      },
+      "filter": [
+        "==",
+        [
+          "get",
+          "class"
+        ],
+        "track"
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      }
+    },
+    {
+      "id": "trail-halo",
+      "type": "line",
+      "source": "osm",
+      "source-layer": "transportation",
+      "minzoom": 10,
+      "paint": {
+        "line-color": "#fff9ed",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          10,
+          2.3,
+          14,
+          3.5
+        ]
+      },
+      "filter": [
+        "==",
+        [
+          "get",
+          "class"
+        ],
+        "path"
+      ]
+    },
+    {
+      "id": "footpaths",
+      "type": "line",
+      "source": "osm",
+      "source-layer": "transportation",
+      "minzoom": 10,
+      "paint": {
+        "line-color": "#a14c33",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          10,
+          1.2,
+          14,
+          1.9
+        ]
+      },
+      "filter": [
+        "==",
+        [
+          "get",
+          "class"
+        ],
+        "path"
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      }
+    },
+    {
+      "id": "buildings",
+      "type": "fill",
+      "source": "osm",
+      "source-layer": "building",
+      "minzoom": 13,
+      "paint": {
+        "fill-color": "#c5b4a1",
+        "fill-outline-color": "#a38d78"
+      }
+    },
+    {
+      "id": "settlements",
+      "type": "symbol",
+      "source": "osm",
+      "source-layer": "place",
+      "minzoom": 8,
+      "paint": {
+        "text-color": "#51534b",
+        "text-halo-color": "#fffdf5",
+        "text-halo-width": 1.6
+      },
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:bg"
+          ],
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name:en"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
+        "text-size": 13,
+        "text-max-width": 10,
+        "text-padding": 4
+      },
+      "filter": [
+        "any",
+        [
+          "has",
+          "name:bg"
+        ],
+        [
+          "has",
+          "name:latin"
+        ],
+        [
+          "has",
+          "name:en"
+        ]
+      ]
+    },
+    {
+      "id": "water-names",
+      "type": "symbol",
+      "source": "osm",
+      "source-layer": "water_name",
+      "minzoom": 14,
+      "paint": {
+        "text-color": "#377b91",
+        "text-halo-color": "#fffdf5",
+        "text-halo-width": 1.6
+      },
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:bg"
+          ],
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name:en"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
+        "text-size": 12,
+        "text-max-width": 10,
+        "text-padding": 4
+      },
+      "filter": [
+        "any",
+        [
+          "has",
+          "name:bg"
+        ],
+        [
+          "has",
+          "name:latin"
+        ],
+        [
+          "has",
+          "name:en"
+        ]
+      ]
+    },
+    {
+      "id": "peaks",
+      "type": "symbol",
+      "source": "osm",
+      "source-layer": "mountain_peak",
+      "minzoom": 10,
+      "paint": {
+        "text-color": "#61504a",
+        "text-halo-color": "#fffdf5",
+        "text-halo-width": 1.6
+      },
+      "layout": {
+        "text-field": [
+          "concat",
+          "^ ",
+          [
+            "coalesce",
+            [
+              "get",
+              "name:bg"
+            ],
+            [
+              "get",
+              "name:latin"
+            ],
+            [
+              "get",
+              "name:en"
+            ]
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
+        "text-size": 13,
+        "text-max-width": 10,
+        "text-padding": 4
+      },
+      "filter": [
+        "any",
+        [
+          "has",
+          "name:bg"
+        ],
+        [
+          "has",
+          "name:latin"
+        ],
+        [
+          "has",
+          "name:en"
+        ]
+      ]
+    },
+    {
+      "id": "huts",
+      "type": "symbol",
+      "source": "osm",
+      "source-layer": "poi",
+      "minzoom": 11,
+      "paint": {
+        "text-color": "#8e4631",
+        "text-halo-color": "#fffdf5",
+        "text-halo-width": 1.6
+      },
+      "filter": [
+        "all",
+        [
+          "in",
+          [
+            "get",
+            "subclass"
+          ],
+          [
+            "literal",
+            [
+              "alpine_hut",
+              "wilderness_hut",
+              "shelter"
+            ]
+          ]
+        ],
+        [
+          "any",
+          [
+            "has",
+            "name:bg"
+          ],
+          [
+            "has",
+            "name:latin"
+          ],
+          [
+            "has",
+            "name:en"
+          ]
+        ]
+      ],
+      "layout": {
+        "text-field": [
+          "concat",
+          "[H] ",
+          [
+            "coalesce",
+            [
+              "get",
+              "name:bg"
+            ],
+            [
+              "get",
+              "name:latin"
+            ],
+            [
+              "get",
+              "name:en"
+            ]
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
+        "text-size": 13,
+        "text-max-width": 10,
+        "text-padding": 4
+      }
+    },
+    {
+      "id": "trail-names",
+      "type": "symbol",
+      "source": "osm",
+      "source-layer": "transportation_name",
+      "minzoom": 13,
+      "paint": {
+        "text-color": "#8a6956",
+        "text-halo-color": "#fffdf5",
+        "text-halo-width": 1.6
+      },
+      "filter": [
+        "all",
+        [
+          "in",
+          [
+            "get",
+            "class"
+          ],
+          [
+            "literal",
+            [
+              "path",
+              "track"
+            ]
+          ]
+        ],
+        [
+          "any",
+          [
+            "has",
+            "name:bg"
+          ],
+          [
+            "has",
+            "name:latin"
+          ],
+          [
+            "has",
+            "name:en"
+          ]
+        ]
+      ],
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:bg"
+          ],
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name:en"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
+        "text-size": 11,
+        "text-max-width": 10,
+        "text-padding": 4,
+        "symbol-placement": "line",
+        "symbol-spacing": 350
+      }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "profile": "trailmesh-offline-region-v1",
+  "format": 1,
+  "referenceValidator": "tools/maps/pack.py",
+  "manifestMaxBytes": 262144,
+  "manifestFields": ["format", "id", "revision", "name", "dataDate", "boundsE7", "minZoom", "maxZoom", "engine", "attribution", "files"],
+  "engine": "valhalla-3.9.2",
+  "requiredPaths": ["map.pmtiles", "routing.tar", "places.json", "style.json", "licenses/OSM.txt"],
+  "optionalTerrain": {"path": "terrain.pmtiles", "type": "raster-dem", "encoding": "terrarium", "display": "hillshade"},
+  "files": {"maximum": 256, "fileAndTotalMaxBytes": 2147483647, "fields": ["path", "asset", "bytes", "sha256"], "pathAndAssetMaxLength": 160, "hash": "lowercase SHA256", "symlinks": false, "caseInsensitiveUniqueness": true, "asset": "flat ASCII release basename; no arbitrary file URL"},
+  "pathGrammar": "[A-Za-z0-9_ ./,@+\\-]+; no empty, dot or dotdot segments; asset uses same grammar without slash",
+  "slugGrammar": "[a-z0-9]+(?:-[a-z0-9]+)*; maximum 64 characters",
+  "textLengths": "Unicode code points; exclude C0 controls below U+0020 and unpaired surrogate code points U+D800..U+DFFF",
+  "spriteResources": ["sprite.json", "sprite.png", "sprite@2x.json", "sprite@2x.png"],
+  "boundsE7": "non-wrapping [west,south,east,north] WGS84; integer coordinates",
+  "zoom": [0, 14],
+  "places": {"maxBytes": 8388608, "maxCount": 25000, "maxAliases": 8, "nameAndAliasMaxLength": 120, "kinds": ["hut", "peak", "shelter", "water", "trailhead", "place"], "coordinates": "integer WGS84 E7 within pack coverage"},
+  "styleMaxBytes": 1048576,
+  "resources": "Closed local PMTiles, glyphs and optional sprite only. Resolve PACK_ROOT only after all hashes verify. No imports, remote images, network URLs or style terrain model.",
+  "trust": "Caller pins manifest SHA256 before parsing; every listed file is hashed before atomic publication. Data-build evidence does not establish native offline rendering/routing or physical acceptance."
+}
