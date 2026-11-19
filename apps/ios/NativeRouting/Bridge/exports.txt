@@ -1,0 +1,4 @@
+_tm_router_create
+_tm_router_destroy
+_tm_router_free
+_tm_router_route

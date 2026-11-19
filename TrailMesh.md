@@ -940,24 +940,37 @@ Do not store keys in source control, logs, test screenshots, or analytics. Separ
 
 ## 15. Offline maps and routes
 
-Use MapLibre Native as the first renderer candidate. Both native platform documentation sets provide offline-region facilities. Pin the selected versions after a real download/restart test. [MapLibre iOS](https://maplibre.org/maplibre-native/ios/latest/documentation/maplibre/), [MapLibre Android](https://maplibre.org/maplibre-native/android/api/-map-libre%20-native%20-android/org.maplibre.android.offline/-offline-manager/index.html)
+Prepare downloadable mountain regions rather than requiring a detailed map of the entire Earth. The first region is Rila, including the Malyovitsa hut-to-peak example. After preparation, the app must render the region, search named places, and calculate a new hiking route with the internet completely disabled. Region preparation requires connectivity. Offline use must require no paid routing API, card, or billing account.
+
+The selected renderer candidates are MapLibre Native Android 13.5.4 and iOS 7.0.0, which explicitly support local PMTiles files. Valhalla Mobile 0.6.6 supplies the on-device route engine, paired with graph data built by Valhalla 3.9.2. The iPhone product requires iOS 17.0 or later for the C++ runtime used by the route engine. These are implementation selections. Successful native rendering, routing, and physical-device acceptance require recorded tests. [Android PMTiles support](https://github.com/maplibre/maplibre-native/blob/android-v13.5.4/platform/android/docs/data/PMTiles.md), [iPhone PMTiles support](https://github.com/maplibre/maplibre-native/blob/ios-v7.0.0/platform/ios/MapLibre.docc/PMTiles.md), [Valhalla Mobile](https://github.com/Rallista/valhalla-mobile/tree/0.6.6)
 
 A renderer is not a map-data license. Select a provider/package that explicitly permits the intended offline downloads and redistribution, preserve attribution, and record terms and limits. Do not bulk-download standard OpenStreetMap raster tiles for offline packs; that endpoint's policy prohibits such use. [OSM tile policy](https://operations.osmfoundation.org/policies/tiles/)
 
 ### 15.1 Region preparation
 
-- Start with one small permitted hiking region; a Rila/Musala-area example is suitable if data rights and coverage are verified.
-- Download tiles, style, sprites, glyphs/fonts, and required metadata.
+- Start with the permitted Rila hiking region. Derive map tiles, the routing graph, and named-place search from the same dated OpenStreetMap extract.
+- Download tiles, local style, required icons and fonts, a compatible routing graph, a place index, and licenses. Every file has a declared length and SHA-256 hash.
 - Show estimated size, zoom range, coverage, provider, and data date.
-- Verify completion and any available content checksums before “Ready offline.”
+- Verify the trusted manifest hash before parsing and verify every file before publishing a complete immutable revision as “Ready offline.”
 - Support pause/resume, failed download recovery, and explicit deletion.
 - Test outside the downloaded extent and show a clear coverage boundary.
+- Keep staging, installed map data, and renderer caches separate from signed-report storage. Recover partial downloads after interruption. Cancellation must prevent late publication.
+- Keep active renderer and route-engine resources leased. Removal must wait or report busy while a graph is mapped or a renderer uses the pack.
+- Resolve all style, tile, font, icon, and graph references to local files. A prepared map must not silently fetch missing resources from the internet.
+
+The mountain map must be daylight-readable and visually coherent. Use clear trail strokes and label contrast, restrained vegetation and water colors, real shaded relief, named peaks and huts, and legible Cyrillic and Latin names. Include mapped minor footpaths, steps, and tracks as well as main hiking trails. Zoom-dependent drawing may reduce clutter, but must preserve minor paths at hiking zooms. OpenStreetMap can omit trails or contain outdated features, so complete real-world coverage cannot be promised. A displayed path does not establish accessibility, safety, markings, or suitability for a particular hiker.
 
 Do not assume any MBTiles or PMTiles file can be opened by every renderer/version. If using packaged archives, prove compatibility in the mapping spike before committing to that format.
 
 ### 15.2 Routes
 
-MVP imports a bounded GPX polyline and displays it. Parse defensively: limit file size and point count, disable external entity expansion, validate coordinates, and simplify long tracks. The route remains local unless the user consents to coarse interest sharing.
+The user selects a start and destination by local place search or map coordinates. Compute the hiking route on the phone using the installed region graph. Return graph-derived geometry, distance, and estimated walking time. Distinguish missing data, outside coverage, a distant path snap, and no connected route. Never replace routing failure with a straight line presented as a walking route.
+
+Use pedestrian routing with access, restriction, and construction checks enabled. Valhalla defaults to difficulty level 2, with an explicit selection from 0 through 6. The mapped Malyovitsa summit approach requires level 3 for the demonstration route. Missing difficulty tags do not establish easy or safe terrain. Routing uses dated map data and cannot establish current trail conditions.
+
+Keep full route geometry locally for map display. The existing relevance contract permits at most 2048 E7 points. A longer route requires tested bounded-error simplification or an explicit route-too-complex result. Do not truncate or sparsely sample it, which would silently change report selection. Exact route geometry must not be transmitted during report encounters or diagnostic export.
+
+A future GPX import can use the same route-selection boundary. Parse defensively with bounded file and point counts, external entities disabled, and validated coordinates. GPX import does not replace the required fully offline route calculation.
 
 Local route relevance can use minimum distance to a simplified polyline, a selectable corridor width initially 1 km, and a spatial index. Direction-of-travel estimates are optional and uncertain. Do not automatically reroute users around hazards without a validated route engine and appropriate context.
 
