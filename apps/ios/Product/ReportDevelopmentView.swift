@@ -9,6 +9,7 @@ struct ReportDevelopmentView: View {
     var body: some View {
         NavigationStack {
             List {
+                NavigationLink("Offline map backend diagnostics") { MapDevelopmentView() }
                 Section("Development test controls") {
                     Text("Signed public-report exchange in the synthetic Sofia area, 5 km radius").font(.headline)
                     Text("Keep TrailMesh open. Backgrounding pauses and closes links; returning resumes an active session. After process restart, tap Resume. Physical radio and lifecycle behavior still require testing.")

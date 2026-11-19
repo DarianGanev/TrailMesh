@@ -1,0 +1,80 @@
+[
+  {
+    "file": "ValhallaMobile-MIT.txt",
+    "url": "https://raw.githubusercontent.com/Rallista/valhalla-mobile/0.6.6/LICENSE.md",
+    "bytes": 1197,
+    "sha256": "81ffb4bf47025a1301d86df6cb8ac088848ce08a75196b1550bd39554a443a1f"
+  },
+  {
+    "file": "Valhalla-MIT.txt",
+    "url": "https://raw.githubusercontent.com/valhalla/valhalla/a919bb6b64d61d12f79ea5466d5cf599a39714ad/COPYING",
+    "bytes": 1135,
+    "sha256": "8bdb14aebb005ffa75ee3890aa10b242b30c840caa01b996c56338ca279f37cd"
+  },
+  {
+    "file": "Protobuf-BSD3.txt",
+    "url": "https://raw.githubusercontent.com/protocolbuffers/protobuf/v33.4/LICENSE",
+    "bytes": 1732,
+    "sha256": "6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d"
+  },
+  {
+    "file": "UTF8Range-MIT.txt",
+    "url": "https://raw.githubusercontent.com/protocolbuffers/protobuf/v33.4/third_party/utf8_range/LICENSE",
+    "bytes": 1091,
+    "sha256": "02de69b64fc36d9e938f418e52723e42f0b2b226d58a9cb3c8dcbdf7059f5074"
+  },
+  {
+    "file": "Abseil-Apache2.txt",
+    "url": "https://raw.githubusercontent.com/abseil/abseil-cpp/20260107.1/LICENSE",
+    "bytes": 11361,
+    "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+  },
+  {
+    "file": "LZ4-BSD2.txt",
+    "url": "https://raw.githubusercontent.com/lz4/lz4/v1.10.0/lib/LICENSE",
+    "bytes": 1311,
+    "sha256": "8b58c446121a109ccf32edc094bba3010a3d85e4ee3702950db55e4d3e87736c"
+  },
+  {
+    "file": "RapidJSON-Notices.txt",
+    "url": "https://raw.githubusercontent.com/Tencent/rapidjson/24b5e7a8b27f42fa16b96fc70aade9106cf7102f/license.txt",
+    "bytes": 5152,
+    "sha256": "a140e5d46fe734a1c78f1a3c3ef207871dd75648be71fdda8e309b23ab8b1f32"
+  },
+  {
+    "file": "HowardHinnantDate-MIT.txt",
+    "url": "https://raw.githubusercontent.com/HowardHinnant/date/b2e917ce6ca8dc11403772f6161b8f69f808c38b/LICENSE.txt",
+    "bytes": 1637,
+    "sha256": "c90f6c00fb961170560299cbda28ca2d45804913aa8b2a9f36dbb8e0028d6930"
+  },
+  {
+    "file": "UnorderedDense-MIT.txt",
+    "url": "https://raw.githubusercontent.com/martinus/unordered_dense/73f3cbb237e84d483afafc743f1f14ec53e12314/LICENSE",
+    "bytes": 1078,
+    "sha256": "4f5a62734899ec0ba85d3e8264a7ed1fcb4bcb8f0b4359c0afd627b6314ae599"
+  },
+  {
+    "file": "Flatbush-ISC.txt",
+    "url": "https://raw.githubusercontent.com/chusitoo/flatbush/b7a28a07bb97f708c9a8780b3d7af3908429baa8/LICENSE",
+    "bytes": 2791,
+    "sha256": "424e3b27d50fd38e07b8cb3f2e5964e8ded3fd348eb4ed2c52515fa8031fa071"
+  },
+  {
+    "file": "Microtar-MIT.txt",
+    "url": "https://raw.githubusercontent.com/rxi/microtar/27076e1b9290e9c7842bb7890a54fcf172406c84/LICENSE",
+    "bytes": 1047,
+    "sha256": "235ac8c3e43c67ced4a89fad8af65dc9f92a7627e5ce3e0016627b7505ead0ae"
+  },
+  {
+    "file": "Boost-BSL1.txt",
+    "url": "https://raw.githubusercontent.com/boostorg/boost/boost-1.92.0/LICENSE_1_0.txt",
+    "bytes": 1338,
+    "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566"
+  },
+  {
+    "file": "CppStatsdClient-MIT.txt",
+    "url": "https://raw.githubusercontent.com/vthiery/cpp-statsd-client/b60bc7bb930df664b4ab9573ad8bee80d29dc72d/LICENSE.md",
+    "bytes": 1070,
+    "sha256": "b839e97684169b2785f72916901f99d40b65dabea3a3e3c1df54e73e3e0f3d84"
+  }
+]

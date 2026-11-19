@@ -21,6 +21,12 @@ jobs:
     if: needs.change-detection.outputs.android == 'true' || needs.change-detection.outputs.ios == 'true'
     uses: ./.github/workflows/map-region.yml
 
+  ios-routing-build:
+    name: Prepare isolated iPhone routing SDK
+    needs: change-detection
+    if: needs.change-detection.outputs.ios == 'true'
+    uses: ./.github/workflows/ios-router.yml
+
   change-detection:
     name: Change detection
     runs-on: ubuntu-latest
@@ -403,6 +409,7 @@ jobs:
           cmp ../../protocol/exchange-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/exchange-v1-vectors.json
           cmp ../../protocol/relevance-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/relevance-v1-vectors.json
           cmp ../../protocol/session-v1-profile.json Tests/TrailMeshReportsTests/Fixtures/session-v1-profile.json
+          cmp ../../protocol/maps/region-v1-vectors.json Tests/TrailMeshMapsTests/Fixtures/region-v1-vectors.json
       - name: Test the product repository
         env:
           TRAILMESH_TEST_REPORT_OUTPUT: ${{ runner.temp }}/trailmesh-authored-report.json
@@ -431,10 +438,10 @@ jobs:
 
   ios-product-simulator:
     name: iOS product simulator tests
-    needs: change-detection
+    needs: [change-detection, map-region-build]
     if: needs.change-detection.outputs.ios == 'true'
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: apps/ios
@@ -444,6 +451,11 @@ jobs:
           persist-credentials: false
       - name: Select Xcode with Swift 6.1
         run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+      - name: Download verified regional test resources
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: TrailMesh-Rila-region
+          path: ${{ runner.temp }}/Rila
       - name: Check vectors and select simulator
         id: simulator
         shell: bash
@@ -459,16 +471,55 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          export TEST_RUNNER_TRAILMESH_MAP_PACK="$RUNNER_TEMP/Rila/pack"
+          export TEST_RUNNER_TRAILMESH_MAP_MANIFEST_SHA256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")"
           xcodebuild test -project Product/TrailMesh.xcodeproj -scheme TrailMesh \
             -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
             -derivedDataPath "$RUNNER_TEMP/TrailMeshProductTests" \
+            -resultBundlePath "$RUNNER_TEMP/TrailMeshMapTests.xcresult" \
             ARCHS=arm64 CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO \
             | tee "$RUNNER_TEMP/trailmesh-simulator-test.log"
           grep -Eq 'Executed [1-9][0-9]* tests?, with 0 failures' "$RUNNER_TEMP/trailmesh-simulator-test.log"
+          grep -Eq 'testRealGraphColdOpenRouteAndSnapshot.*passed' "$RUNNER_TEMP/trailmesh-simulator-test.log"
+      - name: Reopen the saved region after stopping the app process
+        shell: bash
+        run: |
+          set -o pipefail
+          export TEST_RUNNER_TRAILMESH_MAP_PACK="$RUNNER_TEMP/Rila/pack"
+          export TEST_RUNNER_TRAILMESH_MAP_MANIFEST_SHA256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")"
+          xcrun simctl terminate '${{ steps.simulator.outputs.id }}' org.trailmesh.ios || true
+          xcodebuild test-without-building -project Product/TrailMesh.xcodeproj -scheme TrailMesh \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
+            -derivedDataPath "$RUNNER_TEMP/TrailMeshProductTests" \
+            -resultBundlePath "$RUNNER_TEMP/TrailMeshMapRestart.xcresult" \
+            -only-testing:TrailMeshTests/NativeOfflineMapsTests/testRealGraphColdOpenRouteAndSnapshot \
+            ARCHS=arm64 CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO \
+            | tee "$RUNNER_TEMP/trailmesh-map-restart.log"
+          grep -Eq 'testRealGraphColdOpenRouteAndSnapshot.*passed' "$RUNNER_TEMP/trailmesh-map-restart.log"
+          xcrun xcresulttool export attachments --path "$RUNNER_TEMP/TrailMeshMapRestart.xcresult" --output-path "$RUNNER_TEMP/MapScreenshots"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          evidence = Path(os.environ['RUNNER_TEMP'], 'MapScreenshots')
+          assert any(b'Reopened existing verified app-private pack' in p.read_bytes() for p in evidence.rglob('*') if p.is_file()), 'Restart test must reuse the saved pack'
+          assert any(p.suffix == '.png' for p in evidence.rglob('*')), 'Offline map screenshot is required'
+          PY
+      - name: Retain offline map screenshots and native test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TrailMesh-iOS-offline-map-results
+          path: |
+            ${{ runner.temp }}/TrailMeshMapTests.xcresult
+            ${{ runner.temp }}/TrailMeshMapRestart.xcresult
+            ${{ runner.temp }}/MapScreenshots/
+            apps/ios/Product/TrailMesh.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          if-no-files-found: error
+          retention-days: 7
 
   ios-product-minimum:
-    name: iOS 16.1 product compatibility
-    needs: change-detection
+    name: iOS 17.0 product compatibility
+    needs: [change-detection, map-region-build]
     if: needs.change-detection.outputs.ios == 'true'
     runs-on: macos-15
     timeout-minutes: 45
@@ -481,21 +532,26 @@ jobs:
           persist-credentials: false
       - name: Select Xcode with Swift 6.1
         run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+      - name: Download verified regional test resources
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: TrailMesh-Rila-region
+          path: ${{ runner.temp }}/Rila
       - name: Install the minimum supported iOS simulator runtime
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/TrailMeshIOS16"
+          mkdir -p "$RUNNER_TEMP/TrailMeshIOS17"
           xcrun simctl list >/dev/null
-          xcodebuild -downloadPlatform iOS -buildVersion 16.1 -exportPath "$RUNNER_TEMP/TrailMeshIOS16"
+          xcodebuild -downloadPlatform iOS -buildVersion 17.0 -exportPath "$RUNNER_TEMP/TrailMeshIOS17"
       - name: Create the minimum-version simulator
         id: simulator
         shell: bash
         run: |
-          runtime_id="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=json.load(sys.stdin)["runtimes"]; m=[x["identifier"] for x in r if x.get("version") == "16.1" and x.get("isAvailable")]; print(m[0] if m else "")')"
+          runtime_id="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=json.load(sys.stdin)["runtimes"]; m=[x["identifier"] for x in r if x.get("version") == "17.0" and x.get("isAvailable")]; print(m[0] if m else "")')"
           test -n "$runtime_id"
-          simulator_id="$(xcrun simctl create TrailMesh-iOS16 com.apple.CoreSimulator.SimDeviceType.iPhone-14 "$runtime_id")"
+          simulator_id="$(xcrun simctl create TrailMesh-iOS17 com.apple.CoreSimulator.SimDeviceType.iPhone-15 "$runtime_id")"
           echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
-      - name: Run report repository tests on iOS 16.1
+      - name: Run report repository tests on iOS 17.0
         shell: bash
         run: |
           set -o pipefail
@@ -503,12 +559,15 @@ jobs:
           cmp ../../protocol/exchange-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/exchange-v1-vectors.json
           cmp ../../protocol/relevance-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/relevance-v1-vectors.json
           cmp ../../protocol/session-v1-profile.json Tests/TrailMeshReportsTests/Fixtures/session-v1-profile.json
+          export TEST_RUNNER_TRAILMESH_MAP_PACK="$RUNNER_TEMP/Rila/pack"
+          export TEST_RUNNER_TRAILMESH_MAP_MANIFEST_SHA256="$(cat "$RUNNER_TEMP/Rila/manifest.sha256")"
           xcodebuild test -project Product/TrailMesh.xcodeproj -scheme TrailMesh \
             -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
             -derivedDataPath "$RUNNER_TEMP/TrailMeshProductMinimum" \
             ARCHS=arm64 CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO \
-            | tee "$RUNNER_TEMP/trailmesh-ios16-test.log"
-          grep -Eq 'Executed [1-9][0-9]* tests?, with 0 failures' "$RUNNER_TEMP/trailmesh-ios16-test.log"
+            | tee "$RUNNER_TEMP/trailmesh-ios17-test.log"
+          grep -Eq 'Executed [1-9][0-9]* tests?, with 0 failures' "$RUNNER_TEMP/trailmesh-ios17-test.log"
+          grep -Eq 'testRealGraphColdOpenRouteAndSnapshot.*passed' "$RUNNER_TEMP/trailmesh-ios17-test.log"
 
   ios-product-package:
     name: Unsigned iPhone product package
