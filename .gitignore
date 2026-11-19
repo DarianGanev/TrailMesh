@@ -41,3 +41,9 @@ map-packs/
 # Generated analysis output
 simulator/results/
 coverage/
+
+# Map style validator dependencies
+node_modules/
+
+# Reproducibly built private iOS native routing SDK
+apps/ios/NativeRouting/Artifacts/

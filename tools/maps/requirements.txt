@@ -1,0 +1,1 @@
+mapbox-vector-tile==2.2.0
