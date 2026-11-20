@@ -4,10 +4,9 @@ import SwiftUI
 struct ExploreView: View {
     @State private var model = ExploreModel()
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.dynamicTypeSize) private var textSize
     @State private var showingCredits = false
     @State private var confirmingReplacement = false
-    @State private var overviewRequest = 0
+    @State private var cameraRequest: ExploreCameraRequest?
     @State private var loadedStyleURL: URL?
     #if TRAILMESH_DEVELOPMENT
     @Environment(\.scenePhase) private var phase
@@ -25,7 +24,7 @@ struct ExploreView: View {
                 case .needsDownload:
                     messagePage(
                         title: "Rila · Рила",
-                        detail: "About 64 MB. Once downloaded, the map works without internet.",
+                        detail: "Hiking trails, huts and peaks on a map you can use offline. About 64 MB.",
                         action: "Download Rila"
                     ) { model.download() }
                 case .downloading:
@@ -57,6 +56,7 @@ struct ExploreView: View {
             .background(surface)
             .navigationTitle("Explore")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar(showsMap ? .hidden : .visible, for: .navigationBar)
             .task { await model.reopen() }
             .confirmationDialog("Replace the saved Rila map?", isPresented: $confirmingReplacement, titleVisibility: .visible) {
                 Button("Replace and download", role: .destructive) { model.download(replacing: true) }
@@ -79,6 +79,11 @@ struct ExploreView: View {
         }
     }
 
+    private var showsMap: Bool {
+        if case .ready = model.state { return true }
+        return false
+    }
+
     #if TRAILMESH_DEVELOPMENT
     private func refreshAfterDiagnostics() {
         if case .ready = model.state { return }
@@ -92,47 +97,73 @@ struct ExploreView: View {
 
     private func mapPage(_ resources: ExploreMapResources) -> some View {
         let mapLoaded = loadedStyleURL == resources.styleURL
-        return InteractiveRilaMap(
-            resources: resources, overviewRequest: overviewRequest,
-            onLoaded: { loadedStyleURL = resources.styleURL },
-            onFailure: { model.mapDidFail(resources) }
-        )
-        .id(resources.styleURL)
-        .overlay(alignment: .topTrailing) {
-            Button {
-                overviewRequest += 1
-            } label: {
-                Label("Show Rila overview", systemImage: "scope")
-                    .labelStyle(.iconOnly)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+        return ZStack {
+            InteractiveRilaMap(
+                resources: resources, cameraRequest: cameraRequest,
+                onLoaded: { loadedStyleURL = resources.styleURL },
+                onFailure: { model.mapDidFail(resources) }
+            )
+            .id(resources.styleURL)
+            .ignoresSafeArea()
+        }
+        .overlay(alignment: .top) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Rila").font(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(mapLoaded ? "Saved offline" : "Opening map…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(surface, in: RoundedRectangle(cornerRadius: 12))
+
+                Spacer(minLength: 0)
+                #if TRAILMESH_DEVELOPMENT
+                Menu {
+                    Button("Research diagnostics") { showingDiagnostics = true }
+                } label: {
+                    Label("Developer tools", systemImage: "ellipsis")
+                        .labelStyle(.iconOnly)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .foregroundStyle(.primary)
+                .background(surface, in: RoundedRectangle(cornerRadius: 12))
+                #endif
             }
-            .buttonStyle(.plain)
-            .disabled(!mapLoaded)
-            .background(.background, in: RoundedRectangle(cornerRadius: 12))
             .padding(12)
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            let layout = textSize.isAccessibilitySize
-                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
-                : AnyLayout(HStackLayout(spacing: 12))
-            layout {
-                if mapLoaded {
-                    Label("Rila available offline", systemImage: "checkmark.circle")
-                } else {
-                    ProgressView("Opening Rila")
-                }
-                if !textSize.isAccessibilitySize { Spacer(minLength: 0) }
+        .overlay(alignment: .bottom) {
+            HStack(alignment: .bottom, spacing: 12) {
                 Button {
                     showingCredits = true
                 } label: {
-                    Text("© OpenStreetMap").frame(minHeight: 44)
+                    Text("© OpenStreetMap")
+                        .font(.caption2)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(surface, in: RoundedRectangle(cornerRadius: 6))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .accessibilityHint("Opens map credits")
+                Spacer(minLength: 0)
+                VStack(spacing: 0) {
+                    mapButton("Show Rila overview", icon: "viewfinder", command: .overview)
+                    Divider()
+                    mapButton("Zoom in", icon: "plus", command: .zoom(1))
+                    Divider()
+                    mapButton("Zoom out", icon: "minus", command: .zoom(-1))
+                }
+                .frame(width: 44)
+                .background(surface, in: RoundedRectangle(cornerRadius: 12))
+                .disabled(!mapLoaded)
             }
-            .font(.footnote)
-            .padding(.horizontal, 16)
-            .background(.background)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
         }
         .sheet(isPresented: $showingCredits) {
             NavigationStack {
@@ -149,6 +180,19 @@ struct ExploreView: View {
                 }
             }
         }
+    }
+
+    private func mapButton(_ title: String, icon: String, command: ExploreCameraCommand) -> some View {
+        Button {
+            cameraRequest = ExploreCameraRequest(command: command)
+        } label: {
+            Label(title, systemImage: icon)
+                .labelStyle(.iconOnly)
+                .font(.system(size: 17, weight: .medium))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func messagePage(title: String, detail: String, action: String, perform: @escaping () -> Void) -> some View {
@@ -176,14 +220,24 @@ struct ExploreView: View {
     }
 }
 
+private enum ExploreCameraCommand {
+    case overview
+    case zoom(Double)
+}
+
+private struct ExploreCameraRequest {
+    let id = UUID()
+    let command: ExploreCameraCommand
+}
+
 private struct InteractiveRilaMap: UIViewRepresentable {
     let resources: ExploreMapResources
-    let overviewRequest: Int
+    let cameraRequest: ExploreCameraRequest?
     let onLoaded: () -> Void
     let onFailure: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(resources: resources, overviewRequest: overviewRequest, onLoaded: onLoaded, onFailure: onFailure)
+        Coordinator(resources: resources, cameraRequestID: cameraRequest?.id, onLoaded: onLoaded, onFailure: onFailure)
     }
 
     func makeUIView(context: Context) -> MLNMapView {
@@ -194,6 +248,7 @@ private struct InteractiveRilaMap: UIViewRepresentable {
         map.maximumZoomLevel = Double(resources.region.manifest.maxZoom) + 2
         map.isPitchEnabled = false
         map.isRotateEnabled = false
+        map.showsLogoView = false
         let trailArea = CLLocationCoordinate2D(latitude: 42.181, longitude: 23.369)
         map.setCenter(trailArea, zoomLevel: 11.6, animated: false)
         map.showsAttributionButton = false
@@ -201,9 +256,12 @@ private struct InteractiveRilaMap: UIViewRepresentable {
     }
 
     func updateUIView(_ map: MLNMapView, context: Context) {
-        guard context.coordinator.overviewRequest != overviewRequest else { return }
-        context.coordinator.overviewRequest = overviewRequest
-        showOverview(on: map)
+        guard let cameraRequest, context.coordinator.cameraRequestID != cameraRequest.id else { return }
+        context.coordinator.cameraRequestID = cameraRequest.id
+        switch cameraRequest.command {
+        case .overview: showOverview(on: map)
+        case .zoom(let step): map.zoomLevel += step
+        }
     }
 
     private func showOverview(on map: MLNMapView) {
@@ -227,11 +285,11 @@ private struct InteractiveRilaMap: UIViewRepresentable {
         private let resources: ExploreMapResources
         private let onLoaded: () -> Void
         private let onFailure: () -> Void
-        var overviewRequest: Int
+        var cameraRequestID: UUID?
 
-        init(resources: ExploreMapResources, overviewRequest: Int, onLoaded: @escaping () -> Void, onFailure: @escaping () -> Void) {
+        init(resources: ExploreMapResources, cameraRequestID: UUID?, onLoaded: @escaping () -> Void, onFailure: @escaping () -> Void) {
             self.resources = resources
-            self.overviewRequest = overviewRequest
+            self.cameraRequestID = cameraRequestID
             self.onLoaded = onLoaded
             self.onFailure = onFailure
         }

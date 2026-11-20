@@ -20,8 +20,12 @@ class ExploreLaunchTest {
         ActivityScenario.launch<MainActivity>(launcher.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)).use {
             it.onActivity { activity ->
                 val titles = arrayListOf<View>()
-                activity.window.decorView.findViewsWithText(titles, "Explore", View.FIND_VIEWS_WITH_TEXT)
-                assertEquals(1, titles.size)
+                val decor = activity.window.decorView
+                decor.findViewsWithText(titles, "Explore", View.FIND_VIEWS_WITH_TEXT)
+                if (titles.none { it.isShown }) {
+                    decor.findViewsWithText(titles, "Rila", View.FIND_VIEWS_WITH_TEXT)
+                }
+                assertEquals(1, titles.count { it.isShown })
             }
         }
     }

@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
@@ -44,7 +45,11 @@ import org.trailmesh.app.maps.RilaRegion
 class MainActivity : Activity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var region: RilaRegion
+    private lateinit var root: LinearLayout
+    private lateinit var header: LinearLayout
     private lateinit var content: FrameLayout
+    private val systemInsets = Rect()
+    private var mapControls: FrameLayout? = null
     private var mapView: MapView? = null
     private var nativeMap: MapLibreMap? = null
     private var restoredCamera: CameraPosition? = null
@@ -60,7 +65,7 @@ class MainActivity : Activity() {
         region = lastNonConfigurationInstance as? RilaRegion
             ?: RilaRegion(File(filesDir, "offline-regions"))
 
-        val root = column().apply { setBackgroundColor(PAPER) }
+        root = column().apply { setBackgroundColor(PAPER) }
         if (Build.VERSION.SDK_INT >= 30) {
             window.setDecorFitsSystemWindows(false)
         } else {
@@ -71,25 +76,26 @@ class MainActivity : Activity() {
         }
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
-        root.setOnApplyWindowInsetsListener { view, insets ->
+        root.setOnApplyWindowInsetsListener { _, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
                 val bars = insets.getInsets(
                     WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
                 )
-                view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                systemInsets.set(bars.left, bars.top, bars.right, bars.bottom)
             } else {
-                view.setPadding(
+                systemInsets.set(
                     insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
                     insets.systemWindowInsetRight, insets.systemWindowInsetBottom,
                 )
             }
+            updateInsets()
             insets
         }
 
-        val header = LinearLayout(this).apply {
+        header = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(60)
-            setPadding(dp(22), dp(2), dp(12), dp(2))
+            minimumHeight = dp(52)
+            setPadding(dp(24), 0, dp(8), 0)
         }
         header.addView(label("Explore", 24f, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
         if (Build.VERSION.SDK_INT >= 28) {
@@ -102,7 +108,6 @@ class MainActivity : Activity() {
             }, LinearLayout.LayoutParams(dp(48), -2))
         }
         root.addView(header, LinearLayout.LayoutParams(-1, -2))
-        root.addView(rule(), LinearLayout.LayoutParams(-1, dp(1)))
         content = FrameLayout(this)
         root.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
@@ -165,6 +170,7 @@ class MainActivity : Activity() {
     }
 
     private fun destroyMap() {
+        mapControls = null
         val view = mapView ?: return
         mapView = null
         nativeMap = null
@@ -182,13 +188,16 @@ class MainActivity : Activity() {
         progressText = null
         destroyMap()
         content.removeAllViews()
+        val showingMap = state is ExploreRegionState.Ready
+        header.visibility = if (showingMap) View.GONE else View.VISIBLE
+        updateInsets()
         when (state) {
             ExploreRegionState.Checking -> showPanel(
                 "Checking for a saved map", "The map will open here when it’s ready.",
             )
             ExploreRegionState.Available -> showPanel(
                 "Rila · Рила",
-                "Save the Rila hiking map before you head out. Once it’s saved, you can open it without internet.",
+                "Hiking trails, huts and peaks on a map you can use offline.",
                 "Download Rila",
                 "64 MB · Internet required",
             ) { region.download() }
@@ -205,6 +214,15 @@ class MainActivity : Activity() {
             is ExploreRegionState.Failed -> showFailure(state)
             is ExploreRegionState.Ready -> showMap(state)
         }
+    }
+
+    private fun updateInsets() {
+        val mapIsVisible = header.visibility == View.GONE
+        root.setPadding(
+            systemInsets.left, if (mapIsVisible) 0 else systemInsets.top,
+            systemInsets.right, if (mapIsVisible) 0 else systemInsets.bottom,
+        )
+        mapControls?.setPadding(0, systemInsets.top, 0, systemInsets.bottom)
     }
 
     private fun showFailure(state: ExploreRegionState.Failed) {
@@ -293,43 +311,58 @@ class MainActivity : Activity() {
     }
 
     private fun showMap(state: ExploreRegionState.Ready) {
-        val layout = column()
-        content.addView(layout, FrameLayout.LayoutParams(-1, -1))
-        val info = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(22), dp(4), dp(10), dp(4))
+        val canvas = FrameLayout(this).apply { setBackgroundColor(MAP_PAPER) }
+        content.addView(canvas, FrameLayout.LayoutParams(-1, -1))
+        val controls = FrameLayout(this)
+        mapControls = controls
+        val name = column().apply {
+            background = mapSurface(12)
+            setPadding(dp(12), dp(8), dp(16), dp(8))
         }
-        val name = column()
-        name.addView(label("Rila", 18f, bold = true))
-        val status = label("Opening offline map…", 14f, MUTED).apply {
+        name.addView(label("Rila", 18f, bold = true).apply {
+            if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
+        })
+        val status = label("Opening map…", 12f, MUTED).apply {
+            setLineSpacing(0f, 1f)
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
         name.addView(status)
-        info.addView(name, LinearLayout.LayoutParams(0, -2, 1f))
-        val reset = button("Overview") {
-            nativeMap?.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds(state), dp(20)))
-        }.apply {
-            contentDescription = "Show Rila overview"
-            isEnabled = false
+        controls.addView(name, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
+            marginStart = dp(12)
+            topMargin = dp(12)
+            marginEnd = dp(72)
+        })
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            controls.addView(button("⋮") { showDiagnostics() }.apply {
+                contentDescription = "Developer tools"
+                textSize = 22f
+                background = mapSurface(12)
+            }, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.END).apply {
+                topMargin = dp(12)
+                marginEnd = dp(12)
+            })
         }
-        info.addView(reset)
-        layout.addView(info, LinearLayout.LayoutParams(-1, -2))
-        layout.addView(rule(), LinearLayout.LayoutParams(-1, dp(1)))
 
-        val canvas = FrameLayout(this).apply { setBackgroundColor(MAP_PAPER) }
-        layout.addView(canvas, LinearLayout.LayoutParams(-1, 0, 1f))
-        val credits = button("© OpenStreetMap contributors") {
+        val credits = button("© OpenStreetMap") {
             AlertDialog.Builder(this)
                 .setTitle("Map credits")
                 .setMessage(state.region.manifest.attribution)
                 .setPositiveButton("Close", null)
                 .show()
         }.apply {
-            textSize = 13f
-            gravity = Gravity.CENTER_VERTICAL or Gravity.START
-            setPadding(dp(22), dp(6), dp(18), dp(6))
+            textSize = 11f
+            setTextColor(INK)
+            setPadding(dp(10), 0, dp(10), 0)
+            // Keep the attribution compact without reducing its accessible touch area.
+            background = android.graphics.drawable.InsetDrawable(mapSurface(8), 0, dp(12), 0, dp(12))
         }
-        layout.addView(credits, LinearLayout.LayoutParams(-1, -2))
+        controls.addView(credits, FrameLayout.LayoutParams(-2, -2, Gravity.START or Gravity.BOTTOM).apply {
+            marginStart = dp(12)
+            bottomMargin = dp(4)
+            marginEnd = dp(72)
+        })
+        val mapButtons = addMapControls(controls, state)
+        updateInsets()
 
         val initial = restoredCamera ?: CameraPosition.Builder()
             .target(LatLng(42.181, 23.369))
@@ -354,7 +387,7 @@ class MainActivity : Activity() {
             )
             mapView = view
             canvas.addView(view, FrameLayout.LayoutParams(-1, -1))
-            addZoomControls(canvas)
+            canvas.addView(controls, FrameLayout.LayoutParams(-1, -1))
             view.onCreate(null)
             if (started) view.onStart()
             if (resumed) view.onResume()
@@ -368,7 +401,7 @@ class MainActivity : Activity() {
                     if (fullyRendered && mapView === view) {
                         view.removeOnDidFinishRenderingMapListener(this)
                         status.text = "Saved offline"
-                        reset.isEnabled = true
+                        mapButtons.forEach { it.isEnabled = true }
                     }
                 }
             })
@@ -387,28 +420,45 @@ class MainActivity : Activity() {
     private fun showMapError(state: ExploreRegionState.Ready) {
         destroyMap()
         content.removeAllViews()
+        header.visibility = View.VISIBLE
+        updateInsets()
         showPanel("The map didn’t open", "Rila is saved on this phone.", "Try again") { render(state) }
     }
 
-    private fun addZoomControls(canvas: FrameLayout) {
-        val zoom = column()
-        listOf(1 to "+", -1 to "−").forEach { (direction, symbol) ->
-            zoom.addView(button(symbol) {
-                nativeMap?.let {
-                    it.moveCamera(CameraUpdateFactory.zoomBy(direction.toDouble()))
-                }
-            }.apply {
-                textSize = 24f
-                contentDescription = if (direction > 0) "Zoom in" else "Zoom out"
-                setPadding(0, 0, 0, 0)
-            }, LinearLayout.LayoutParams(dp(48), dp(48)))
+    private fun addMapControls(overlay: FrameLayout, state: ExploreRegionState.Ready): List<View> {
+        val rail = column().apply { background = mapSurface(14) }
+        val overview = android.widget.ImageButton(this, null, android.R.attr.borderlessButtonStyle).apply {
+            setImageResource(R.drawable.ic_region_overview)
+            setColorFilter(GREEN)
+            contentDescription = "Show Rila overview"
+            isEnabled = false
+            setOnClickListener {
+                nativeMap?.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds(state), dp(20)))
+            }
+            rail.addView(this, LinearLayout.LayoutParams(dp(48), dp(48)))
         }
-        zoom.background = shape(PAPER, 12).apply { setStroke(dp(1), LINE) }
-        canvas.addView(zoom, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.BOTTOM).apply {
+        val actions = listOf(
+            Triple("+", "Zoom in", CameraUpdateFactory.zoomBy(1.0)),
+            Triple("−", "Zoom out", CameraUpdateFactory.zoomBy(-1.0)),
+        )
+        val zoom = actions.map { (symbol, description, update) ->
+            rail.addView(rule(), LinearLayout.LayoutParams(-1, dp(1)))
+            button(symbol) { nativeMap?.moveCamera(update) }.apply {
+                textSize = 22f
+                contentDescription = description
+                setPadding(0, 0, 0, 0)
+                isEnabled = false
+                rail.addView(this, LinearLayout.LayoutParams(dp(48), dp(48)))
+            }
+        }
+        overlay.addView(rail, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.BOTTOM).apply {
             marginEnd = dp(12)
-            bottomMargin = dp(12)
+            bottomMargin = dp(16)
         })
+        return listOf(overview) + zoom
     }
+
+    private fun mapSurface(radius: Int) = shape(PAPER, radius).apply { setStroke(dp(1), LINE) }
 
     private fun bounds(state: ExploreRegionState.Ready) = state.region.manifest.bounds.let {
         LatLngBounds.from(it.north / 1e7, it.east / 1e7, it.south / 1e7, it.west / 1e7)
