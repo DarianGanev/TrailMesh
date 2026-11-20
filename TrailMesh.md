@@ -642,6 +642,8 @@ Public-sharing consent allows compatible nearby participants to receive eligible
 
 Use matching product APK and unsigned iPhone artifacts from one successful Quality run. Record the source commit, artifact checksums, model and OS from each device export, permission settings, radios and physical observations. The current target devices are an iPhone 17, Redmi Note 11 Pro 5G and an OPPO phone. Capture the OPPO model and each actual OS version from the exports.
 
+In Explore, open **Developer tools**, then **Research diagnostics** (iPhone) or **Report session diagnostics** (Android). The report controls are available before downloading Rila. After restarting a phone, reopen this panel to continue the test.
+
 1. Keep the iPhone app open. On A and B, create different signed test reports and start public sharing with consent. Record A's report ID and confirm both phones save the other's report.
 2. Export A's evidence. Stop A and remove it from radio range or disable its Bluetooth. Keep C stopped until this step is complete.
 3. Terminate B's application process, reopen it and inspect its saved report list before starting another encounter. Confirm A's original report remains, then Resume B.

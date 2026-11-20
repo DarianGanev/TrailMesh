@@ -1,5 +1,6 @@
 ﻿<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
+        <activity android:name=".session.ReportDiagnosticsActivity" android:exported="false" android:label="TrailMesh report diagnostics" />
         <activity android:name="org.trailmesh.app.maps.MapsDiagnosticsActivity" android:exported="true" android:label="TrailMesh map diagnostics" />
     </application>
 </manifest>

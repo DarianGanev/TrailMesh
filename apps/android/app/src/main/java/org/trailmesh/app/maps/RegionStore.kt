@@ -31,6 +31,11 @@ class InstallCancellation {
     }
 }
 
+sealed interface RegionInstallProgress {
+    data class Downloading(val bytes: Long, val total: Long) : RegionInstallProgress
+    data object Verifying : RegionInstallProgress
+}
+
 interface AssetTransport {
     fun open(url: String, offset: Long): AssetResponse
 }
@@ -173,14 +178,16 @@ class RegionStore(val root: File, private val freeBytes: () -> Long = { root.usa
         }
     }
 
-    private fun verified(dir: File): InstalledRegion {
+    private fun verified(dir: File, expectedHash: String? = null): InstalledRegion {
         safe(dir)
         need(dir.isDirectory)
         val manifestFile = safe(File(dir, "manifest.json"))
         need(manifestFile.length() in 1..262144)
         val hashFile = safe(File(dir, "manifest.sha256"))
         need(hashFile.length() == 64L)
-        val m = RegionManifest.parse(manifestFile.readBytes(), hashFile.readText())
+        val storedHash = hashFile.readText()
+        need(expectedHash == null || storedHash == expectedHash)
+        val m = RegionManifest.parse(manifestFile.readBytes(), storedHash)
         need(dir.name == key(m.id, m.revision))
         verifyFiles(dir, m)
         return InstalledRegion(m, dir)
@@ -220,12 +227,12 @@ class RegionStore(val root: File, private val freeBytes: () -> Long = { root.usa
                 .sortedBy { it.manifest.id + "/" + it.manifest.revision }
         }
 
-    fun acquire(i: String, r: String): RegionLease =
+    fun acquire(i: String, r: String, expectedHash: String? = null): RegionLease =
         synchronized(state) {
             val k = key(i, r)
             val directory = safe(File(root, k))
             need(directory.exists(), MapError.UNAVAILABLE)
-            val region = verified(directory)
+            val region = verified(directory, expectedHash)
             state.leases[k] = (state.leases[k] ?: 0) + 1
             RegionLease(region) {
                 synchronized(state) {
@@ -254,6 +261,7 @@ class RegionStore(val root: File, private val freeBytes: () -> Long = { root.usa
         t: AssetTransport,
         u: String,
         c: InstallCancellation = InstallCancellation(),
+        onProgress: ((RegionInstallProgress) -> Unit)? = null,
     ): InstalledRegion =
         synchronized(state) {
             try {
@@ -272,9 +280,8 @@ class RegionStore(val root: File, private val freeBytes: () -> Long = { root.usa
                 )
                 val destination = safe(File(root, k))
                 if (destination.exists()) {
-                    val existing = verified(destination)
-                    need(File(destination, "manifest.sha256").readText() == h, MapError.CORRUPT)
-                    return@synchronized existing
+                    onProgress?.invoke(RegionInstallProgress.Verifying)
+                    return@synchronized verified(destination, h)
                 }
                 val stage = safe(File(root, ".stage-$k-$h"))
                 stage.mkdirs()
@@ -284,8 +291,10 @@ class RegionStore(val root: File, private val freeBytes: () -> Long = { root.usa
                 write(File(stage, "manifest.json"), b)
                 write(File(stage, "manifest.sha256"), h.toByteArray())
                 // Resume only this manifest's staging area. Finished files are always rehashed.
+                val total = m.files.sumOf { it.bytes }
                 var remaining = 0L
                 for (f in m.files) {
+                    c.check()
                     val file = safe(File(stage, f.path))
                     if (file.exists() && (file.length() != f.bytes || sha256(file) != f.sha256))
                         need(file.delete())
@@ -299,6 +308,8 @@ class RegionStore(val root: File, private val freeBytes: () -> Long = { root.usa
                     }
                 }
                 need(freeBytes() >= remaining + 8 * 1024 * 1024, MapError.SPACE)
+                var staged = total - remaining
+                onProgress?.invoke(RegionInstallProgress.Downloading(staged, total))
                 for (f in m.files) {
                     c.check()
                     val file = safe(File(stage, f.path))
@@ -306,9 +317,11 @@ class RegionStore(val root: File, private val freeBytes: () -> Long = { root.usa
                     file.parentFile!!.mkdirs()
                     val partial = safe(File(partialRoot, f.asset))
                     var offset = partial.length()
+                    val priorBytes = offset
                     if (offset < f.bytes) {
                         val asset = URI(null, null, f.asset, null).rawPath
                         t.open(u + asset, offset).use { response ->
+                            c.check()
                             if (response.status == 200) {
                                 offset = 0L
                             } else {
@@ -331,6 +344,9 @@ class RegionStore(val root: File, private val freeBytes: () -> Long = { root.usa
                             FileOutputStream(partial, offset > 0).use { out ->
                                 val buffer = ByteArray(65536)
                                 var received = offset
+                                val beforeFile = staged - priorBytes
+                                if (offset != priorBytes)
+                                    onProgress?.invoke(RegionInstallProgress.Downloading(beforeFile + offset, total))
                                 while (true) {
                                     c.check()
                                     val n = response.body.read(buffer)
@@ -338,6 +354,7 @@ class RegionStore(val root: File, private val freeBytes: () -> Long = { root.usa
                                     need(n <= f.bytes - received)
                                     out.write(buffer, 0, n)
                                     received += n
+                                    onProgress?.invoke(RegionInstallProgress.Downloading(beforeFile + received, total))
                                 }
                                 out.fd.sync()
                                 need(received == f.bytes, MapError.UNAVAILABLE)
@@ -350,8 +367,10 @@ class RegionStore(val root: File, private val freeBytes: () -> Long = { root.usa
                         throw MapFailure(MapError.CORRUPT)
                     }
                     Files.move(partial.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE)
+                    staged += f.bytes - priorBytes
                 }
                 c.check()
+                onProgress?.invoke(RegionInstallProgress.Verifying)
                 verifyFiles(stage, m)
                 need(partialRoot.deleteRecursively())
                 c.publish {
@@ -362,6 +381,7 @@ class RegionStore(val root: File, private val freeBytes: () -> Long = { root.usa
                 throw e
             } catch (_: Exception) {
                 c.check()
+                need(freeBytes() >= 8 * 1024 * 1024, MapError.SPACE)
                 throw MapFailure(MapError.UNAVAILABLE)
             }
         }

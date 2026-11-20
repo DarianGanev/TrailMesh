@@ -2,8 +2,8 @@
 import SwiftUI
 
 struct ReportDevelopmentView: View {
-    @StateObject private var model = ReportDevelopmentModel()
-    @Environment(\.scenePhase) private var phase
+    @ObservedObject var model: ReportDevelopmentModel
+    @Environment(\.dismiss) private var dismiss
     @State private var confirmRecovery = false
     @State private var confirmCleanup = false
     var body: some View {
@@ -44,8 +44,12 @@ struct ReportDevelopmentView: View {
                 }
             }
             .navigationTitle("TrailMesh Dev")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
             .task { await model.load() }
-            .onChange(of: phase) { model.setForeground($0 == .active) }
             .alert("Confirm corrected device clock?", isPresented: $confirmRecovery) {
                 Button("I corrected the clock") { model.recoverClockAfterConfirmation() }
                 Button("Cancel", role: .cancel) { }
