@@ -375,12 +375,11 @@ class ReportSessionService : Service() {
     }
 
     fun cleanupAfterConfirmation() {
+        if (!ready) return
+        val repo = repository ?: return
         scope.launch {
             try {
-                val count =
-                    repository!!.reclaimExpiredReportsAfterUserConfirmation(
-                        System::currentTimeMillis,
-                    )
+                val count = repo.reclaimExpiredReportsAfterUserConfirmation(System::currentTimeMillis)
                 message = "Removed $count expired records after confirmation."
                 refresh()
             } catch (e: ReportStoreException) {

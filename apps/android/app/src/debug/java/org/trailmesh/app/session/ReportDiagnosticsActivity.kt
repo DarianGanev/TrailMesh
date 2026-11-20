@@ -21,6 +21,7 @@ class ReportDiagnosticsActivity : Activity() {
     private lateinit var start: Button
     private lateinit var resume: Button
     private lateinit var create: Button
+    private lateinit var cleanup: Button
     private var pendingExportFileName: String? = null
     private var preparingExport = false
     private val connection =
@@ -115,7 +116,7 @@ class ReportDiagnosticsActivity : Activity() {
                 }
                 .show()
         }
-        button("Delete expired history...") {
+        cleanup = button("Delete expired history...") {
             AlertDialog.Builder(this)
                 .setTitle("Confirm clock and cleanup")
                 .setMessage(
@@ -126,7 +127,7 @@ class ReportDiagnosticsActivity : Activity() {
                     session?.cleanupAfterConfirmation()
                 }
                 .show()
-        }
+        }.apply { isEnabled = false }
         text(
             "Android uses a user-started connected-device foreground service. Actual screen-off behavior depends on device, OS and permissions and has not been established for signed reports. SDK send completion and peer RECEIVED claims never prove final delivery.",
         )
@@ -236,6 +237,7 @@ class ReportDiagnosticsActivity : Activity() {
         start.isEnabled = s?.ready == true && s.state != ReportSessionState.active
         resume.isEnabled = s?.ready == true && s.canResume
         create.isEnabled = s?.ready == true
+        cleanup.isEnabled = s?.ready == true
         val savedText =
             s?.saved?.joinToString("\n", prefix = "Saved synthetic test reports (bounded):\n") {
                 "${it.bundleID.take(16)} | saved locally | hops ${it.remainingHops}" +
