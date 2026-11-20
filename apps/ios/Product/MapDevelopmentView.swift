@@ -4,10 +4,10 @@ import TrailMeshMaps
 
 /// Starts with the verified Rila release. Other test manifests can be entered explicitly.
 struct MapDevelopmentView: View {
-    @State private var directory = "https://github.com/DarianGanev/TrailMesh/releases/download/maps-rila-osm-2026-11-16-v1/"
-    @State private var manifestHash = "862f354fa7ee81ba88c841767773607efc91f5c875c564e9faedcb196ac2c10f"
-    @State private var regionID = "rila"
-    @State private var revision = "osm-2026-11-16-v1"
+    @State private var directory = RilaRegion.releaseDirectory.absoluteString
+    @State private var manifestHash = RilaRegion.manifestHash
+    @State private var regionID = RilaRegion.id
+    @State private var revision = RilaRegion.revision
     @State private var query = ""
     @State private var status = "No offline region installed"
     @State private var installed: InstalledRegion?
@@ -21,7 +21,7 @@ struct MapDevelopmentView: View {
     @State private var selectedRoute: HikingRoute?
     @State private var operation: Task<Void, Never>?
     @State private var cancellation = InstallCancellation()
-    @State private var store = RegionStore(root: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("OfflineRegions"))
+    @State private var store = RilaRegion.makeStore()
     var body: some View {
         Form {
             Section("Offline backend diagnostics") {
@@ -71,12 +71,8 @@ struct MapDevelopmentView: View {
         cancellation = InstallCancellation()
         defer { busy = false; installing = false }
         do {
-            guard let url = URL(string: directory), url.scheme == "https" else { throw MapFailure.corrupt }
-            let request = URLRequest(url: url.appendingPathComponent("manifest.json"))
-            let (bytes, response) = try await URLSession.shared.bytes(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw MapFailure.unavailable }
-            var data = Data()
-            for try await byte in bytes { try cancellation.check(); guard data.count < 262144 else { throw MapFailure.corrupt }; data.append(byte) }
+            guard let url = URL(string: directory) else { throw MapFailure.corrupt }
+            let data = try await HTTPSPackTransport().fetchManifest(from: url, cancellation: cancellation)
             installed = try await store.install(manifestData: data, expectedSHA256: manifestHash, releaseDirectory: url, cancellation: cancellation)
             if let installed { regionID = installed.manifest.id; revision = installed.manifest.revision }
             start = nil; finish = nil; selectedRoute = nil; places = []; image = nil

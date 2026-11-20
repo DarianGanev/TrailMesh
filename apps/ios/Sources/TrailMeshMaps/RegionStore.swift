@@ -32,6 +32,29 @@ public struct HTTPSPackTransport: PackTransport {
     init(makeConfiguration: @escaping @Sendable () -> URLSessionConfiguration) {
         self.makeConfiguration = makeConfiguration
     }
+
+    public func fetchManifest(from directory: URL, cancellation: InstallCancellation) async throws -> Data {
+        try cancellation.check()
+        guard PackRedirectPolicy.allowed(directory), directory.query == nil, directory.fragment == nil else {
+            throw MapFailure.corrupt
+        }
+        let configuration = makeConfiguration()
+        configuration.urlCache = nil
+        let session = URLSession(configuration: configuration, delegate: PackRedirectPolicy(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let (bytes, response) = try await session.bytes(for: URLRequest(url: directory.appendingPathComponent("manifest.json")))
+        guard let http = response as? HTTPURLResponse, PackRedirectPolicy.allowed(http.url), http.statusCode == 200 else {
+            throw MapFailure.unavailable
+        }
+        var manifest = Data()
+        for try await byte in bytes {
+            try cancellation.check()
+            guard manifest.count < 262_144 else { throw MapFailure.corrupt }
+            manifest.append(byte)
+        }
+        return manifest
+    }
+
     public func fetch(url: URL, destination: URL, expectedBytes: Int64, cancellation: InstallCancellation) async throws {
         try cancellation.check()
         guard PackRedirectPolicy.allowed(url) else { throw MapFailure.corrupt }
