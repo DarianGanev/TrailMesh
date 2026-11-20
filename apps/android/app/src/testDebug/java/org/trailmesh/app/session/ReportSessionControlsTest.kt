@@ -28,7 +28,6 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
 import org.robolectric.util.ReflectionHelpers
-import org.trailmesh.app.MainActivity
 import org.trailmesh.app.exchange.*
 import org.trailmesh.app.persistence.ReportRepository
 import org.trailmesh.app.persistence.StoreOutcome
@@ -104,7 +103,7 @@ class ReportSessionControlsTest {
                 it.found(it.epoch, "peer", "TMR1|" + "2".repeat(32))
             }
 
-    private fun button(activity: MainActivity, label: String): Button {
+    private fun button(activity: ReportDiagnosticsActivity, label: String): Button {
         fun descendants(view: View): Sequence<View> = sequence {
             yield(view)
             if (view is ViewGroup)
@@ -135,7 +134,7 @@ class ReportSessionControlsTest {
         val owner = coordinator(radio, scope)
         ReflectionHelpers.setField(service, "coordinator", owner)
         ReflectionHelpers.setField(service, "ready", true)
-        val controller = Robolectric.buildActivity(MainActivity::class.java).create()
+        val controller = Robolectric.buildActivity(ReportDiagnosticsActivity::class.java).create()
         try {
             val activity = controller.get()
             shadowOf(activity).clearStartedServices()
@@ -183,7 +182,7 @@ class ReportSessionControlsTest {
                 .toByteArray(Charsets.UTF_8)
         snapshot.writeBytes(expected)
         val initialState = Bundle().apply { putString("pending_export_file", reference) }
-        var controller = Robolectric.buildActivity(MainActivity::class.java).create(initialState)
+        var controller = Robolectric.buildActivity(ReportDiagnosticsActivity::class.java).create(initialState)
         try {
             val state = Bundle()
             controller.saveInstanceState(state)
@@ -193,7 +192,7 @@ class ReportSessionControlsTest {
                 state.toString().contains("trailmesh.report-session-log"),
             )
             controller.destroy()
-            controller = Robolectric.buildActivity(MainActivity::class.java).create(state)
+            controller = Robolectric.buildActivity(ReportDiagnosticsActivity::class.java).create(state)
             val restored = controller.get()
             val uri = Uri.parse("content://exports/test.json")
             val output = ByteArrayOutputStream()
@@ -225,7 +224,7 @@ class ReportSessionControlsTest {
             "trailmesh-report-export-" + UUID.randomUUID().toString().replace("-", "") + ".json"
         val snapshot = File(context.cacheDir, reference).apply { writeText("{\"events\":[]}") }
         val controller =
-            Robolectric.buildActivity(MainActivity::class.java)
+            Robolectric.buildActivity(ReportDiagnosticsActivity::class.java)
                 .create(Bundle().apply { putString("pending_export_file", reference) })
         try {
             deliverExportResult(controller.get(), android.app.Activity.RESULT_CANCELED, Intent())
@@ -236,7 +235,7 @@ class ReportSessionControlsTest {
         }
         val outside = File(context.filesDir, "outside.json").apply { writeText("retain") }
         val foreign =
-            Robolectric.buildActivity(MainActivity::class.java)
+            Robolectric.buildActivity(ReportDiagnosticsActivity::class.java)
                 .create(
                     Bundle().apply { putString("pending_export_file", "../files/outside.json") },
                 )
@@ -253,7 +252,7 @@ class ReportSessionControlsTest {
         }
     }
 
-    private fun deliverExportResult(activity: MainActivity, result: Int, data: Intent) {
+    private fun deliverExportResult(activity: ReportDiagnosticsActivity, result: Int, data: Intent) {
         ReflectionHelpers.callInstanceMethod<Any>(
             activity,
             "onActivityResult",
@@ -277,7 +276,7 @@ class ReportSessionControlsTest {
         val preferences =
             service.getSharedPreferences("public-report-session", Context.MODE_PRIVATE)
         preferences.edit().putBoolean("open_intent", true).commit()
-        val controller = Robolectric.buildActivity(MainActivity::class.java).create()
+        val controller = Robolectric.buildActivity(ReportDiagnosticsActivity::class.java).create()
         try {
             val activity = controller.get()
             val connection = ReflectionHelpers.getField<ServiceConnection>(activity, "connection")
@@ -311,7 +310,7 @@ class ReportSessionControlsTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         context.applicationInfo.flags =
             context.applicationInfo.flags or ApplicationInfo.FLAG_DEBUGGABLE
-        val controller = Robolectric.buildActivity(MainActivity::class.java).create()
+        val controller = Robolectric.buildActivity(ReportDiagnosticsActivity::class.java).create()
         try {
             val activity = controller.get()
             shadowOf(activity).clearStartedServices()
@@ -342,7 +341,7 @@ class ReportSessionControlsTest {
         val owner = coordinator(radio, scope)
         ReflectionHelpers.setField(service, "coordinator", owner)
         ReflectionHelpers.setField(service, "ready", true)
-        val controller = Robolectric.buildActivity(MainActivity::class.java).create()
+        val controller = Robolectric.buildActivity(ReportDiagnosticsActivity::class.java).create()
         try {
             val activity = controller.get()
             val consent = ReflectionHelpers.getField<CheckBox>(activity, "consent")

@@ -216,6 +216,41 @@ class RegionMapsTest {
         }
     }
 
+    @Test
+    fun `pinned open rejects another manifest and tracks bytes through verification`() {
+        val root = Files.createTempDirectory("map-progress").toFile()
+        try {
+            val store = RegionStore(root)
+            val bytes = fixtureManifest()
+            val manifestHash = hash(bytes)
+            val assets = fixtureAssets()
+            val total = assets.values.sumOf { it.size }.toLong()
+            val progress = mutableListOf<RegionInstallProgress>()
+            store.install(
+                bytes,
+                manifestHash,
+                MemoryTransport(assets),
+                "https://example.test/release/",
+                onProgress = progress::add,
+            )
+            val downloads = progress.filterIsInstance<RegionInstallProgress.Downloading>()
+            assertEquals(0L, downloads.first().bytes)
+            assertEquals(total, downloads.last().bytes)
+            assertTrue(downloads.all { it.total == total && it.bytes in 0..total })
+            assertTrue(downloads.zipWithNext().all { (first, next) -> first.bytes <= next.bytes })
+            assertEquals(RegionInstallProgress.Verifying, progress.last())
+            RegionStore(root).acquire("rila", "one", manifestHash).use { lease ->
+                assertEquals("rila", lease.region.manifest.id)
+            }
+            val failure = assertThrows(MapFailure::class.java) {
+                store.acquire("rila", "one", "0".repeat(64))
+            }
+            assertEquals(MapError.CORRUPT, failure.reason)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     companion object {
         fun hash(bytes: ByteArray) =
             MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") {
