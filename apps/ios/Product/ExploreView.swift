@@ -29,6 +29,13 @@ struct ExploreView: View {
     @State private var pickingReportLocation = false
     @State private var pickCenterRequest: UUID?
     @State private var reportNotice: String?
+    private struct MarkerRefresh: Equatable {
+        let styleURL: URL
+        let revision: UUID
+        let foreground: Bool
+    }
+
+    @State private var markerRevision = UUID()
     @State private var reportClock = Date.now
     @State private var showingOfflineMaps = false
     @Environment(\.scenePhase) private var scenePhase
@@ -91,8 +98,12 @@ struct ExploreView: View {
             .task { await model.reopen() }
             .onChange(of: scenePhase) { _, phase in
                 location.setForeground(phase != .background)
-                if phase == .active, case .ready(let resources) = model.state {
-                    Task { await reports.page(in: resources.region.manifest) }
+                if phase == .active {
+                    markerRevision = UUID()
+                    reportClock = .now
+                    if case .list? = reportDestination, case .ready(let resources) = model.state {
+                        Task { await reports.page(in: resources.region.manifest) }
+                    }
                 }
             }
             .onChange(of: showsMap) { _, ready in
@@ -129,8 +140,8 @@ struct ExploreView: View {
 
     #if TRAILMESH_DEVELOPMENT
     private func refreshAfterDiagnostics() {
-        if case .ready(let resources) = model.state {
-            Task { await reports.page(in: resources.region.manifest) }
+        if case .ready = model.state {
+            markerRevision = UUID()
             return
         }
         Task { await model.reopen() }
@@ -148,7 +159,7 @@ struct ExploreView: View {
                 resources: resources, cameraRequest: cameraRequest,
                 route: route.result, routeID: route.geometryID,
                 currentPosition: location.recentFix.flatMap { MapPoint(coordinate: $0.coordinate) },
-                reports: reports.entries.filter { ExploreReports.current($0, at: reportClock) },
+                reports: reports.mapReports(in: resources.region.manifest, at: reportClock),
                 pickingReportLocation: pickingReportLocation,
                 pickCenterRequest: pickCenterRequest,
                 onReport: { reportDestination = .details($0) },
@@ -352,8 +363,12 @@ struct ExploreView: View {
                 creditedStyleURL = resources.styleURL
             } catch {}
         }
+        .task(id: MarkerRefresh(styleURL: resources.styleURL, revision: markerRevision,
+                                foreground: scenePhase != .background)) {
+            guard scenePhase != .background else { return }
+            await reports.refreshMapReports(in: resources.region.manifest)
+        }
         .task(id: resources.styleURL) {
-            await reports.page(in: resources.region.manifest)
             while !Task.isCancelled {
                 guard (try? await Task.sleep(for: .seconds(15))) != nil else { return }
                 reportClock = .now
@@ -390,7 +405,7 @@ struct ExploreView: View {
                     reportDestination = nil
                     reportNotice = "Report saved on this phone."
                     cameraRequest = ExploreCameraRequest(command: .location(point))
-                    Task { await reports.page(in: resources.region.manifest) }
+                    markerRevision = UUID()
                 }
             case .details(let report):
                 NavigationStack {

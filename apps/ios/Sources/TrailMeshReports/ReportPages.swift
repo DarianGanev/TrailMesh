@@ -35,6 +35,32 @@ enum ReportPageQuery: CaseIterable {
 }
 
 extension ReportRepository {
+    /// Pick the 96 newest current reports for the map. Follow the raw cursor even
+    /// when every report on a page is outside the map or no longer current.
+    public nonisolated func currentMapReports(bounds: ReportBounds, clock: @Sendable () -> Int64) async throws -> [StoredReport] {
+        let markerLimit = 96
+        let pageSize = 32
+        var markers: [StoredReport] = []
+        var cursor: ReportPageCursor?
+        // The repository admits at most 10,000 seen IDs, so this also
+        // bounds traversal while other tasks insert or reclaim reports.
+        for _ in 0..<313 {
+            try Task.checkCancellation()
+            let page = try await reportPage(clock: clock, bounds: bounds, after: cursor, limit: pageSize)
+            try Task.checkCancellation()
+            let now = clock()
+            markers.removeAll { $0.effectiveExpiresAt <= now }
+            markers += page.reports.lazy.filter { $0.effectiveExpiresAt > now }.prefix(markerLimit - markers.count)
+            guard markers.count < markerLimit, page.hasMore,
+                  let next = page.nextCursor, next != cursor else { break }
+            cursor = next
+            // The actor is free between verified transactions so exchange
+            // can admit reports and service acknowledgements.
+            try await Task.sleep(for: .milliseconds(16))
+        }
+        return markers
+    }
+
     public func reportPage(clock: @Sendable () -> Int64, bounds: ReportBounds, includeExpired: Bool = false,
                            after: ReportPageCursor? = nil, limit: Int = 64) throws -> ReportPage {
         try reportPage(now: clock(), bounds: bounds, includeExpired: includeExpired, after: after, limit: limit)

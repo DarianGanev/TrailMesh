@@ -44,6 +44,27 @@ final class ReportPageTests: XCTestCase {
         let history = try await repository.reportPage(now: now + 10000, bounds: world, includeExpired: true)
         XCTAssertEqual(history.reports.count, 64); XCTAssertTrue(history.reports.allSatisfy(\.isExpired))
     }
+    func testMapScansPastFourFilteredPagesAndCapsCurrentMarkers() async throws {
+        let (_, now, _) = try exchangeFixture()
+        let repository = try ReportRepository(path: ":memory:")
+        let identity = try ReportIdentity.create(store: ExchangeMemoryKeyStore())
+        for i in 0..<130 {
+            _ = try await repository.author(draft(i, now: now, latitude: 2_000), identity: identity, now: now)
+        }
+        // Older in-bounds reports come after all 130 out-of-bounds rows.
+        for i in 130..<230 {
+            let candidate = ReportDraft(category: "note", status: "observed", observedAt: now - Int64(i + 10),
+                                        latitude: 0, longitude: 0, accuracy: 1, note: "map fixture",
+                                        expiresAt: now + 10_000, maxHops: 2)
+            _ = try await repository.author(candidate, identity: identity, now: now)
+        }
+        let local = ReportBounds(south: -1, north: 1, west: -1, east: 1)
+        let markers = try await repository.currentMapReports(bounds: local, clock: { now })
+        XCTAssertEqual(markers.count, 96)
+        XCTAssertTrue(markers.allSatisfy { $0.latitude == 0 && !$0.isExpired })
+        XCTAssertEqual(markers.map(\.observedAt), (130..<226).map { now - Int64($0 + 10) })
+    }
+
     func testPageExposesVerifiedEffectiveExpiryAlongsideSignedExpiry() async throws {
         let (_, now, _) = try exchangeFixture()
         let source = try ReportRepository(path: ":memory:"), destination = try ReportRepository(path: ":memory:")

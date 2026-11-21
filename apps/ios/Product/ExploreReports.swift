@@ -55,12 +55,44 @@ actor ProductReportStorage {
 @Observable
 final class ExploreReports {
     private(set) var entries: [StoredReport] = []
+    private var mapEntries: [StoredReport] = []
+    private var markerRegion: String?
+    private var markerRequestID: UUID?
     private(set) var hasMore = false
     private(set) var loading = false
     private(set) var error: String?
     private(set) var appendFailed = false
     private var cursor: ReportPageCursor?
     private var requestID: UUID?
+
+    func mapReports(in manifest: RegionManifest, at date: Date) -> [StoredReport] {
+        guard markerRegion == manifest.key else { return [] }
+        return mapEntries.filter { Self.current($0, at: date) }
+    }
+
+    func refreshMapReports(in manifest: RegionManifest) async {
+        let id = UUID()
+        markerRequestID = id
+        if markerRegion != manifest.key {
+            markerRegion = manifest.key
+            mapEntries = []
+        }
+        do {
+            let repository = try await ProductReportStorage.shared.repository()
+            let bounds = Self.reportBounds(in: manifest)
+            let markers = try await repository.currentMapReports(bounds: bounds, clock: { Self.now() })
+            guard markerRequestID == id, !Task.isCancelled else { return }
+            mapEntries = markers
+        } catch {
+            guard markerRequestID == id, !Task.isCancelled else { return }
+            mapEntries = []
+        }
+    }
+
+    private static func reportBounds(in manifest: RegionManifest) -> ReportBounds {
+        let bounds = manifest.boundsE7
+        return ReportBounds(south: bounds[1], north: bounds[3], west: bounds[0], east: bounds[2])
+    }
 
     func page(in manifest: RegionManifest, more: Bool = false) async {
         if more, loading || !hasMore { return }
@@ -72,8 +104,7 @@ final class ExploreReports {
         defer { if requestID == id { loading = false } }
         do {
             let repository = try await ProductReportStorage.shared.repository()
-            let bounds = manifest.boundsE7
-            let queryBounds = ReportBounds(south: bounds[1], north: bounds[3], west: bounds[0], east: bounds[2])
+            let queryBounds = Self.reportBounds(in: manifest)
             var next = more ? cursor : nil
             var batch: [StoredReport] = []
             var remaining = false
