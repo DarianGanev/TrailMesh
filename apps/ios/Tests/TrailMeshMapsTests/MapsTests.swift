@@ -80,6 +80,25 @@ final class MapsTests: XCTestCase {
             }
         }
     }
+    func testRouteManeuversReferToValidOrderedShapePoints() throws {
+        let origin = MapPoint(latE7: 0, lonE7: 0)
+        let end = MapPoint(latE7: 100, lonE7: 100)
+        func route(_ maneuvers: [[String: Any]]) throws -> HikingRoute {
+            let response: [String: Any] = ["trip": [
+                "status": 0, "units": "kilometers", "summary": ["length": 0.01, "time": 5],
+                "legs": [["shape": "??SS", "maneuvers": maneuvers]]
+            ]]
+            return try HikingRoute.parse(JSONSerialization.data(withJSONObject: response), from: origin, to: end)
+        }
+        let first: [String: Any] = ["instruction": "Follow the trail", "begin_shape_index": 0]
+        let second: [String: Any] = ["instruction": "Arrive at the hut", "begin_shape_index": 1]
+        let result = try route([first, second])
+        XCTAssertEqual(result.maneuvers.map(\.instruction), ["Follow the trail", "Arrive at the hut"])
+        XCTAssertThrowsError(try route([second, first]))
+        XCTAssertThrowsError(try route([["instruction": "Arrive", "begin_shape_index": 2]]))
+        XCTAssertThrowsError(try route([["instruction": "", "begin_shape_index": 1]]))
+    }
+
     func testPolylineBoundsAndPrecision() throws {
         XCTAssertEqual(try HikingRoute.decodePolyline6("??SS"), [MapPoint(latE7: 0, lonE7: 0), MapPoint(latE7: 100, lonE7: 100)])
         for shape in ["?", "~~~~~~~~~~~~~~~~~~~~?", "\u{00e9}?"] {
