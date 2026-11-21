@@ -23,6 +23,30 @@ final class NativeOfflineMapsTests: XCTestCase {
         XCTAssertEqual(OfflineHTTPBlocker.attempts, 1)
     }
     @MainActor
+    func testExploreOffersDownloadWhenRilaIsMissing() async {
+        let store = RegionStore(root: URL.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let model = ExploreModel(store: store)
+        await model.reopen()
+        guard case .needsDownload = model.state else {
+            return XCTFail("Explore should offer a download when no Rila map has been saved")
+        }
+    }
+
+    @MainActor
+    func testExploreOffersRepairWhenInstalledRevisionIsIncomplete() async throws {
+        let root = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let emptyRevision = root.appendingPathComponent(RilaRegion.id).appendingPathComponent(RilaRegion.revision)
+        try FileManager.default.createDirectory(at: emptyRevision, withIntermediateDirectories: true)
+
+        let model = ExploreModel(store: RegionStore(root: root))
+        await model.reopen()
+        guard case .needsRepair = model.state else {
+            return XCTFail("Explore should offer a replacement for an incomplete saved map")
+        }
+    }
+
+    @MainActor
     func testRealGraphColdOpenRouteAndSnapshot() async throws {
         let environment = ProcessInfo.processInfo.environment
         let keys = ["TRAILMESH_MAP_PACK", "TRAILMESH_MAP_MANIFEST_SHA256"]
@@ -57,6 +81,7 @@ final class NativeOfflineMapsTests: XCTestCase {
         OfflineHTTPBlocker.reset()
         OfflineHTTPBlocker.configureRenderer()
         let region = try await store.openInstalled(id: manifest.id, revision: manifest.revision, expectedSHA256: hash)
+        try await assertExploreReopens(store, manifestHash: hash)
         XCTAssertFalse(try PlaceIndex(data: Data(contentsOf: copy.appendingPathComponent("places.json"))).search(smoke.query).isEmpty)
         let router = OfflineHikingRouter()
         for attempt in 0..<2 {
@@ -95,6 +120,18 @@ final class NativeOfflineMapsTests: XCTestCase {
         // Keep the verified pack for a second invocation after process shutdown.
         // Core installer tests cover successful removal after releasing leases.
         _ = try await store.openInstalled(id: manifest.id, revision: manifest.revision, expectedSHA256: hash)
+    }
+
+    @MainActor
+    private func assertExploreReopens(_ store: RegionStore, manifestHash: String) async throws {
+        let model = ExploreModel(store: store, manifestHash: manifestHash)
+        await model.reopen()
+        guard case .ready(let resources) = model.state else {
+            return XCTFail("Explore should open the verified Rila map from local storage")
+        }
+        XCTAssertTrue(resources.styleURL.isFileURL)
+        let style = try String(contentsOf: resources.styleURL, encoding: .utf8)
+        XCTAssertTrue(style.contains("file:"))
     }
 
     @MainActor
