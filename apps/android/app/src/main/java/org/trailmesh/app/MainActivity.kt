@@ -725,7 +725,10 @@ class MainActivity : Activity() {
         if (fit && route != null) {
             val positions = route.points.map { it.latLng() }
             val bounds = LatLngBounds.Builder().includes(positions).build()
-            nativeMap?.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, dp(20), dp(140), dp(20), dp(210)))
+            val viewport = mapView?.height ?: 0
+            nativeMap?.moveCamera(CameraUpdateFactory.newLatLngBounds(
+                bounds, dp(20), minOf(dp(140), viewport / 5), dp(20), minOf(dp(210), viewport / 3),
+            ))
         }
     }
 

@@ -206,6 +206,25 @@ abstract class RepositoryContract {
     }
 
     @Test
+    fun reportPageSamplesLiveClockInsideStoreTransaction() = runBlocking {
+        val (wire, now) = fixture()
+        val repo = ReportRepository.open(context, name())
+        try {
+            assertTrue(repo.ingest(wire, now) is StoreOutcome.Stored)
+            var samples = 0
+            val page = repo.reportPage(clock = {
+                assertTrue(repo.database.inTransaction())
+                samples++
+                now
+            }, limit = 1)
+            assertEquals(1, samples)
+            assertEquals(1, page.reports.size)
+        } finally {
+            repo.close()
+        }
+    }
+
+    @Test
     fun reportPagesUseRawCursorBoundAndPreserveObservationIDOrdering() = runBlocking {
         val (_, now) = fixture()
         val repo = ReportRepository.open(context,name())

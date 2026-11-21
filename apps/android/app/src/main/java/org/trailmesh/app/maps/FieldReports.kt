@@ -3,6 +3,11 @@ package org.trailmesh.app.maps
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.view.Gravity
 import android.text.InputFilter
@@ -52,7 +57,7 @@ internal class FieldReports(
     }
 
     suspend fun page(bounds: ReportBounds, history: Boolean = false, cursor: ReportPageCursor? = null): ReportPage =
-        withRepository { it.reportPage(System.currentTimeMillis(), bounds, history, cursor, limit = 32) }
+        withRepository { it.reportPage(System::currentTimeMillis, bounds, history, cursor, limit = 32) }
 
     fun fieldRows(rows: List<StoredReport>): List<StoredReport> = rows.filterNot {
         it.note.startsWith(ReportSessionCoordinator.TEST_NOTE_PREFIX)
@@ -67,20 +72,26 @@ internal class FieldReports(
         var loading: Job? = null
         var displayGeneration = 0
         val dialog = Dialog(activity, android.R.style.Theme_Material_Light_NoActionBar)
+        val back = action("‹  Explore") { dialog.dismiss() }.apply { setTextColor(ACCENT) }
         val header = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
-        header.addView(action("Back") { dialog.dismiss() })
         header.addView(text("Trail reports").apply {
-            textSize = 23f
+            textSize = 24f
+            typeface = Typeface.DEFAULT_BOLD
             if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
         }, LinearLayout.LayoutParams(0, -2, 1f))
         header.addView(action("New report") {
             dialog.dismiss()
             newReport()
+        }.apply {
+            background = controlBackground(TINT, 9)
+            setTextColor(ACCENT)
         })
         val screen = column().apply {
-            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setBackgroundColor(PAPER)
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            addView(back, LinearLayout.LayoutParams(-2, -2))
             addView(header)
-            addView(scroll(panel), LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(scroll(panel, horizontalPadding = 0), LinearLayout.LayoutParams(-1, 0, 1f))
         }
         dialog.setContentView(screen)
 
@@ -100,9 +111,15 @@ internal class FieldReports(
                         rows.addView(text(if (result.hasMore) "No matching reports on this page."
                             else if (history) "No older reports in this area." else "No recent reports in this area."))
                     }
-                    for (item in reports) rows.addView(action(
-                        "${reportTitle(item)}\n${age(item.observedAt)}",
-                    ) { details(item) })
+                    for (item in reports) {
+                        rows.addView(action("${reportTitle(item)}\n${age(item.observedAt)}") { details(item) }
+                            .apply {
+                                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                                minimumHeight = dp(66)
+                            }, LinearLayout.LayoutParams(-1, -2))
+                        rows.addView(View(activity).apply { setBackgroundColor(LINE) },
+                            LinearLayout.LayoutParams(-1, dp(1)))
+                    }
                     next = result.nextCursor.takeIf { result.hasMore }
                     if (next != null) rows.addView(action("More reports") { load(next) })
                 } catch (cancelled: CancellationException) {
@@ -120,8 +137,8 @@ internal class FieldReports(
         val older = action("History") {}
         fun selectHistory(showHistory: Boolean) {
             history = showHistory
-            recent.isEnabled = showHistory
-            older.isEnabled = !showHistory
+            filterAppearance(recent, !showHistory)
+            filterAppearance(older, showHistory)
             load()
         }
         recent.setOnClickListener { selectHistory(false) }
@@ -132,7 +149,11 @@ internal class FieldReports(
         panel.addView(rows)
         dialog.setOnDismissListener { loading?.cancel() }
         dialog.show()
-        dialog.window?.setLayout(-1, -1)
+        dialog.window?.let { window ->
+            window.setLayout(-1, -1)
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        }
         selectHistory(false)
     }
 
@@ -262,6 +283,7 @@ internal class FieldReports(
     private fun text(value: String) = TextView(activity).apply {
         text = value
         textSize = 16f
+        setTextColor(INK)
         setPadding(dp(4), dp(8), dp(4), dp(8))
     }
 
@@ -269,12 +291,29 @@ internal class FieldReports(
         text = value
         isAllCaps = false
         minimumHeight = dp(48)
+        stateListAnimator = null
+        setPadding(dp(10), dp(6), dp(10), dp(6))
+        background = controlBackground(Color.TRANSPARENT, 8)
+        setTextColor(INK)
         setOnClickListener { click() }
     }
 
     private fun column() = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-    private fun scroll(content: View) = ScrollView(activity).apply {
-        setPadding(dp(20), 0, dp(20), dp(8))
+    private fun filterAppearance(button: Button, selected: Boolean) {
+        button.isSelected = selected
+        button.setTextColor(if (selected) ACCENT else INK)
+        button.background = controlBackground(if (selected) TINT else Color.TRANSPARENT, 8)
+    }
+
+    private fun controlBackground(color: Int, radius: Int) = RippleDrawable(
+        ColorStateList.valueOf(0x18001D42), GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = dp(radius).toFloat()
+        }, null,
+    )
+
+    private fun scroll(content: View, horizontalPadding: Int = 20) = ScrollView(activity).apply {
+        setPadding(dp(horizontalPadding), 0, dp(horizontalPadding), dp(8))
         addView(content, -1, -2)
     }
     private fun dp(value: Int) = (value * activity.resources.displayMetrics.density + 0.5f).toInt()
@@ -300,6 +339,11 @@ internal class FieldReports(
 
     private data class ReportType(val key: String, val label: String, val statuses: List<String>)
     private companion object {
+        val PAPER = Color.rgb(250, 251, 255)
+        val INK = Color.rgb(24, 34, 51)
+        val ACCENT = Color.rgb(31, 80, 158)
+        val TINT = Color.rgb(229, 237, 249)
+        val LINE = Color.rgb(210, 218, 229)
         val TYPES = listOf(
             ReportType("trail", "Trail condition", listOf("muddy", "icy", "damaged", "blocked", "good", "unknown")),
             ReportType("obstruction", "Obstruction", listOf("partial", "blocked", "clear", "unknown")),
