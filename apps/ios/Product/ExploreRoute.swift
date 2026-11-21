@@ -98,10 +98,18 @@ final class ExploreRoute {
     private(set) var loading = false
     private(set) var error: String?
     private(set) var geometryID: UUID?
+    private(set) var maximumTrailGrade = 2
     private var requestID: UUID?
+
+    func setMaximumTrailGrade(_ grade: Int) {
+        guard grade != maximumTrailGrade else { return }
+        maximumTrailGrade = grade
+        clear()
+    }
 
     func calculate(region: InstalledRegion, from: MapPoint, to: MapPoint, destination: String) async {
         let id = UUID()
+        let grade = maximumTrailGrade
         requestID = id
         result = nil
         geometryID = nil
@@ -113,7 +121,7 @@ final class ExploreRoute {
         do {
             let lease = try await RilaRegion.makeStore().lease(region)
             try await router.open(region, lease: lease)
-            let route = try await router.route(from: from, to: to)
+            let route = try await router.route(from: from, to: to, maximumHikingDifficulty: grade)
             await router.close()
             try Task.checkCancellation()
             guard requestID == id else { return }
@@ -125,7 +133,7 @@ final class ExploreRoute {
             guard requestID == id, !Task.isCancelled else { return }
             switch error {
             case MapFailure.outsideCoverage: self.error = "Both places must be within the downloaded map."
-            case MapFailure.noRoute: self.error = "No hiking route found. Try another start or destination."
+            case MapFailure.noRoute: self.error = "No route at grade \(grade). Check the endpoints and trail grade."
             default: self.error = "The route couldn’t be calculated. Try again."
             }
         }
@@ -219,6 +227,15 @@ struct ExploreRoutePlanner: View {
                     Button { selecting = .destination } label: {
                         LabeledContent("To", value: destination?.name ?? "Choose a place")
                     }
+                    Picker("Maximum trail grade", selection: Binding(
+                        get: { route.maximumTrailGrade },
+                        set: { route.setMaximumTrailGrade($0) }
+                    )) {
+                        ForEach(0...6, id: \.self) { grade in
+                            Text("Grade \(grade)").tag(grade)
+                        }
+                    }
+                    .disabled(route.loading)
                 }
                 if start == nil, location.recentFix == nil {
                     Section {
