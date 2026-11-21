@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.location.Location
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Rect
@@ -32,6 +34,9 @@ import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -52,6 +57,22 @@ import org.trailmesh.app.maps.MapFailure
 import org.trailmesh.app.maps.MountainPlace
 import org.trailmesh.app.maps.RegionInstallProgress
 import org.trailmesh.app.maps.RilaRegion
+import org.trailmesh.app.maps.FIELD_LOCATION_REQUEST
+import org.trailmesh.app.maps.FieldLocation
+import org.trailmesh.app.maps.FieldMapLayers
+import org.trailmesh.app.maps.FieldReports
+import org.trailmesh.app.maps.FieldRoutes
+import org.trailmesh.app.maps.HikingRoute
+import org.trailmesh.app.maps.MapPoint
+import org.trailmesh.app.maps.NativeValhallaFactory
+import org.trailmesh.app.maps.RegionRouter
+import org.trailmesh.app.maps.RegionStore
+import org.trailmesh.app.maps.ReportPoint
+import org.trailmesh.app.maps.latLng
+import org.trailmesh.app.maps.mapPoint
+import org.trailmesh.app.maps.reportAccuracy
+import org.trailmesh.app.persistence.ReportBounds
+import org.trailmesh.app.persistence.StoredReport
 
 class MainActivity : Activity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -66,6 +87,20 @@ class MainActivity : Activity() {
     private var restoredCamera: CameraPosition? = null
     private var started = false
     private var resumed = false
+    private var fieldLayers: FieldMapLayers? = null
+    private var fieldRoutes: FieldRoutes? = null
+    private var fieldReports: FieldReports? = null
+    private val location by lazy { FieldLocation(this, ::showLocation) }
+    private var locationRequested = false
+    private var locationOneShot: ((ReportPoint?) -> Unit)? = null
+    private var locationTimeout: Job? = null
+    private var fixExpiry: Job? = null
+    private var locationPermissionPending = false
+    private var reportRefresh: Job? = null
+    private var mapReports: List<StoredReport> = emptyList()
+    private var chooseReportPoint: ((ReportPoint) -> Unit)? = null
+    private var guidance: TextView? = null
+    private var pickLocation: LinearLayout? = null
     private var progressBar: ProgressBar? = null
     private var progressText: TextView? = null
 
@@ -154,10 +189,19 @@ class MainActivity : Activity() {
         super.onResume()
         resumed = true
         mapView?.onResume()
+        if (fieldLayers != null && (locationRequested || locationOneShot != null) && location.hasPermission()) startFieldLocation()
+        val ready = region.state.value as? ExploreRegionState.Ready
+        if (ready != null && fieldLayers != null) scheduleReports(ready)
     }
 
     override fun onPause() {
         resumed = false
+        location.stop()
+        locationTimeout?.cancel()
+        fixExpiry?.cancel()
+        fieldLayers?.showLocation(null)
+        fieldRoutes?.locationPaused()
+        reportRefresh?.cancel()
         mapView?.onPause()
         super.onPause()
     }
@@ -181,6 +225,20 @@ class MainActivity : Activity() {
     }
 
     private fun destroyMap() {
+        fieldRoutes?.close()
+        fieldRoutes = null
+        fieldLayers = null
+        fieldReports = null
+        reportRefresh?.cancel()
+        mapReports = emptyList()
+        location.stop()
+        locationTimeout?.cancel()
+        fixExpiry?.cancel()
+        locationRequested = false
+        locationOneShot = null
+        chooseReportPoint = null
+        guidance = null
+        pickLocation = null
         mapControls = null
         val view = mapView ?: return
         mapView = null
@@ -437,7 +495,9 @@ class MainActivity : Activity() {
                         Style.Builder().fromJson(state.style)
                             .withImage("trailmesh-hut", requireNotNull(getDrawable(R.drawable.ic_map_hut)))
                             .withImage("trailmesh-peak", requireNotNull(getDrawable(R.drawable.ic_map_peak))),
-                    )
+                    ) { style ->
+                        if (mapView === view) prepareFieldMap(state, map, style)
+                    }
                 }
             }
         } catch (_: RuntimeException) {
@@ -476,6 +536,21 @@ class MainActivity : Activity() {
         }
         placeDetails.addView(dismiss, LinearLayout.LayoutParams(dp(48), dp(48)))
         controls.addView(placeDetails, itemParams(top = 0))
+        guidance = label("", 14f).apply {
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = mapSurface(10)
+            visibility = View.GONE
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }.also { controls.addView(it, itemParams(top = 4)) }
+        pickLocation = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = mapSurface(10)
+            visibility = View.GONE
+            addView(label("Tap the report location", 14f).apply {
+                setPadding(dp(12), 0, 0, 0)
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(button("Cancel") { finishMapPointSelection() })
+        }.also { controls.addView(it, itemParams(top = 4)) }
 
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         val search = button("Search Rila") {
@@ -504,7 +579,12 @@ class MainActivity : Activity() {
                 menu.add(0, 1, 0, "Rila overview")
                 menu.add(0, 2, 1, "Zoom in")
                 menu.add(0, 3, 2, "Zoom out")
+                menu.add(0, 4, 3, "Offline maps")
                 setOnMenuItemClickListener { item ->
+                    if (item.itemId == 4) {
+                        showOfflineMaps(state)
+                        return@setOnMenuItemClickListener true
+                    }
                     val update = when (item.itemId) {
                         1 -> {
                             placeDetails.visibility = View.GONE
@@ -522,12 +602,217 @@ class MainActivity : Activity() {
         }.apply { isEnabled = false }
         row.addView(options, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(8) })
         controls.addView(row, itemParams(top = 8))
+        val fieldActions = LinearLayout(this).apply { background = mapSurface(12) }
+        val actions = listOf(
+            button("Route") { fieldRoutes?.open() },
+            button("Reports") { fieldReports?.show(reportBounds(state)) },
+            button("Locate") { locateOnMap() },
+        )
+        for (action in actions) {
+            action.isEnabled = false
+            action.setPadding(dp(4), 0, dp(4), 0)
+            fieldActions.addView(action, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        controls.addView(fieldActions, itemParams(top = 6))
         overlay.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
             marginStart = dp(16)
             marginEnd = dp(16)
             bottomMargin = dp(54)
         })
-        return listOf(search, options)
+        return listOf(search, options) + actions
+    }
+
+    private fun showOfflineMaps(state: ExploreRegionState.Ready) {
+        val bytes = state.region.manifest.files.sumOf { it.bytes }
+        val size = (bytes + 999_999L) / 1_000_000L
+        AlertDialog.Builder(this)
+            .setTitle("Offline maps")
+            .setMessage("Rila · $size MB\nDownloaded and verified")
+            .setPositiveButton("Remove map") { _, _ ->
+                AlertDialog.Builder(this)
+                    .setTitle("Remove the Rila map?")
+                    .setMessage("Download the map again before your next offline hike.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Remove") { _, _ ->
+                        val routeClosed = fieldRoutes?.close()
+                        fieldRoutes = null
+                        destroyMap()
+                        region.removeMap(routeClosed) { removed ->
+                            if (!removed && resumed && !isFinishing) AlertDialog.Builder(this)
+                                .setMessage("Rila could not be removed. Try again.")
+                                .setPositiveButton("Close", null).show()
+                        }
+                    }.show()
+            }.setNegativeButton("Close", null).show()
+    }
+
+    private fun prepareFieldMap(state: ExploreRegionState.Ready, map: MapLibreMap, style: Style) {
+        fieldLayers = FieldMapLayers(style)
+        val manifest = state.region.manifest
+        fieldRoutes = FieldRoutes(this, scope, RegionRouter(
+            RegionStore(File(filesDir, "offline-regions")), manifest.id, manifest.revision,
+            NativeValhallaFactory(cacheDir),
+        ), { select -> showPlaceSearch(state, select) }, ::showHikingRoute, ::showGuidance, {
+            locationRequested = true
+            startFieldLocation()
+        })
+        fieldReports = FieldReports(this, scope, { select ->
+            chooseReportPoint = select
+            pickLocation?.visibility = View.VISIBLE
+        }, { result ->
+            requestReportLocation { point -> result(point?.takeIf { manifest.bounds.contains(it.point) }) }
+        }, { centerOn(it) }, {
+            scheduleReports(state)
+        })
+        map.addOnMapClickListener { coordinate ->
+            val select = chooseReportPoint
+            if (select != null) {
+                val point = coordinate.mapPoint()
+                if (manifest.bounds.contains(point)) {
+                    finishMapPointSelection()
+                    select(ReportPoint(point, 0))
+                }
+                return@addOnMapClickListener true
+            }
+            val ids = FieldMapLayers.tappedReports(map, coordinate, dp(18).toFloat())
+            val matches = mapReports.filter { it.bundleID in ids && it.expiresAt > System.currentTimeMillis() }
+            when (matches.size) {
+                0 -> false
+                1 -> {
+                    fieldReports?.details(matches.single())
+                    true
+                }
+                else -> {
+                    AlertDialog.Builder(this).setTitle("Reports at this spot")
+                        .setItems(matches.map { fieldReports?.reportTitle(it).orEmpty() }.toTypedArray()) { _, index ->
+                            fieldReports?.details(matches[index])
+                        }.setNegativeButton("Close", null).show()
+                    true
+                }
+            }
+        }
+        if (resumed) scheduleReports(state)
+    }
+
+    private fun reportBounds(state: ExploreRegionState.Ready) =
+        state.region.manifest.bounds.let { ReportBounds(it.south, it.north, it.west, it.east) }
+
+    private fun scheduleReports(state: ExploreRegionState.Ready) {
+        val reports = fieldReports ?: return
+        reportRefresh?.cancel()
+        reportRefresh = scope.launch {
+            while (isActive && resumed) {
+                mapReports = try {
+                    reports.fieldRows(reports.page(reportBounds(state)).reports)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                fieldLayers?.showReports(mapReports)
+                delay(30_000L)
+            }
+        }
+    }
+
+    private fun finishMapPointSelection() {
+        chooseReportPoint = null
+        pickLocation?.visibility = View.GONE
+    }
+
+    private fun showHikingRoute(route: HikingRoute?, fit: Boolean) {
+        fieldLayers?.showRoute(route)
+        if (fit && route != null) {
+            val positions = route.points.map { it.latLng() }
+            val bounds = LatLngBounds.Builder().includes(positions).build()
+            nativeMap?.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, dp(20), dp(140), dp(20), dp(210)))
+        }
+    }
+
+    private fun showGuidance(text: String?) {
+        guidance?.apply {
+            this.text = text.orEmpty()
+            visibility = if (text == null) View.GONE else View.VISIBLE
+        }
+    }
+
+    private fun locateOnMap() {
+        locationRequested = true
+        requestReportLocation { point ->
+            if (point != null) centerOn(point.point)
+            else AlertDialog.Builder(this).setMessage("A recent location is unavailable.")
+                .setPositiveButton("Close", null).show()
+        }
+    }
+
+    private fun requestReportLocation(result: (ReportPoint?) -> Unit) {
+        val fix = location.current()
+        if (fix != null) {
+            result(ReportPoint(fix.mapPoint(), fix.reportAccuracy()))
+            return
+        }
+        locationOneShot = result
+        startFieldLocation()
+    }
+
+    private fun startFieldLocation() {
+        if (!location.hasPermission()) {
+            if (!locationPermissionPending) {
+                locationPermissionPending = true
+                requestPermissions(FieldLocation.PERMISSIONS, FIELD_LOCATION_REQUEST)
+            }
+            return
+        }
+        if (!location.start()) {
+            fieldRoutes?.locationUnavailable()
+            finishLocationRequest(null)
+        } else if (locationOneShot != null && locationTimeout?.isActive != true) {
+            locationTimeout = scope.launch {
+                delay(7000L)
+                finishLocationRequest(null)
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(request: Int, permissions: Array<out String>, grants: IntArray) {
+        super.onRequestPermissionsResult(request, permissions, grants)
+        if (request != FIELD_LOCATION_REQUEST) return
+        locationPermissionPending = false
+        if (grants.any { it == PackageManager.PERMISSION_GRANTED }) startFieldLocation()
+        else {
+            locationRequested = false
+            fieldRoutes?.locationUnavailable()
+            finishLocationRequest(null)
+        }
+    }
+
+    private fun showLocation(fix: Location) {
+        val point = fix.mapPoint()
+        if (locationRequested) {
+            fieldLayers?.showLocation(point)
+            fieldRoutes?.onLocation(fix)
+            fixExpiry?.cancel()
+            fixExpiry = scope.launch {
+                delay(30_000L)
+                fieldLayers?.showLocation(null)
+                fieldRoutes?.locationUnavailable()
+            }
+        }
+        finishLocationRequest(ReportPoint(point, fix.reportAccuracy()))
+    }
+
+    private fun finishLocationRequest(value: ReportPoint?) {
+        locationTimeout?.cancel()
+        val pending = locationOneShot
+        locationOneShot = null
+        if (!locationRequested && pending != null) location.stop()
+        pending?.invoke(value)
+    }
+
+    private fun centerOn(point: MapPoint) {
+        nativeMap?.let { map ->
+            map.moveCamera(CameraUpdateFactory.newLatLngZoom(point.latLng(), maxOf(map.cameraPosition.zoom, 13.5)))
+        }
     }
 
     private fun mapIcon(icon: Int, description: String, action: (View) -> Unit) =

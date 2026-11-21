@@ -148,6 +148,26 @@ class RegionMapsTest {
     }
 
     @Test
+    fun `route directions keep verified shape positions`() {
+        val raw = """{"trip":{"status":0,"units":"kilometers","summary":{"length":0.1,"time":10},"legs":[{"shape":"??AA","maneuvers":[{"begin_shape_index":0,"end_shape_index":1,"instruction":"Continue on the trail"},{"begin_shape_index":1,"end_shape_index":1,"instruction":"Arrive"}]}]}}"""
+        val route = RouteParser.parse(raw, MapPoint(0, 0), MapPoint(10, 10))
+        assertEquals(listOf(HikingManeuver(0, 1, "Continue on the trail"), HikingManeuver(1, 1, "Arrive")), route.maneuvers)
+        rejects { RouteParser.parse(raw.replace(""" "end_shape_index":1""".trim(), """ "end_shape_index":2""".trim()), MapPoint(0, 0), MapPoint(10, 10)) }
+    }
+
+    @Test
+    fun `guidance matches the route segment and reports off route distance`() {
+        val route = HikingRoute(listOf(MapPoint(0, 0), MapPoint(0, 10000), MapPoint(10000, 10000)), 0.2, 180.0)
+        val mid = route.matchPosition(MapPoint(0, 5000))
+        assertEquals(0.5, mid.shapePosition, 0.001)
+        assertEquals(0.0, mid.distanceM, 0.001)
+        val next = route.matchPosition(MapPoint(5000, 10000))
+        assertEquals(1.5, next.shapePosition, 0.001)
+        val offRoute = route.matchPosition(MapPoint(-10000, 5000))
+        assertEquals(111.195, offRoute.distanceM, 0.01)
+    }
+
+    @Test
     fun `verified publication restart revalidation and lease removal`() {
         val root = Files.createTempDirectory("map-test").toFile()
         try {

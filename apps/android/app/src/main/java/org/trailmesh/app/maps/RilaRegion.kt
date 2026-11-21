@@ -111,6 +111,33 @@ internal class RilaRegion(private val root: File) {
         }
     }
 
+    /** Caller destroys the map renderer before removal. The route worker closes its lease first. */
+    fun removeMap(routeClosed: java.util.concurrent.Future<*>?, complete: (Boolean) -> Unit) {
+        if (state.value !is ExploreRegionState.Ready) return
+        mutableState.value = ExploreRegionState.Checking
+        scope.launch {
+            val removed = withContext(Dispatchers.IO) {
+                try {
+                    routeClosed?.get()
+                    lease?.close()
+                    RegionStore(root).remove(ID, REVISION)
+                    true
+                } catch (_: Exception) {
+                    false
+                }
+            }
+            if (removed) {
+                lease = null
+                mutableState.value = ExploreRegionState.Available
+            } else {
+                lease?.close()
+                lease = null
+                prepare(null, false)
+            }
+            complete(removed)
+        }
+    }
+
     fun close() {
         install?.cancel()
         scope.cancel()
