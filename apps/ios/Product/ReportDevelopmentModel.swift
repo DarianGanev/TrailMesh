@@ -31,22 +31,8 @@ final class ReportDevelopmentModel: ObservableObject {
         loading = true
         defer { loading = false }
         do {
-            let directory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-                .appendingPathComponent("TrailMeshReports", isDirectory: true)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-                attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
-            let opened = try await ReportRepository.open(path: directory.appendingPathComponent("reports.sqlite").path)
-            let identityWasEstablished = UserDefaults.standard.bool(forKey: "reportIdentityEstablished")
-            let protectedIdentity = try await Task.detached {
-                let keychain = KeychainIdentityStore(service: "org.trailmesh.ios.report-identity.v1", account: "signing")
-                do { return try ReportIdentity.load(store: keychain) }
-                catch IdentityError.missing {
-                    guard !identityWasEstablished else { throw IdentityError.missing }
-                    return try ReportIdentity.create(store: keychain)
-                }
-                // Corruption/keychain failures propagate; never replace an existing key.
-            }.value
-            UserDefaults.standard.set(true, forKey: "reportIdentityEstablished")
+            let opened = try await ProductReportStorage.shared.repository()
+            let protectedIdentity = try await ProductReportStorage.shared.identity()
             repository = opened; identity = protectedIdentity
             let coordinator = ReportSessionCoordinator(repository: opened, radio: ProductNearbyRadio())
             self.coordinator = coordinator

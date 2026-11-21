@@ -35,6 +35,11 @@ enum ReportPageQuery: CaseIterable {
 }
 
 extension ReportRepository {
+    public func reportPage(clock: @Sendable () -> Int64, bounds: ReportBounds, includeExpired: Bool = false,
+                           after: ReportPageCursor? = nil, limit: Int = 64) throws -> ReportPage {
+        try reportPage(now: clock(), bounds: bounds, includeExpired: includeExpired, after: after, limit: limit)
+    }
+
     /// Keyset page in observation DESC / ID ASC order. A filtered empty page can
     /// have more raw candidates. Each call releases the actor and transaction.
     public func reportPage(now: Int64, bounds: ReportBounds, includeExpired: Bool = false,

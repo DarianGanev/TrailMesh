@@ -30,6 +30,8 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>TrailMesh uses Nearby Connections for offline public-report exchange during your consented session.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>TrailMesh uses your location while open to show where you are on a hiking route or to pin a report when you choose.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
