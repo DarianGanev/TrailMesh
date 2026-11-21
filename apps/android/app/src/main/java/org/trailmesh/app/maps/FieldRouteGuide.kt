@@ -27,3 +27,6 @@ internal fun HikingRoute.matchPosition(fix: MapPoint): RouteMatch {
     }
     return RouteMatch(bestPosition, bestMeters)
 }
+
+internal fun HikingRoute.instructionsAt(shapePosition: Double): String? =
+    maneuvers.firstOrNull { !it.arrival && it.endIndex > shapePosition }?.instruction

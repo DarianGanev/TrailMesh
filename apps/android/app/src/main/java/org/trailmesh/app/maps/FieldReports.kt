@@ -24,6 +24,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import org.trailmesh.app.persistence.ReportBounds
 import org.trailmesh.app.persistence.ReportDraft
 import org.trailmesh.app.persistence.ReportPage
@@ -60,8 +61,15 @@ internal class FieldReports(
         withRepository { it.reportPage(System::currentTimeMillis, bounds, history, cursor, limit = 32) }
 
     fun fieldRows(rows: List<StoredReport>): List<StoredReport> = rows.filterNot {
-        it.note.startsWith(ReportSessionCoordinator.TEST_NOTE_PREFIX)
+        isDiagnosticReportNote(it.note)
     }
+
+    suspend fun mapRows(bounds: ReportBounds): List<StoredReport> =
+        withRepository { repository ->
+            collectCurrentMapReports { cursor ->
+                repository.reportPage(System::currentTimeMillis, bounds, after = cursor, limit = 32)
+            }
+        }
 
     fun show(bounds: ReportBounds) {
         val panel = column()
@@ -105,23 +113,31 @@ internal class FieldReports(
                 try {
                     val result = page(bounds, history, cursor)
                     if (!dialog.isShowing || generation != displayGeneration) return@launch
-                    val reports = fieldRows(result.reports).filter { it.isExpired == history }
-                    rows.removeAllViews()
-                    if (reports.isEmpty()) {
-                        rows.addView(text(if (result.hasMore) "No matching reports on this page."
-                            else if (history) "No older reports in this area." else "No recent reports in this area."))
-                    }
-                    for (item in reports) {
-                        rows.addView(action("${reportTitle(item)}\n${age(item.observedAt)}") { details(item) }
-                            .apply {
+                    val candidates = fieldRows(result.reports)
+                    next = result.nextCursor.takeIf { result.hasMore }
+                    do {
+                        val now = System.currentTimeMillis()
+                        val reports = candidates.filter { it.isCurrentAt(now) != history }
+                        rows.removeAllViews()
+                        if (reports.isEmpty()) {
+                            rows.addView(text(if (result.hasMore) "No matching reports on this page."
+                                else if (history) "No older reports in this area." else "No recent reports in this area."))
+                        }
+                        for (item in reports) {
+                            rows.addView(action("${reportTitle(item)}\n${age(item.observedAt)}") {
+                                details(item) { dialog.dismiss() }
+                            }.apply {
                                 gravity = Gravity.START or Gravity.CENTER_VERTICAL
                                 minimumHeight = dp(66)
                             }, LinearLayout.LayoutParams(-1, -2))
-                        rows.addView(View(activity).apply { setBackgroundColor(LINE) },
-                            LinearLayout.LayoutParams(-1, dp(1)))
-                    }
-                    next = result.nextCursor.takeIf { result.hasMore }
-                    if (next != null) rows.addView(action("More reports") { load(next) })
+                            rows.addView(View(activity).apply { setBackgroundColor(LINE) },
+                                LinearLayout.LayoutParams(-1, dp(1)))
+                        }
+                        if (next != null) rows.addView(action("More reports") { load(next) })
+                        val expiry = candidates.filter { it.isCurrentAt(now) }
+                            .minOfOrNull { it.effectiveExpiresAt } ?: break
+                        delay((expiry - now).coerceAtLeast(1L))
+                    } while (dialog.isShowing && generation == displayGeneration)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: Exception) {
@@ -157,29 +173,49 @@ internal class FieldReports(
         selectHistory(false)
     }
 
-    fun details(report: StoredReport) {
+    fun details(report: StoredReport, beforeShowOnMap: () -> Unit = {}) {
         val time = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
         val location = if (report.accuracyM == 0L) "Accuracy unavailable" else "About ${report.accuracyM} m accuracy"
-        val state = when {
-            report.isQuarantined -> "Held after a clock change"
-            report.isExpired || System.currentTimeMillis() >= report.expiresAt -> "Expired"
-            else -> "Current"
+        val source = if (report.isLocal) "Created on this phone" else "Received on this phone"
+        val status = text("")
+        fun updateStatus() {
+            val state = when {
+                report.isQuarantined -> "Held after a clock change"
+                report.isCurrentAt(System.currentTimeMillis()) -> "Current"
+                else -> "Expired"
+            }
+            status.text = "$state · $location"
         }
+        updateStatus()
         val panel = column().apply {
             if (report.note.isNotBlank()) addView(text(report.note))
+            addView(status)
             addView(text(
                 "Observed ${time.format(Date(report.observedAt))}\n" +
                     "Saved on this phone ${time.format(Date(report.admittedAt))}\n" +
-                    "Published expiry ${time.format(Date(report.expiresAt))}\n" +
-                    "$state · $location\n\nVerified signature. The report is the author's observation.",
+                    "Effective expiry ${time.format(Date(report.effectiveExpiresAt))}" +
+                    (if (report.expiresAt != report.effectiveExpiresAt)
+                        "\nPublished expiry ${time.format(Date(report.expiresAt))}" else "") +
+                    "\n\n$source. Signature verified. Author identity and observation unverified.",
             ))
         }
-        AlertDialog.Builder(activity)
+        val dialog = AlertDialog.Builder(activity)
             .setTitle(reportTitle(report))
             .setView(scroll(panel))
-            .setPositiveButton("Show on map") { _, _ -> centerOn(MapPoint(report.latE7, report.lonE7)) }
+            .setPositiveButton("Show on map") { _, _ ->
+                beforeShowOnMap()
+                centerOn(MapPoint(report.latE7, report.lonE7))
+            }
             .setNegativeButton("Close", null)
             .show()
+        val now = System.currentTimeMillis()
+        if (report.isCurrentAt(now)) {
+            val expiry = scope.launch {
+                delay((report.effectiveExpiresAt - now).coerceAtLeast(1L))
+                updateStatus()
+            }
+            dialog.setOnDismissListener { expiry.cancel() }
+        }
     }
 
     fun newReport(locationMessage: String = "Choose where you saw the condition.") {
@@ -246,9 +282,14 @@ internal class FieldReports(
             if (saving) return@setOnClickListener
             val type = TYPES[categories.selectedItemPosition.coerceAtLeast(0)]
             val condition = type.statuses.getOrElse(conditions.selectedItemPosition) { type.statuses.first() }
+            val note = notes.text.toString().trim()
+            if (isDiagnosticReportNote(note)) {
+                status.text = "This note starts with a reserved test label. Change the note and try again."
+                return@setOnClickListener
+            }
             val now = System.currentTimeMillis()
             val draft = ReportDraft(type.key, condition, now, location.point.latE7, location.point.lonE7,
-                location.accuracyM, notes.text.toString().trim(), now + 86_400_000L)
+                location.accuracyM, note, now + 86_400_000L)
             saving = true
             submit.isEnabled = false
             cancel.isEnabled = false
@@ -355,4 +396,30 @@ internal class FieldReports(
             ReportType("note", "Other", listOf("observed", "unknown")),
         )
     }
+}
+
+private fun isDiagnosticReportNote(note: String) = note.startsWith(ReportSessionCoordinator.TEST_NOTE_PREFIX)
+
+// One bounded verified transaction at a time. Filtering can leave a page empty
+// while its raw cursor still reaches older, relevant reports.
+internal suspend fun collectCurrentMapReports(
+    clock: () -> Long = System::currentTimeMillis,
+    load: suspend (ReportPageCursor?) -> ReportPage,
+): List<StoredReport> {
+    val reports = mutableListOf<StoredReport>()
+    var cursor: ReportPageCursor? = null
+    do {
+        val page = load(cursor)
+        val now = clock()
+        reports += page.reports.asSequence()
+            .filter { it.isCurrentAt(now) && !isDiagnosticReportNote(it.note) }
+            .take(96 - reports.size)
+            .toList()
+        cursor = page.nextCursor.takeIf { page.hasMore }
+        if (cursor != null && reports.size < 96) {
+            // Let queued exchange work run before verifying another page.
+            delay(16)
+        }
+    } while (cursor != null && reports.size < 96)
+    return reports
 }

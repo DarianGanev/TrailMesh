@@ -11,7 +11,12 @@ import org.trailmesh.app.relevance.GeoPoint
 import org.trailmesh.app.relevance.RelevanceContext
 import org.trailmesh.app.relevance.Route
 
-data class HikingManeuver(val beginIndex: Int, val endIndex: Int, val instruction: String)
+data class HikingManeuver(
+    val beginIndex: Int,
+    val endIndex: Int,
+    val instruction: String,
+    val arrival: Boolean = false,
+)
 data class HikingRoute(
     val points: List<MapPoint>,
     val distanceKm: Double,
@@ -84,7 +89,8 @@ object RouteParser {
                 need(from in 0L..points.lastIndex.toLong() && to in from..points.lastIndex.toLong(),
                     MapError.INVALID_ENGINE)
                 need(instruction.length in 1..500, MapError.INVALID_ENGINE)
-                HikingManeuver(from.toInt(), to.toInt(), instruction)
+                val arrival = (parts["type"]?.integer() ?: -1L) in 4L..6L
+                HikingManeuver(from.toInt(), to.toInt(), instruction, arrival)
             }.orEmpty()
             need(maneuvers.zipWithNext().all { (previous, next) -> previous.endIndex <= next.beginIndex },
                 MapError.INVALID_ENGINE)

@@ -59,6 +59,8 @@ class StoredReport(
     val observedAt: Long,
     val admittedAt: Long,
     val expiresAt: Long,
+    val effectiveExpiresAt: Long,
+    val isLocal: Boolean,
     val latE7: Long,
     val lonE7: Long,
     val accuracyM: Long,
@@ -68,6 +70,9 @@ class StoredReport(
     eventID: ByteArray,
     authorKey: ByteArray,
 ) {
+    /** A cached report can age out without another database query. */
+    fun isCurrentAt(now: Long) = !isExpired && !isQuarantined && now < effectiveExpiresAt
+
     private val event = eventID.copyOf()
     private val author = authorKey.copyOf()
     val eventID
@@ -804,6 +809,8 @@ private constructor(
                 if (c.isNull(c.getColumnIndexOrThrow("supersedes"))) null else text("supersedes")
             require(supersedes == p.supersedes)
             val q = number("quarantined") == 1L
+            val isLocal = number("is_local")
+            require(isLocal in 0L..1L)
             return Checked(
                 v,
                 StoredReport(
@@ -814,11 +821,13 @@ private constructor(
                     p.observedAt,
                     admitted,
                     expiry,
+                    local,
+                    isLocal == 1L,
                     p.latE7,
                     p.lonE7,
                     p.accuracyM,
                     p.supersedes,
-                    q || now >= minOf(expiry, local),
+                    q || now >= local,
                     q,
                     p.eventID,
                     v.authorKey,

@@ -24,6 +24,8 @@ internal class FieldRoutes(
     private val updateMap: (HikingRoute?, Boolean) -> Unit,
     private val updateGuidance: (String?) -> Unit,
     private val startLocation: () -> Unit,
+    private val stopLocation: () -> Unit,
+    private val openLocationSettings: () -> Unit,
 ) {
     private var origin: MountainPlace? = null
     private var destination: MountainPlace? = null
@@ -33,6 +35,7 @@ internal class FieldRoutes(
     private var guidanceJob: Job? = null
     private var routeJob: Job? = null
     private var planner: AlertDialog? = null
+    private var waitingForLocation = false
     var following = false
         private set
 
@@ -42,12 +45,14 @@ internal class FieldRoutes(
             return
         }
         if (following) {
-            AlertDialog.Builder(activity)
+            val controls = AlertDialog.Builder(activity)
                 .setTitle("Hike to ${destination?.name}")
-                .setMessage("The route stays on this phone.")
+                .setMessage(if (waitingForLocation) "Allow location in Settings or follow the highlighted trail."
+                    else "The route stays on this phone.")
                 .setPositiveButton("End guidance") { _, _ -> end() }
                 .setNegativeButton("Keep hiking", null)
-                .show()
+            if (waitingForLocation) controls.setNeutralButton("Location settings") { _, _ -> openLocationSettings() }
+            controls.show()
             return
         }
         val options = arrayOf(
@@ -86,6 +91,7 @@ internal class FieldRoutes(
             builder.setCustomTitle(header)
                 .setPositiveButton("Start guidance") { _, _ ->
                     following = true
+                    waitingForLocation = false
                     updateGuidance("Waiting for GPS · Follow the highlighted trail")
                     startLocation()
                 }
@@ -141,7 +147,10 @@ internal class FieldRoutes(
     }
 
     fun locationUnavailable() {
-        if (following) updateGuidance("Location unavailable · Follow the highlighted trail")
+        if (following) {
+            waitingForLocation = true
+            updateGuidance("Location unavailable · Follow the highlighted trail")
+        }
     }
 
     fun locationPaused() {
@@ -152,6 +161,7 @@ internal class FieldRoutes(
     fun onLocation(fix: Location) {
         val current = route ?: return
         if (!following || guidanceJob?.isActive == true) return
+        waitingForLocation = false
         if (fix.accuracy > 60f) {
             updateGuidance("GPS is imprecise · Follow the highlighted trail")
             return
@@ -168,7 +178,7 @@ internal class FieldRoutes(
                     match.shapePosition >= current.points.lastIndex - 1 ->
                     updateGuidance("Near your destination")
                 else -> {
-                    val instruction = current.maneuvers.firstOrNull { it.endIndex > match.shapePosition }?.instruction
+                    val instruction = current.instructionsAt(match.shapePosition)
                     updateGuidance(instruction ?: "Follow the highlighted trail")
                 }
             }
@@ -178,6 +188,8 @@ internal class FieldRoutes(
     fun end() {
         guidanceJob?.cancel()
         following = false
+        waitingForLocation = false
+        stopLocation()
         route = null
         updateMap(null, false)
         updateGuidance(null)

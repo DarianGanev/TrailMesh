@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.location.Location
+import android.net.Uri
+import android.provider.Settings
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Rect
@@ -97,6 +99,10 @@ class MainActivity : Activity() {
     private var fixExpiry: Job? = null
     private var locationPermissionPending = false
     private var reportRefresh: Job? = null
+    private var reportExpiry: Job? = null
+    private var fieldActionButtons = emptyList<View>()
+    private val wantsContinuousLocation: Boolean
+        get() = locationRequested || fieldRoutes?.following == true
     private var mapReports: List<StoredReport> = emptyList()
     private var chooseReportPoint: ((ReportPoint) -> Unit)? = null
     private var guidance: TextView? = null
@@ -189,7 +195,10 @@ class MainActivity : Activity() {
         super.onResume()
         resumed = true
         mapView?.onResume()
-        if (fieldLayers != null && (locationRequested || locationOneShot != null) && location.hasPermission()) startFieldLocation()
+        if (fieldLayers != null && (wantsContinuousLocation || locationOneShot != null)) {
+            if (location.hasPermission()) startFieldLocation()
+            else if (!locationPermissionPending) fieldRoutes?.locationUnavailable()
+        }
         val ready = region.state.value as? ExploreRegionState.Ready
         if (ready != null && fieldLayers != null) scheduleReports(ready)
     }
@@ -202,6 +211,7 @@ class MainActivity : Activity() {
         fieldLayers?.showLocation(null)
         fieldRoutes?.locationPaused()
         reportRefresh?.cancel()
+        reportExpiry?.cancel()
         mapView?.onPause()
         super.onPause()
     }
@@ -230,6 +240,8 @@ class MainActivity : Activity() {
         fieldLayers = null
         fieldReports = null
         reportRefresh?.cancel()
+        reportExpiry?.cancel()
+        fieldActionButtons = emptyList()
         mapReports = emptyList()
         location.stop()
         locationTimeout?.cancel()
@@ -436,7 +448,7 @@ class MainActivity : Activity() {
             bottomMargin = dp(4)
             marginEnd = dp(72)
         })
-        val mapButtons = addMapControls(controls, state)
+        fieldActionButtons = addMapControls(controls, state)
         updateInsets()
 
         val initial = restoredCamera ?: CameraPosition.Builder()
@@ -476,7 +488,7 @@ class MainActivity : Activity() {
                     if (fullyRendered && mapView === view) {
                         view.removeOnDidFinishRenderingMapListener(this)
                         status.visibility = View.GONE
-                        mapButtons.forEach { it.isEnabled = true }
+                        fieldActionButtons.forEach { it.isEnabled = true }
                         credits.postDelayed({
                             if (mapView === view) {
                                 credits.text = "ⓘ"
@@ -652,14 +664,10 @@ class MainActivity : Activity() {
         fieldRoutes = FieldRoutes(this, scope, RegionRouter(
             RegionStore(File(filesDir, "offline-regions")), manifest.id, manifest.revision,
             NativeValhallaFactory(cacheDir),
-        ), { select -> showPlaceSearch(state, select) }, ::showHikingRoute, ::showGuidance, {
-            locationRequested = true
-            startFieldLocation()
-        })
-        fieldReports = FieldReports(this, scope, { select ->
-            chooseReportPoint = select
-            pickLocation?.visibility = View.VISIBLE
-        }, { result ->
+        ), { select -> showPlaceSearch(state, select) }, ::showHikingRoute, ::showGuidance,
+            ::startFieldLocation, ::releaseUnusedLocation, ::openLocationSettings,
+        )
+        fieldReports = FieldReports(this, scope, ::startMapPointSelection, { result ->
             requestReportLocation { point -> result(point?.takeIf { manifest.bounds.contains(it.point) }) }
         }, { centerOn(it) }, {
             scheduleReports(state)
@@ -675,7 +683,8 @@ class MainActivity : Activity() {
                 return@addOnMapClickListener true
             }
             val ids = FieldMapLayers.tappedReports(map, coordinate, dp(18).toFloat())
-            val matches = mapReports.filter { it.bundleID in ids && it.expiresAt > System.currentTimeMillis() }
+            val now = System.currentTimeMillis()
+            val matches = mapReports.filter { it.bundleID in ids && it.isCurrentAt(now) }
             when (matches.size) {
                 0 -> false
                 1 -> {
@@ -701,28 +710,57 @@ class MainActivity : Activity() {
         val reports = fieldReports ?: return
         reportRefresh?.cancel()
         reportRefresh = scope.launch {
+            publishMapReports(mapReports)
             while (isActive && resumed) {
-                mapReports = try {
-                    reports.fieldRows(reports.page(reportBounds(state)).reports)
+                val refresh = try {
+                    reports.mapRows(reportBounds(state))
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
                     emptyList()
                 }
-                fieldLayers?.showReports(mapReports)
+                publishMapReports(refresh)
                 delay(30_000L)
             }
         }
     }
 
+    private fun publishMapReports(reports: List<StoredReport>) {
+        val now = System.currentTimeMillis()
+        mapReports = reports.filter { it.isCurrentAt(now) }
+        fieldLayers?.showReports(mapReports)
+        reportExpiry?.cancel()
+        val expiry = mapReports.minOfOrNull { it.effectiveExpiresAt } ?: return
+        reportExpiry = scope.launch {
+            delay((expiry - now).coerceAtLeast(1L))
+            publishMapReports(mapReports)
+        }
+    }
+
+    private fun startMapPointSelection(select: (ReportPoint) -> Unit) {
+        // A delayed Locate fix must not move the map under the user's next tap.
+        locationTimeout?.cancel()
+        locationOneShot = null
+        releaseUnusedLocation()
+        chooseReportPoint = select
+        fieldActionButtons.forEach { it.isEnabled = false }
+        pickLocation?.visibility = View.VISIBLE
+    }
+
     private fun finishMapPointSelection() {
         chooseReportPoint = null
+        fieldActionButtons.forEach { it.isEnabled = true }
         pickLocation?.visibility = View.GONE
+    }
+
+    @Deprecated("Used for back navigation on the current View-based Explore screen")
+    override fun onBackPressed() {
+        if (chooseReportPoint != null) finishMapPointSelection() else super.onBackPressed()
     }
 
     private fun showHikingRoute(route: HikingRoute?, fit: Boolean) {
         fieldLayers?.showRoute(route)
-        if (fit && route != null) {
+        if (fit && route != null && chooseReportPoint == null) {
             val positions = route.points.map { it.latLng() }
             val bounds = LatLngBounds.Builder().includes(positions).build()
             val viewport = mapView?.height ?: 0
@@ -791,7 +829,7 @@ class MainActivity : Activity() {
 
     private fun showLocation(fix: Location) {
         val point = fix.mapPoint()
-        if (locationRequested) {
+        if (wantsContinuousLocation) {
             fieldLayers?.showLocation(point)
             fieldRoutes?.onLocation(fix)
             fixExpiry?.cancel()
@@ -808,11 +846,23 @@ class MainActivity : Activity() {
         locationTimeout?.cancel()
         val pending = locationOneShot
         locationOneShot = null
-        if (!locationRequested && pending != null) location.stop()
+        if (pending != null) releaseUnusedLocation()
         pending?.invoke(value)
     }
 
+    private fun releaseUnusedLocation() {
+        if (wantsContinuousLocation || locationOneShot != null) return
+        location.stop()
+        fixExpiry?.cancel()
+        fieldLayers?.showLocation(null)
+    }
+
+    private fun openLocationSettings() {
+        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+    }
+
     private fun centerOn(point: MapPoint) {
+        if (chooseReportPoint != null) return
         nativeMap?.let { map ->
             map.moveCamera(CameraUpdateFactory.newLatLngZoom(point.latLng(), maxOf(map.cameraPosition.zoom, 13.5)))
         }

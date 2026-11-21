@@ -156,6 +156,14 @@ class RegionMapsTest {
     }
 
     @Test
+    fun `route does not announce terminal maneuvers before location confirms proximity`() {
+        val raw = """{"trip":{"status":0,"units":"kilometers","summary":{"length":0.1,"time":10},"legs":[{"shape":"??AA","maneuvers":[{"begin_shape_index":0,"end_shape_index":1,"instruction":"Arrive at your destination","type":4}]}]}}"""
+        val route = RouteParser.parse(raw, MapPoint(0, 0), MapPoint(10, 10))
+        assertTrue(route.maneuvers.single().arrival)
+        assertEquals(null, route.instructionsAt(0.5))
+    }
+
+    @Test
     fun `guidance matches the route segment and reports off route distance`() {
         val route = HikingRoute(listOf(MapPoint(0, 0), MapPoint(0, 10000), MapPoint(10000, 10000)), 0.2, 180.0)
         val mid = route.matchPosition(MapPoint(0, 5000))
