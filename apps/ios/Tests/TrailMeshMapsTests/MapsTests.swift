@@ -99,6 +99,26 @@ final class MapsTests: XCTestCase {
         XCTAssertThrowsError(try route([["instruction": "", "begin_shape_index": 1]]))
     }
 
+    func testGuidanceUsesTheReturnLegAndSuppressesArrivalUntilNearDestination() throws {
+        let a = MapPoint(latE7: 0, lonE7: 0)
+        let b = MapPoint(latE7: 10_000, lonE7: 0)
+        let middle = MapPoint(latE7: 5_000, lonE7: 0)
+        let route = HikingRoute(points: [a, b, a], distanceKm: 0.22, timeSeconds: 200, maneuvers: [
+            .init(pointIndex: 1, instruction: "Turn back"),
+            .init(pointIndex: 2, instruction: "Arrive", type: 4)
+        ])
+        let start = try XCTUnwrap(route.match(a))
+        XCTAssertFalse(route.isAtDestination(start, tolerance: 12))
+        let outbound = try XCTUnwrap(route.match(middle, following: start))
+        XCTAssertEqual(route.nextInstruction(at: outbound), "Turn back")
+        let turnaround = try XCTUnwrap(route.match(b, following: outbound))
+        let returning = try XCTUnwrap(route.match(middle, following: turnaround))
+        XCTAssertNil(route.nextInstruction(at: returning))
+        XCTAssertFalse(route.isAtDestination(returning, tolerance: 12))
+        let arrival = try XCTUnwrap(route.match(a, following: returning))
+        XCTAssertTrue(route.isAtDestination(arrival, tolerance: 12))
+    }
+
     func testPolylineBoundsAndPrecision() throws {
         XCTAssertEqual(try HikingRoute.decodePolyline6("??SS"), [MapPoint(latE7: 0, lonE7: 0), MapPoint(latE7: 100, lonE7: 100)])
         for shape in ["?", "~~~~~~~~~~~~~~~~~~~~?", "\u{00e9}?"] {

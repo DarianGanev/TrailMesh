@@ -4,11 +4,16 @@ public struct HikingRoute: Sendable {
     public struct Maneuver: Sendable {
         public let pointIndex: Int
         public let instruction: String
+        public let type: Int?
 
-        public init(pointIndex: Int, instruction: String) {
+        public init(pointIndex: Int, instruction: String, type: Int? = nil) {
             self.pointIndex = pointIndex
             self.instruction = instruction
+            self.type = type
         }
+
+        // Valhalla uses 4, 5, and 6 for destination, destination right, and destination left.
+        var isArrival: Bool { type.map { (4...6).contains($0) } ?? false }
     }
 
     public let points: [MapPoint]
@@ -88,7 +93,7 @@ public struct HikingRoute: Sendable {
                       maneuvers.last.map({ $0.pointIndex <= index }) ?? true else {
                     throw MapFailure.invalidEngine
                 }
-                maneuvers.append(Maneuver(pointIndex: index, instruction: instruction))
+                maneuvers.append(Maneuver(pointIndex: index, instruction: instruction, type: maneuver["type"] as? Int))
             }
         }
         return HikingRoute(points: points, distanceKm: distance, timeSeconds: time, maneuvers: maneuvers)
