@@ -18,6 +18,7 @@ enum RilaRegion {
 final class ExploreMapResources: Sendable {
     let region: InstalledRegion
     let styleURL: URL
+    let places: PlaceIndex
     private let lease: PackLease
 
     init(region: InstalledRegion, lease: PackLease) throws {
@@ -26,10 +27,47 @@ final class ExploreMapResources: Sendable {
             root: region.root,
             files: Set(region.manifest.files.map(\.path))
         )
+        places = try PlaceIndex(data: Data(contentsOf: region.root.appendingPathComponent("places.json")))
         styleURL = URL.temporaryDirectory.appendingPathComponent("trailmesh-explore-\(UUID().uuidString).json")
-        try style.write(to: styleURL, options: .atomic)
+        try Self.exploreStyle(style).write(to: styleURL, options: .atomic)
         self.region = region
         self.lease = lease
+    }
+
+    // Presentation changes are applied only after resolving the verified local sources.
+    private static func exploreStyle(_ resolved: Data) throws -> Data {
+        guard var style = try JSONSerialization.jsonObject(with: resolved) as? [String: Any],
+              let layers = style["layers"] as? [[String: Any]] else { return resolved }
+        style["layers"] = layers.map { source in
+            var layer = source
+            var paint = layer["paint"] as? [String: Any] ?? [:]
+            switch layer["id"] as? String {
+            case "mountain-relief":
+                paint["hillshade-shadow-color"] = "#586664"
+                paint["hillshade-exaggeration"] = 0.49
+            case "footpaths":
+                paint["line-color"] = "#4b5350"
+            case "streams":
+                paint["line-color"] = "#357f9e"
+            case "huts", "peaks":
+                guard var layout = layer["layout"] as? [String: Any] else { return source }
+                if let field = layout["text-field"] as? [Any], field.count == 3,
+                   field.first as? String == "concat" {
+                    layout["text-field"] = field[2]
+                }
+                layout["icon-image"] = (layer["id"] as? String) == "huts" ? "trailmesh-hut" : "trailmesh-peak"
+                layout["text-anchor"] = "left"
+                layout["text-offset"] = [0.8, 0]
+                layout["text-optional"] = true
+                paint["text-color"] = "#252c26"
+                layer["layout"] = layout
+            default:
+                return source
+            }
+            layer["paint"] = paint
+            return layer
+        }
+        return try JSONSerialization.data(withJSONObject: style, options: [.sortedKeys])
     }
 
     deinit { try? FileManager.default.removeItem(at: styleURL) }

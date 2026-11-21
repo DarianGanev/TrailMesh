@@ -1,10 +1,14 @@
 import MapLibre
 import SwiftUI
+import TrailMeshMaps
 
 struct ExploreView: View {
     @State private var model = ExploreModel()
     @Environment(\.colorScheme) private var colorScheme
     @State private var showingCredits = false
+    @State private var creditedStyleURL: URL?
+    @State private var showingSearch = false
+    @State private var selectedPlace: Place?
     @State private var confirmingReplacement = false
     @State private var cameraRequest: ExploreCameraRequest?
     @State private var loadedStyleURL: URL?
@@ -106,71 +110,134 @@ struct ExploreView: View {
             .id(resources.styleURL)
             .ignoresSafeArea()
         }
-        .overlay(alignment: .top) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Rila").font(.headline)
-                        .accessibilityAddTraits(.isHeader)
-                    Text(mapLoaded ? "Saved offline" : "Opening map…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(surface, in: RoundedRectangle(cornerRadius: 12))
-
-                Spacer(minLength: 0)
-                #if TRAILMESH_DEVELOPMENT
-                Menu {
-                    Button("Research diagnostics") { showingDiagnostics = true }
-                } label: {
-                    Label("Developer tools", systemImage: "ellipsis")
-                        .labelStyle(.iconOnly)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .foregroundStyle(.primary)
-                .background(surface, in: RoundedRectangle(cornerRadius: 12))
-                #endif
+        .overlay(alignment: .topTrailing) {
+            #if TRAILMESH_DEVELOPMENT
+            Menu {
+                Button("Research diagnostics") { showingDiagnostics = true }
+            } label: {
+                Label("Developer tools", systemImage: "ellipsis")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 44, height: 44)
+                    .exploreGlass(in: Circle())
             }
+            .foregroundStyle(.primary)
             .padding(12)
+            #endif
         }
         .overlay(alignment: .bottom) {
-            HStack(alignment: .bottom, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                if !mapLoaded {
+                    ProgressView("Opening map…")
+                        .padding(12)
+                        .background(.regularMaterial, in: Capsule())
+                }
+                if let selectedPlace {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(selectedPlace.name)
+                                .font(.title3.bold())
+                            Text(ExplorePlaceSearch.kindName(selectedPlace.kind))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                        Button {
+                            self.selectedPlace = nil
+                        } label: {
+                            Label("Dismiss place", systemImage: "xmark")
+                                .labelStyle(.iconOnly)
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .padding(.leading, 16)
+                    .padding(.trailing, 8)
+                    .padding(.vertical, 8)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 22))
+                    .accessibilityElement(children: .contain)
+                }
+                HStack(spacing: 8) {
+                    Button {
+                        showingSearch = true
+                    } label: {
+                        Label("Search Rila", systemImage: "magnifyingglass")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .exploreGlass(in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!mapLoaded)
+
+                    Menu {
+                        Button("Rila overview", systemImage: "viewfinder") {
+                            selectedPlace = nil
+                            cameraRequest = ExploreCameraRequest(command: .overview)
+                        }
+                        Button("Zoom in", systemImage: "plus.magnifyingglass") {
+                            cameraRequest = ExploreCameraRequest(command: .zoom(1))
+                        }
+                        Button("Zoom out", systemImage: "minus.magnifyingglass") {
+                            cameraRequest = ExploreCameraRequest(command: .zoom(-1))
+                        }
+                    } label: {
+                        Label("Map controls", systemImage: "slider.horizontal.3")
+                            .labelStyle(.iconOnly)
+                            .frame(width: 48, height: 48)
+                            .exploreGlass(in: Circle())
+                    }
+                    .foregroundStyle(.primary)
+                    .disabled(!mapLoaded)
+                }
                 Button {
                     showingCredits = true
                 } label: {
-                    Text("© OpenStreetMap")
-                        .font(.caption2)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(surface, in: RoundedRectangle(cornerRadius: 6))
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
+                    Group {
+                        if creditedStyleURL == resources.styleURL {
+                            Image(systemName: "info.circle")
+                                .font(.body)
+                        } else {
+                            Text("© OpenStreetMap")
+                                .font(.caption)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.regularMaterial, in: Capsule())
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(creditedStyleURL == resources.styleURL ? "Map credits" : "© OpenStreetMap")
                 .accessibilityHint("Opens map credits")
-                Spacer(minLength: 0)
-                VStack(spacing: 0) {
-                    mapButton("Show Rila overview", icon: "viewfinder", command: .overview)
-                    Divider()
-                    mapButton("Zoom in", icon: "plus", command: .zoom(1))
-                    Divider()
-                    mapButton("Zoom out", icon: "minus", command: .zoom(-1))
-                }
-                .frame(width: 44)
-                .background(surface, in: RoundedRectangle(cornerRadius: 12))
-                .disabled(!mapLoaded)
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 16)
+        }
+        .task(id: mapLoaded) {
+            guard mapLoaded, creditedStyleURL != resources.styleURL else { return }
+            do {
+                try await Task.sleep(for: .seconds(5))
+                creditedStyleURL = resources.styleURL
+            } catch {}
+        }
+        .sheet(isPresented: $showingSearch) {
+            ExplorePlaceSearch(index: resources.places) { place in
+                selectedPlace = place
+                cameraRequest = ExploreCameraRequest(command: .place(place))
+                showingSearch = false
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showingCredits) {
             NavigationStack {
                 ScrollView {
-                    Text(resources.region.manifest.attribution)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(24)
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(resources.region.manifest.attribution)
+                        Link("OpenStreetMap licence", destination: URL(string: "https://www.openstreetmap.org/copyright")!)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(24)
                 }
                 .navigationTitle("Map credits")
                 .toolbar {
@@ -180,19 +247,6 @@ struct ExploreView: View {
                 }
             }
         }
-    }
-
-    private func mapButton(_ title: String, icon: String, command: ExploreCameraCommand) -> some View {
-        Button {
-            cameraRequest = ExploreCameraRequest(command: command)
-        } label: {
-            Label(title, systemImage: icon)
-                .labelStyle(.iconOnly)
-                .font(.system(size: 17, weight: .medium))
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     private func messagePage(title: String, detail: String, action: String, perform: @escaping () -> Void) -> some View {
@@ -210,7 +264,7 @@ struct ExploreView: View {
                         .frame(minHeight: 36)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(Color(red: 0.14, green: 0.27, blue: 0.18))
+                .tint(Color(red: 0.12, green: 0.32, blue: 0.65))
             }
             .frame(maxWidth: 420, alignment: .leading)
             .frame(maxWidth: .infinity)
@@ -220,8 +274,95 @@ struct ExploreView: View {
     }
 }
 
+private extension View {
+    @ViewBuilder
+    func exploreGlass<S: Shape>(in shape: S) -> some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            glassEffect(.regular.interactive(), in: shape)
+        } else {
+            background(.regularMaterial, in: shape)
+        }
+        #else
+        background(.regularMaterial, in: shape)
+        #endif
+    }
+}
+
+private struct ExplorePlaceSearch: View {
+    let index: PlaceIndex
+    let select: (Place) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+    @State private var results: [Place] = []
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if results.isEmpty {
+                    ContentUnavailableView(
+                        query.isEmpty ? "Find a place in Rila" : "No matching places",
+                        systemImage: "magnifyingglass",
+                        description: Text(query.isEmpty ? "Try a hut, summit, or trailhead." : "Try another name.")
+                    )
+                } else {
+                    List(results, id: \.id) { place in
+                        Button {
+                            select(place)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(place.name)
+                                Text(Self.kindName(place.kind))
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .foregroundStyle(.primary)
+                    }
+                }
+            }
+            .navigationTitle("Find a place")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search Rila")
+            .task(id: query) {
+                let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !term.isEmpty else {
+                    results = []
+                    return
+                }
+                do {
+                    try await Task.sleep(for: .milliseconds(120))
+                    let matches = await Task.detached { [index] in index.search(term) }.value
+                    try Task.checkCancellation()
+                    results = matches
+                } catch {}
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+    }
+
+    static func kindName(_ kind: String) -> String {
+        switch kind {
+        case "hut": "Hut"
+        case "peak": "Summit"
+        case "shelter": "Shelter"
+        case "water": "Water"
+        case "trailhead": "Trailhead"
+        default: "Place"
+        }
+    }
+}
+
 private enum ExploreCameraCommand {
     case overview
+    case place(Place)
     case zoom(Double)
 }
 
@@ -250,7 +391,7 @@ private struct InteractiveRilaMap: UIViewRepresentable {
         map.isRotateEnabled = false
         map.showsLogoView = false
         let trailArea = CLLocationCoordinate2D(latitude: 42.181, longitude: 23.369)
-        map.setCenter(trailArea, zoomLevel: 11.6, animated: false)
+        map.setCenter(trailArea, zoomLevel: 12.3, animated: false)
         map.showsAttributionButton = false
         return map
     }
@@ -260,6 +401,12 @@ private struct InteractiveRilaMap: UIViewRepresentable {
         context.coordinator.cameraRequestID = cameraRequest.id
         switch cameraRequest.command {
         case .overview: showOverview(on: map)
+        case .place(let place):
+            map.setCenter(
+                CLLocationCoordinate2D(latitude: Double(place.latE7) / 1e7, longitude: Double(place.lonE7) / 1e7),
+                zoomLevel: max(map.zoomLevel, 13.5),
+                animated: !UIAccessibility.isReduceMotionEnabled
+            )
         case .zoom(let step): map.zoomLevel += step
         }
     }
@@ -292,6 +439,15 @@ private struct InteractiveRilaMap: UIViewRepresentable {
             self.cameraRequestID = cameraRequestID
             self.onLoaded = onLoaded
             self.onFailure = onFailure
+        }
+
+        func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
+            let configuration = UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+            for (name, symbol) in [("trailmesh-hut", "house.fill"), ("trailmesh-peak", "mountain.2.fill")] {
+                if let icon = UIImage(systemName: symbol, withConfiguration: configuration) {
+                    style.setImage(icon.withTintColor(.black, renderingMode: .alwaysOriginal), forName: name)
+                }
+            }
         }
 
         func mapViewDidFinishLoadingMap(_ mapView: MLNMapView) {
