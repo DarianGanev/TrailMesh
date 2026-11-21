@@ -16,10 +16,12 @@ extension MapPoint {
 
 @MainActor
 @Observable
-final class ExploreLocation: NSObject, CLLocationManagerDelegate {
+final class ExploreLocation: NSObject, @preconcurrency CLLocationManagerDelegate {
     enum Issue: Equatable { case denied, unavailable }
 
+    // Core Location uses the run loop of the main-actor creation thread for its delegate.
     private let manager = CLLocationManager()
+    private var foreground = true
     private var following = false
     private var requesting = false
     private(set) var fix: CLLocation?
@@ -30,6 +32,7 @@ final class ExploreLocation: NSObject, CLLocationManagerDelegate {
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBest
         manager.activityType = .fitness
+        manager.pausesLocationUpdatesAutomatically = false
         manager.distanceFilter = 5
     }
 
@@ -40,13 +43,24 @@ final class ExploreLocation: NSObject, CLLocationManagerDelegate {
     }
 
     func follow(_ value: Bool) {
+        guard value != following else { return }
         following = value
-        if value {
-            issue = nil
-            updateRequest()
-        } else {
-            manager.stopUpdatingLocation()
-        }
+        if value { issue = nil }
+        else { manager.stopUpdatingLocation() }
+        updateRequest()
+    }
+
+    func setForeground(_ value: Bool) {
+        guard foreground != value else { return }
+        foreground = value
+        if value { updateRequest() }
+        else { manager.stopUpdatingLocation() }
+    }
+
+    func cancelFix() {
+        guard requesting else { return }
+        requesting = false
+        if !following { manager.stopUpdatingLocation() }
     }
 
     var recentFix: CLLocation? {
@@ -56,7 +70,7 @@ final class ExploreLocation: NSObject, CLLocationManagerDelegate {
     }
 
     private func updateRequest() {
-        guard following || requesting else { return }
+        guard foreground, following || requesting else { return }
         switch manager.authorizationStatus {
         case .notDetermined: manager.requestWhenInUseAuthorization()
         case .authorizedWhenInUse, .authorizedAlways:
@@ -76,13 +90,14 @@ final class ExploreLocation: NSObject, CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let latest = locations.last, following || requesting else { return }
+        guard foreground, let latest = locations.last, following || requesting else { return }
         requesting = false
         fix = latest
         issue = recentFix == nil ? .unavailable : nil
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        guard foreground, following || requesting else { return }
         requesting = false
         fix = nil
         issue = (error as? CLError)?.code == .denied ? .denied : .unavailable
@@ -99,6 +114,8 @@ final class ExploreRoute {
     private(set) var error: String?
     private(set) var geometryID: UUID?
     private(set) var maximumTrailGrade = 2
+    private(set) var turnInstruction: String?
+    private var lastMatch: (fixAt: Date, match: HikingRoute.Progress)?
     private var requestID: UUID?
 
     func setMaximumTrailGrade(_ grade: Int) {
@@ -119,8 +136,11 @@ final class ExploreRoute {
 
         let router = OfflineHikingRouter()
         do {
+            try Task.checkCancellation()
             let lease = try await RilaRegion.makeStore().lease(region)
+            guard requestID == id, !Task.isCancelled else { lease.close(); return }
             try await router.open(region, lease: lease)
+            guard requestID == id, !Task.isCancelled else { await router.close(); return }
             let route = try await router.route(from: from, to: to, maximumHikingDifficulty: grade)
             await router.close()
             try Task.checkCancellation()
@@ -139,9 +159,10 @@ final class ExploreRoute {
         }
     }
 
-    func start() {
+    func start(using fix: CLLocation?) {
         guard result != nil else { return }
         navigating = true
+        updateGuidance(using: fix)
     }
 
     func clear() {
@@ -151,47 +172,27 @@ final class ExploreRoute {
         error = nil
         loading = false
         navigating = false
+        turnInstruction = nil
+        lastMatch = nil
     }
 
-    func directions(using fix: CLLocation?) -> String {
-        guard let result, let fix else { return "Waiting for your location" }
-        guard result.points.count > 1 else { return "Follow the trail shown on the map" }
-
-        // Project the location onto the trail, not just the nearest route vertex.
-        // All routes here are local to Rila, so a local tangent plane is sufficient.
-        let latitudeScale = 111_195.0 / 1e7
-        let longitudeScale = latitudeScale * cos(fix.coordinate.latitude * .pi / 180)
-        let originLatitude = fix.coordinate.latitude * 1e7
-        let originLongitude = fix.coordinate.longitude * 1e7
-        func offset(_ point: MapPoint) -> (Double, Double) {
-            ((Double(point.lonE7) - originLongitude) * longitudeScale,
-             (Double(point.latE7) - originLatitude) * latitudeScale)
+    func updateGuidance(using fix: CLLocation?) {
+        guard navigating, let result, let fix, let point = MapPoint(coordinate: fix.coordinate) else { return }
+        let previous = lastMatch.flatMap {
+            let age = fix.timestamp.timeIntervalSince($0.fixAt)
+            return age >= 0 && age <= 30 ? $0.match : nil
         }
-        var closestDistance = Double.infinity
-        var progress = 0.0
-        var previous = offset(result.points[0])
-        for index in 1..<result.points.count {
-            let next = offset(result.points[index])
-            let x = next.0 - previous.0
-            let y = next.1 - previous.1
-            let lengthSquared = x*x + y*y
-            let fraction = lengthSquared == 0 ? 0 : min(1, max(0, -(previous.0*x + previous.1*y) / lengthSquared))
-            let distance = hypot(previous.0 + x*fraction, previous.1 + y*fraction)
-            if distance < closestDistance {
-                closestDistance = distance
-                progress = Double(index - 1) + fraction
-            }
-            previous = next
+        guard let match = result.match(point, following: previous),
+              match.offset <= max(30, fix.horizontalAccuracy) else {
+            turnInstruction = "You’re away from the planned trail. Check the map."
+            return
         }
-        guard closestDistance <= max(30, fix.horizontalAccuracy) else {
-            return "You’re away from the planned trail. Check the map."
+        lastMatch = (fix.timestamp, match)
+        if result.isAtDestination(match, tolerance: max(12, fix.horizontalAccuracy)) {
+            turnInstruction = "You’re near \(destination)"
+        } else {
+            turnInstruction = result.nextInstruction(at: match) ?? "Follow the trail shown on the map"
         }
-        let end = offset(result.points[result.points.count - 1])
-        if progress >= Double(result.points.count - 2), hypot(end.0, end.1) <= max(12, fix.horizontalAccuracy) {
-            return "You’re near \(destination)"
-        }
-        return result.maneuvers.first { Double($0.pointIndex) >= progress }?.instruction
-            ?? "Follow the trail shown on the map"
     }
 }
 
@@ -247,20 +248,20 @@ struct ExploreRoutePlanner: View {
                     }
                 }
                 if let routeResult = route.result {
-                    Section("Hike") {
+                    Section("Last calculated route") {
+                        LabeledContent("Destination", value: route.destination)
                         LabeledContent("Distance", value: routeResult.distanceKm.formatted(.number.precision(.fractionLength(1))) + " km")
                         LabeledContent("Estimated time", value: Duration.seconds(routeResult.timeSeconds).formatted(.units(allowed: [.hours, .minutes], width: .abbreviated)))
-                        Button("Show on map") { showRoute(); dismiss() }
+                        Button("Show this route on map") { showRoute(); dismiss() }
                     }
-                } else {
-                    Section {
-                        if route.loading { ProgressView("Finding a trail…") }
-                        else {
-                            Button("Find route", action: calculate)
-                                .disabled(destination == nil || (start == nil && location.recentFix == nil))
-                        }
-                        if let error = route.error { Text(error).foregroundStyle(.secondary) }
+                }
+                Section {
+                    if route.loading { ProgressView("Finding a trail…") }
+                    else {
+                        Button("Find route", action: calculate)
+                            .disabled(destination == nil || (start == nil && location.recentFix == nil))
                     }
+                    if let error = route.error { Text(error).foregroundStyle(.secondary) }
                 }
             }
             .navigationTitle("Plan a route")

@@ -5,25 +5,31 @@ import SwiftUI
 import TrailMeshMaps
 import TrailMeshReports
 
-/// The map UI and the existing diagnostics use one repository and signing identity.
+/// The field UI and the developer tools share a protected identity but keep separate report stores.
 actor ProductReportStorage {
     static let shared = ProductReportStorage()
-    private var opening: Task<ReportRepository, Error>?
+    enum Store: String, Sendable {
+        case field = "field-reports.sqlite"
+        // Preserve the existing development sample store and its acceptance evidence.
+        case diagnostics = "reports.sqlite"
+    }
+
+    private var opening: [Store: Task<ReportRepository, Error>] = [:]
     private var signing: Task<ReportIdentity, Error>?
 
-    func repository() async throws -> ReportRepository {
-        if let opening { return try await opening.value }
+    func repository(_ store: Store = .field) async throws -> ReportRepository {
+        if let task = opening[store] { return try await task.value }
         let task = Task.detached {
             let directory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
                                                        appropriateFor: nil, create: true)
                 .appendingPathComponent("TrailMeshReports", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                 attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
-            return try await ReportRepository.open(path: directory.appendingPathComponent("reports.sqlite").path)
+            return try await ReportRepository.open(path: directory.appendingPathComponent(store.rawValue).path)
         }
-        opening = task
+        opening[store] = task
         do { return try await task.value }
-        catch { opening = nil; throw error }
+        catch { opening[store] = nil; throw error }
     }
 
     func identity() async throws -> ReportIdentity {
@@ -52,6 +58,7 @@ final class ExploreReports {
     private(set) var hasMore = false
     private(set) var loading = false
     private(set) var error: String?
+    private(set) var appendFailed = false
     private var cursor: ReportPageCursor?
     private var requestID: UUID?
 
@@ -61,42 +68,53 @@ final class ExploreReports {
         requestID = id
         loading = true
         error = nil
+        appendFailed = false
         defer { if requestID == id { loading = false } }
         do {
             let repository = try await ProductReportStorage.shared.repository()
             let bounds = manifest.boundsE7
-            let page = try await repository.reportPage(clock: { Self.now() }, bounds: ReportBounds(
-                south: bounds[1], north: bounds[3], west: bounds[0], east: bounds[2]
-            ), includeExpired: true, after: more ? cursor : nil, limit: 32)
+            let queryBounds = ReportBounds(south: bounds[1], north: bounds[3], west: bounds[0], east: bounds[2])
+            var next = more ? cursor : nil
+            var batch: [StoredReport] = []
+            var remaining = false
+            // Scan only a few independently verified transactions per request.
+            for _ in 0..<4 {
+                try Task.checkCancellation()
+                guard requestID == id else { return }
+                let page = try await repository.reportPage(clock: { Self.now() }, bounds: queryBounds,
+                                                           includeExpired: true, after: next, limit: 32)
+                next = page.nextCursor
+                remaining = page.hasMore
+                batch += page.reports
+                if !remaining || (more ? !batch.isEmpty : batch.contains(where: { Self.current($0) })) { break }
+            }
             try Task.checkCancellation()
             guard requestID == id else { return }
-            cursor = page.nextCursor
-            hasMore = page.hasMore
+            cursor = next
+            hasMore = remaining
             if more {
                 let knownIDs = Set(entries.map(\.bundleID))
-                entries += page.reports.filter { !knownIDs.contains($0.bundleID) }
+                entries += batch.filter { !knownIDs.contains($0.bundleID) }
             } else {
-                entries = page.reports
+                entries = batch
             }
         } catch is CancellationError {
             return
         } catch {
             guard requestID == id else { return }
-            self.error = "Reports couldn’t open. Check your device clock and try again."
-            entries = []
-            cursor = nil
-            hasMore = false
+            appendFailed = more
+            self.error = more ? "Couldn’t load more reports." : "Reports couldn’t open. Check your device clock and try again."
+            if !more {
+                entries = []
+                cursor = nil
+                hasMore = false
+            }
         }
     }
 
-    func save(_ form: ExploreReportDraft) async throws {
+    func save(_ draft: ReportDraft) async throws {
         let repository = try await ProductReportStorage.shared.repository()
         let identity = try await ProductReportStorage.shared.identity()
-        guard let position = form.position, form.canSave else { throw SaveFailure.invalid }
-        let timestamp = Self.now()
-        let draft = ReportDraft(category: form.category.rawValue, status: form.status,
-            observedAt: timestamp, latitude: position.point.latE7, longitude: position.point.lonE7,
-            accuracy: position.accuracy, note: form.note, expiresAt: timestamp + 24 * 60 * 60 * 1_000, maxHops: 4)
         let outcome = try await repository.author(draft, identity: identity, clock: { Self.now() })
         switch outcome {
         case .stored: break
@@ -112,7 +130,7 @@ final class ExploreReports {
     }
 
     nonisolated static func current(_ report: StoredReport, at date: Date = .now) -> Bool {
-        !report.isExpired && !report.isQuarantined && report.expiresAt > Int64(date.timeIntervalSince1970 * 1_000)
+        !report.isExpired && !report.isQuarantined && report.effectiveExpiresAt > Int64(date.timeIntervalSince1970 * 1_000)
     }
 }
 
@@ -135,6 +153,15 @@ final class ExploreReportDraft {
 
     var canSave: Bool {
         position != nil && publicConsent && note.unicodeScalars.count <= 500 && note.utf8.count <= 2048
+    }
+
+    func submission() -> (draft: ReportDraft, point: MapPoint)? {
+        guard canSave, let position else { return nil }
+        let timestamp = ExploreReports.now()
+        return (ReportDraft(category: category.rawValue, status: status,
+            observedAt: timestamp, latitude: position.point.latE7, longitude: position.point.lonE7,
+            accuracy: position.accuracy, note: note, expiresAt: timestamp + 24 * 60 * 60 * 1_000, maxHops: 4),
+            position.point)
     }
 }
 
@@ -192,9 +219,12 @@ struct ExploreReportsList: View {
                     let matching = entries.entries.filter { ExploreReports.current($0, at: context.date) != expired }
                     if let error = entries.error {
                         Text(error).foregroundStyle(.secondary)
-                        Button("Try again") { refresh() }
+                        Button("Try again") {
+                            Task { await entries.page(in: manifest, more: entries.appendFailed) }
+                        }
                     } else if matching.isEmpty, !entries.loading {
-                        Text(expired ? "No expired reports in this view." : "No recent reports in this view.")
+                        Text(entries.hasMore ? "More reports are available to check."
+                             : (expired ? "No expired reports in this view." : "No recent reports in this view."))
                             .foregroundStyle(.secondary)
                     }
                     ForEach(matching, id: \.bundleID) { report in
@@ -215,7 +245,7 @@ struct ExploreReportsList: View {
                         }
                     }
                     if entries.loading { ProgressView("Loading reports…") }
-                    if entries.hasMore, !entries.loading {
+                    if entries.hasMore, !entries.loading, !entries.appendFailed {
                         Button("Load more reports") { Task { await entries.page(in: manifest, more: true) } }
                     }
                 }
@@ -230,9 +260,6 @@ struct ExploreReportsList: View {
         }
     }
 
-    private func refresh() {
-        Task { await entries.page(in: manifest) }
-    }
 }
 
 struct ExploreReportDetails: View {
@@ -256,7 +283,10 @@ struct ExploreReportDetails: View {
                 }
                 LabeledContent("Observed", value: Self.date(report.observedAt).formatted())
                 LabeledContent("Saved here", value: Self.date(report.admittedAt).formatted())
-                LabeledContent("Expires", value: Self.date(report.expiresAt).formatted())
+                LabeledContent("Expires", value: Self.date(report.effectiveExpiresAt).formatted())
+                if report.effectiveExpiresAt != report.expiresAt {
+                    LabeledContent("Signed expiry", value: Self.date(report.expiresAt).formatted())
+                }
             }
             Section("Location and source") {
                 LabeledContent("Reported accuracy", value: "\(report.accuracy.formatted()) m")
@@ -279,7 +309,7 @@ struct ExploreReportComposer: View {
     let location: ExploreLocation
     let manifest: RegionManifest
     let pickPin: () -> Void
-    let saved: () -> Void
+    let saved: (MapPoint) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var waitingForLocation = false
@@ -322,7 +352,7 @@ struct ExploreReportComposer: View {
                 }
                 Section {
                     Button(saving ? "Saving…" : "Save report", action: save)
-                        .disabled(saving || !form.canSave)
+                        .disabled(saving || waitingForLocation || !form.canSave)
                 }
             }
             .disabled(saving)
@@ -332,8 +362,11 @@ struct ExploreReportComposer: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(saving) }
             }
+            .onDisappear {
+                if waitingForLocation { location.cancelFix() }
+            }
             .onChange(of: location.fix) { _, _ in
-                if waitingForLocation { applyLocation() }
+                if waitingForLocation, !saving { applyLocation() }
             }
             .onChange(of: location.issue) { _, issue in
                 if waitingForLocation, let issue {
@@ -371,17 +404,18 @@ struct ExploreReportComposer: View {
     }
 
     private func save() {
+        guard !saving, !waitingForLocation, let submission = form.submission() else { return }
         saving = true
         error = nil
         Task {
             defer { saving = false }
             do {
-                try await reports.save(form)
-                saved()
+                try await reports.save(submission.draft)
+                saved(submission.point)
             } catch ExploreReports.SaveFailure.storageLimit {
                 error = "Report storage is full. This report hasn’t been saved."
             } catch {
-                error = "The report couldn’t be saved. Check your device clock and try again."
+                self.error = "The report couldn’t be saved. Check your device clock and try again."
             }
         }
     }

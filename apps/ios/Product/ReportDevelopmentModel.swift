@@ -31,7 +31,7 @@ final class ReportDevelopmentModel: ObservableObject {
         loading = true
         defer { loading = false }
         do {
-            let opened = try await ProductReportStorage.shared.repository()
+            let opened = try await ProductReportStorage.shared.repository(.diagnostics)
             let protectedIdentity = try await ProductReportStorage.shared.identity()
             repository = opened; identity = protectedIdentity
             let coordinator = ReportSessionCoordinator(repository: opened, radio: ProductNearbyRadio())

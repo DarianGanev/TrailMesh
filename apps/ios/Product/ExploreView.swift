@@ -90,7 +90,7 @@ struct ExploreView: View {
             .toolbar(showsMap ? .hidden : .visible, for: .navigationBar)
             .task { await model.reopen() }
             .onChange(of: scenePhase) { _, phase in
-                location.follow(phase == .active && route.navigating)
+                location.setForeground(phase != .background)
                 if phase == .active, case .ready(let resources) = model.state {
                     Task { await reports.page(in: resources.region.manifest) }
                 }
@@ -361,7 +361,8 @@ struct ExploreView: View {
         }
         .sheet(isPresented: $showingOfflineMaps) { offlineMaps(resources.region.manifest) }
         .onChange(of: location.fix) { _, fix in
-            guard locating || (route.navigating && followsHikePosition),
+            route.updateGuidance(using: location.recentFix)
+            guard !pickingReportLocation, locating || (route.navigating && followsHikePosition),
                   let fix, location.recentFix != nil,
                   let point = MapPoint(coordinate: fix.coordinate) else { return }
             cameraRequest = ExploreCameraRequest(command: .location(point))
@@ -385,12 +386,10 @@ struct ExploreView: View {
                 ExploreReportComposer(form: reportDraft, reports: reports, location: location, manifest: resources.region.manifest) {
                     reportDestination = nil
                     pickingReportLocation = true
-                } saved: {
+                } saved: { point in
                     reportDestination = nil
                     reportNotice = "Report saved on this phone."
-                    if let point = reportDraft.position?.point {
-                        cameraRequest = ExploreCameraRequest(command: .location(point))
-                    }
+                    cameraRequest = ExploreCameraRequest(command: .location(point))
                     Task { await reports.page(in: resources.region.manifest) }
                 }
             case .details(let report):
@@ -497,7 +496,8 @@ struct ExploreView: View {
             if route.navigating {
                 Text(location.issue == .denied
                     ? "Location access is off. The route is still visible on the map."
-                    : route.directions(using: location.recentFix))
+                    : location.recentFix == nil ? "Waiting for your location"
+                    : route.turnInstruction ?? "Follow the trail shown on the map")
                     .font(.subheadline)
                 ViewThatFits {
                     HStack(spacing: 12) { hikeActions }
@@ -506,7 +506,7 @@ struct ExploreView: View {
             } else {
                 HStack {
                     Button("Start hike") {
-                        route.start()
+                        route.start(using: location.recentFix)
                         followsHikePosition = true
                         location.follow(true)
                         centerOnHikePosition()
@@ -591,20 +591,24 @@ struct ExplorePlaceSearch: View {
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var results: [Place] = []
+    @State private var resultsQuery: String?
+    private var searchTerm: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
         NavigationStack {
             Group {
-                if results.isEmpty {
+                if !searchTerm.isEmpty, resultsQuery != searchTerm {
+                    ProgressView("Searching…")
+                } else if searchTerm.isEmpty || results.isEmpty {
                     ContentUnavailableView(
-                        query.isEmpty ? "Find a place in Rila" : "No matching places",
+                        searchTerm.isEmpty ? "Find a place in Rila" : "No matching places",
                         systemImage: "magnifyingglass",
-                        description: Text(query.isEmpty ? "Try a hut, summit, or trailhead." : "Try another name.")
+                        description: Text(searchTerm.isEmpty ? "Try a hut, summit, or trailhead." : "Try another name.")
                     )
                 } else {
                     List(results, id: \.id) { place in
                         Button {
-                            select(place)
+                            if resultsQuery == searchTerm { select(place) }
                         } label: {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(place.name)
@@ -622,10 +626,11 @@ struct ExplorePlaceSearch: View {
             .navigationTitle("Find a place")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search Rila")
-            .task(id: query) {
-                let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            .task(id: searchTerm) {
+                let term = searchTerm
                 guard !term.isEmpty else {
                     results = []
+                    resultsQuery = nil
                     return
                 }
                 do {
@@ -633,6 +638,7 @@ struct ExplorePlaceSearch: View {
                     let matches = await Task.detached { [index] in index.search(term) }.value
                     try Task.checkCancellation()
                     results = matches
+                    resultsQuery = term
                 } catch {}
             }
             .toolbar {
