@@ -70,6 +70,12 @@ final class ExploreReports {
         return mapEntries.filter { Self.current($0, at: date) }
     }
 
+    func discardExpiredMarkers(at date: Date) -> Bool {
+        guard mapEntries.contains(where: { !Self.current($0, at: date) }) else { return false }
+        mapEntries.removeAll { !Self.current($0, at: date) }
+        return true
+    }
+
     func refreshMapReports(in manifest: RegionManifest) async {
         let id = UUID()
         markerRequestID = id
@@ -156,6 +162,63 @@ final class ExploreReports {
 
     enum SaveFailure: Error { case invalid, storageLimit }
 
+    enum Maintenance {
+        case recoverClock, removeExpired
+
+        var title: String {
+            switch self {
+            case .recoverClock: "Recover after a clock change"
+            case .removeExpired: "Remove expired reports"
+            }
+        }
+
+        var confirmation: String {
+            switch self {
+            case .recoverClock:
+                "Confirm your device date and time are correct. This archives all saved reports on this phone and removes them from current results and sharing."
+            case .removeExpired:
+                "Confirm your device date and time are correct. This permanently removes expired report history that is eligible for cleanup."
+            }
+        }
+
+        var failure: String {
+            switch self {
+            case .recoverClock:
+                "Clock recovery couldn’t finish. Check that your device time has been corrected backward."
+            case .removeExpired:
+                "Cleanup couldn’t finish. Check the device clock and try again."
+            }
+        }
+
+        func outcome(_ count: Int) -> String {
+            switch self {
+            case .recoverClock: "Clock recovered. Earlier reports are in archived history."
+            case .removeExpired: count == 0 ? "No expired reports were removed." : "Expired report history removed."
+            }
+        }
+    }
+
+    func performConfirmedMaintenance(_ action: Maintenance) async throws -> Int {
+        let repository = try await ProductReportStorage.shared.repository()
+        let count: Int
+        switch action {
+        case .recoverClock:
+            count = try await repository.recoverClockAfterUserConfirmation(clock: { Self.now() })
+        case .removeExpired:
+            count = try await repository.reclaimExpiredReportsAfterUserConfirmation(clock: { Self.now() })
+        }
+        requestID = nil
+        markerRequestID = nil
+        loading = false
+        mapEntries = []
+        entries = []
+        cursor = nil
+        hasMore = false
+        appendFailed = false
+        error = nil
+        return count
+    }
+
     nonisolated static func now() -> Int64 {
         Int64(Date().timeIntervalSince1970 * 1_000)
     }
@@ -234,6 +297,7 @@ struct ExploreReportsList: View {
     let manifest: RegionManifest
     let compose: () -> Void
     let onMap: (StoredReport) -> Void
+    let refreshMarkers: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var expired = false
@@ -279,6 +343,10 @@ struct ExploreReportsList: View {
                     if entries.hasMore, !entries.loading, !entries.appendFailed {
                         Button("Load more reports") { Task { await entries.page(in: manifest, more: true) } }
                     }
+                    ExploreReportStorageActions(reports: entries) {
+                        refreshMarkers()
+                        await entries.page(in: manifest)
+                    }
                 }
                 .refreshable { await entries.page(in: manifest) }
             }
@@ -291,6 +359,50 @@ struct ExploreReportsList: View {
         }
     }
 
+}
+
+private struct ExploreReportStorageActions: View {
+    let reports: ExploreReports
+    let didChange: () async -> Void
+    @State private var action: ExploreReports.Maintenance?
+    @State private var showingConfirmation = false
+    @State private var working = false
+    @State private var notice: String?
+
+    var body: some View {
+        Section("Report storage") {
+            Button("Recover after a clock change") { confirm(.recoverClock) }
+                .disabled(working)
+            Button("Remove expired reports") { confirm(.removeExpired) }
+                .disabled(working)
+            if working { ProgressView("Updating report storage…") }
+            if let notice { Text(notice).foregroundStyle(.secondary) }
+        }
+        .confirmationDialog(action?.title ?? "Report storage", isPresented: $showingConfirmation,
+                            titleVisibility: .visible, presenting: action) { selected in
+            Button("Confirm", role: .destructive) {
+                working = true
+                notice = nil
+                Task {
+                    defer { working = false }
+                    do {
+                        let count = try await reports.performConfirmedMaintenance(selected)
+                        await didChange()
+                        notice = selected.outcome(count)
+                    } catch {
+                        notice = selected.failure
+                    }
+                }
+            }
+        } message: { selected in
+            Text(selected.confirmation)
+        }
+    }
+
+    private func confirm(_ selected: ExploreReports.Maintenance) {
+        action = selected
+        showingConfirmation = true
+    }
 }
 
 struct ExploreReportDetails: View {
@@ -341,10 +453,12 @@ struct ExploreReportComposer: View {
     let manifest: RegionManifest
     let pickPin: () -> Void
     let saved: (MapPoint) -> Void
+    let refreshMarkers: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var waitingForLocation = false
     @State private var saving = false
+    @State private var storageNeedsAttention = false
     @State private var error: String?
 
     var body: some View {
@@ -385,6 +499,12 @@ struct ExploreReportComposer: View {
                     Button(saving ? "Saving…" : "Save report", action: save)
                         .disabled(saving || waitingForLocation || !form.canSave)
                 }
+                if storageNeedsAttention {
+                    ExploreReportStorageActions(reports: reports) {
+                        error = nil
+                        refreshMarkers()
+                    }
+                }
             }
             .disabled(saving)
             .interactiveDismissDisabled(saving)
@@ -394,10 +514,10 @@ struct ExploreReportComposer: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(saving) }
             }
             .onDisappear {
-                if waitingForLocation { location.cancelFix() }
+                location.cancelFix(for: .composer)
             }
             .onChange(of: location.fix) { _, _ in
-                if waitingForLocation, !saving { applyLocation() }
+                if waitingForLocation, !saving, location.recentFix != nil { applyLocation() }
             }
             .onChange(of: location.issue) { _, issue in
                 if waitingForLocation, let issue {
@@ -413,7 +533,7 @@ struct ExploreReportComposer: View {
         if location.recentFix != nil { applyLocation() }
         else {
             waitingForLocation = true
-            location.requestFix()
+            location.requestFix(for: .composer)
             if let issue = location.issue {
                 waitingForLocation = false
                 error = issue == .denied ? "Location access is off. Choose a point on the map." : "Couldn’t get your location."
@@ -444,7 +564,11 @@ struct ExploreReportComposer: View {
                 try await reports.save(submission.draft)
                 saved(submission.point)
             } catch ExploreReports.SaveFailure.storageLimit {
+                storageNeedsAttention = true
                 error = "Report storage is full. This report hasn’t been saved."
+            } catch ReportStoreError.clock {
+                storageNeedsAttention = true
+                error = "Check your device date and time, then recover the report clock below."
             } catch {
                 self.error = "The report couldn’t be saved. Check your device clock and try again."
             }

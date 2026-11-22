@@ -10,7 +10,8 @@ extension HikingRoute {
 
     /// Prefer the geometric nearest segment. When segments overlap, use recent progress
     /// and movement to choose the plausible leg without advancing at a stationary crossing.
-    public func match(_ position: MapPoint, following previous: Progress? = nil) -> Progress? {
+    public func match(_ position: MapPoint, following previous: Progress? = nil, useMovement: Bool = true,
+                      offRouteThreshold: Double = .infinity) -> Progress? {
         guard points.count > 1 else { return nil }
         let latitudeScale = 111_195.0 / 1e7
         let longitudeScale = latitudeScale * cos(Double(position.latE7) * .pi / 1.8e9)
@@ -20,7 +21,7 @@ extension HikingRoute {
         }
 
         let priorOffset = previous.map { offset($0.position) }
-        let travelled = priorOffset.map { hypot($0.x, $0.y) } ?? 0
+        let travelled = useMovement ? (priorOffset.map { hypot($0.x, $0.y) } ?? 0) : 0
         var nearest: Progress?
         var consecutive: Progress?
         var score = Double.infinity
@@ -39,7 +40,7 @@ extension HikingRoute {
             if let previous, let priorOffset {
                 let expected = previous.distanceAlong + travelled
                 let gap = abs(candidate.distanceAlong - expected)
-                if gap <= max(30, travelled * 3) {
+                if !useMovement || gap <= max(30, travelled * 3) {
                     let reverses = length > 0 && travelled > 5 && (priorOffset.x * x + priorOffset.y * y) > 0
                     let candidateScore = gap + candidate.offset * 2 + (reverses ? min(20, travelled) : 0)
                     if candidateScore < score {
@@ -51,7 +52,9 @@ extension HikingRoute {
             cumulative += length
             start = end
         }
-        if let nearest, let consecutive, consecutive.offset <= nearest.offset + 8 {
+        let ambiguityTolerance = useMovement ? 8.0 : 2.0
+        if let nearest, let consecutive, consecutive.offset <= nearest.offset + ambiguityTolerance,
+           consecutive.offset <= offRouteThreshold || nearest.offset > offRouteThreshold {
             return consecutive
         }
         return nearest

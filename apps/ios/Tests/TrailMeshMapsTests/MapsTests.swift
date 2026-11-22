@@ -91,9 +91,11 @@ final class MapsTests: XCTestCase {
             return try HikingRoute.parse(JSONSerialization.data(withJSONObject: response), from: origin, to: end)
         }
         let first: [String: Any] = ["instruction": "Follow the trail", "begin_shape_index": 0]
-        let second: [String: Any] = ["instruction": "Arrive at the hut", "begin_shape_index": 1]
+        let second: [String: Any] = ["instruction": "Arrive at the hut", "begin_shape_index": 1, "type": 4]
         let result = try route([first, second])
         XCTAssertEqual(result.maneuvers.map(\.instruction), ["Follow the trail", "Arrive at the hut"])
+        XCTAssertEqual(result.maneuvers.last?.type, 4)
+        XCTAssertEqual(result.maneuvers.last?.isArrival, true)
         XCTAssertThrowsError(try route([second, first]))
         XCTAssertThrowsError(try route([["instruction": "Arrive", "begin_shape_index": 2]]))
         XCTAssertThrowsError(try route([["instruction": "", "begin_shape_index": 1]]))
@@ -115,8 +117,25 @@ final class MapsTests: XCTestCase {
         let returning = try XCTUnwrap(route.match(middle, following: turnaround))
         XCTAssertNil(route.nextInstruction(at: returning))
         XCTAssertFalse(route.isAtDestination(returning, tolerance: 12))
+        // After a GPS gap, the recent motion is no longer reliable, but
+        // this stationary fix still belongs to the previously tracked leg.
+        let afterGap = try XCTUnwrap(route.match(middle, following: returning, useMovement: false))
+        XCTAssertNil(route.nextInstruction(at: afterGap))
         let arrival = try XCTUnwrap(route.match(a, following: returning))
         XCTAssertTrue(route.isAtDestination(arrival, tolerance: 12))
+    }
+
+    func testContinuityCannotTurnAnOnRouteFixIntoAnOffRouteWarning() throws {
+        let route = HikingRoute(points: [
+            .init(latE7: 0, lonE7: 0), .init(latE7: 20_000, lonE7: 0),
+            .init(latE7: 20_000, lonE7: -450), .init(latE7: 0, lonE7: -450),
+        ], distanceKm: 0.45, timeSeconds: 400)
+        let previous = try XCTUnwrap(route.match(.init(latE7: 10_000, lonE7: 0)))
+        let fix = MapPoint(latE7: 10_000, lonE7: -3_058)
+        let nearest = try XCTUnwrap(route.match(fix, offRouteThreshold: 30))
+        let withHistory = try XCTUnwrap(route.match(fix, following: previous, offRouteThreshold: 30))
+        XCTAssertEqual(nearest.offset, 29, accuracy: 0.1)
+        XCTAssertEqual(withHistory.offset, nearest.offset, accuracy: 0.01)
     }
 
     func testPolylineBoundsAndPrecision() throws {

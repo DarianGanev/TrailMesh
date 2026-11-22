@@ -295,7 +295,7 @@ struct ExploreView: View {
                                 cameraRequest = ExploreCameraRequest(command: .location(point))
                             } else {
                                 locating = true
-                                location.requestFix()
+                                location.requestFix(for: .map)
                                 if let issue = location.issue { showLocationIssue(issue) }
                             }
                         }
@@ -371,7 +371,9 @@ struct ExploreView: View {
         .task(id: resources.styleURL) {
             while !Task.isCancelled {
                 guard (try? await Task.sleep(for: .seconds(15))) != nil else { return }
-                reportClock = .now
+                let now = Date.now
+                if reports.discardExpiredMarkers(at: now) { markerRevision = UUID() }
+                reportClock = now
             }
         }
         .sheet(isPresented: $showingOfflineMaps) { offlineMaps(resources.region.manifest) }
@@ -396,6 +398,8 @@ struct ExploreView: View {
                 } onMap: { report in
                     reportDestination = nil
                     cameraRequest = ExploreCameraRequest(command: .location(MapPoint(latE7: report.latitude, lonE7: report.longitude)))
+                } refreshMarkers: {
+                    markerRevision = UUID()
                 }
             case .compose:
                 ExploreReportComposer(form: reportDraft, reports: reports, location: location, manifest: resources.region.manifest) {
@@ -405,6 +409,8 @@ struct ExploreView: View {
                     reportDestination = nil
                     reportNotice = "Report saved on this phone."
                     cameraRequest = ExploreCameraRequest(command: .location(point))
+                    markerRevision = UUID()
+                } refreshMarkers: {
                     markerRevision = UUID()
                 }
             case .details(let report):

@@ -65,6 +65,26 @@ final class ReportPageTests: XCTestCase {
         XCTAssertEqual(markers.map(\.observedAt), (130..<226).map { now - Int64($0 + 10) })
     }
 
+    func testMapMarkersCanRefillWhenNewerReportsExpire() async throws {
+        let (_, now, _) = try exchangeFixture()
+        let repository = try ReportRepository(path: ":memory:")
+        let identity = try ReportIdentity.create(store: ExchangeMemoryKeyStore())
+        let older = ReportDraft(category: "note", status: "observed", observedAt: now - 1000,
+                                latitude: 0, longitude: 0, accuracy: 1, note: "older trail condition",
+                                expiresAt: now + 60_000, maxHops: 2)
+        guard case .stored(let olderID) = try await repository.author(older, identity: identity, now: now) else {
+            return XCTFail("Older report was not saved")
+        }
+        for i in 0..<96 {
+            _ = try await repository.author(draft(i, now: now), identity: identity, now: now)
+        }
+        let first = try await repository.currentMapReports(bounds: world, clock: { now })
+        XCTAssertEqual(first.count, 96)
+        XCTAssertFalse(first.contains { $0.bundleID == olderID })
+        let refreshed = try await repository.currentMapReports(bounds: world, clock: { now + 10_000 })
+        XCTAssertEqual(refreshed.map(\.bundleID), [olderID])
+    }
+
     func testPageExposesVerifiedEffectiveExpiryAlongsideSignedExpiry() async throws {
         let (_, now, _) = try exchangeFixture()
         let source = try ReportRepository(path: ":memory:"), destination = try ReportRepository(path: ":memory:")

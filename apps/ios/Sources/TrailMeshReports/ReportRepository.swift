@@ -96,6 +96,16 @@ public actor ReportRepository {
         }
     }
 
+    @discardableResult
+    public func recoverClockAfterUserConfirmation(clock: @Sendable () -> Int64) throws -> Int {
+        try recoverClockAfterUserConfirmation(now: clock())
+    }
+
+    @discardableResult
+    public func reclaimExpiredReportsAfterUserConfirmation(clock: @Sendable () -> Int64) throws -> Int {
+        try reclaimExpiredReportsAfterUserConfirmation(now: clock())
+    }
+
     /// Call only after the user confirms the device clock is corrected. Existing
     /// reports remain available as history but cannot become current or be relayed.
     @discardableResult
