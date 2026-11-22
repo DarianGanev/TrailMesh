@@ -32,7 +32,10 @@ open class ReportSessionService : Service() {
     private var pendingFieldPlan: FieldSessionPlan? = null
     internal var fieldPlan: FieldSessionPlan? = null
         private set
-    internal val fieldStarting get() = pendingFieldPlan != null
+    internal var fieldStarting = false
+        private set
+    internal var stopRevision = 0L
+        private set
     private var extraPermissions = emptyList<String>()
     private lateinit var coordinator: ReportSessionCoordinator
     private val preferences by lazy {
@@ -164,41 +167,67 @@ open class ReportSessionService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_START,
-            ACTION_RESUME -> if (!fieldSession) startSharing(intent.getBooleanExtra("consent", false)) else stopSelf()
-            ACTION_START_FIELD -> {
-                val plan = pendingFieldPlan
-                pendingFieldPlan = null
-                if (fieldSession && plan != null) {
-                    fieldPlan = plan
-                    activate(plan.context, true)
-                } else if (!promoted) stopSelf()
-            }
+        when (val action = intent?.action) {
+            ACTION_START, ACTION_RESUME, ACTION_START_FIELD ->
+                launchRequestedSession(action, intent.getBooleanExtra("consent", false))
             ACTION_STOP -> stopSharing()
-            else -> if (!promoted) stopSelf()
+            else -> if (!promoted && !fieldStarting) stopSelf()
         }
         return START_NOT_STICKY
     }
 
-    fun startSharing(consent: Boolean) {
-        if (!fieldSession) activate(TEST_CONTEXT, consent)
-    }
-
     /** Route and consent are submitted through the in-process binder, never an Intent extra. */
     internal fun startFieldSharing(plan: FieldSessionPlan) {
-        if (!fieldSession || !ready || state == ReportSessionState.active || pendingFieldPlan != null) return
+        if (!fieldSession || !ready || state == ReportSessionState.active || fieldStarting) return
+        if (!ReportRadioOwner.acquire(this)) {
+            coordinator.pause(ReportSessionState.interrupted)
+            message = "Another Nearby session is running. Stop it first."
+            return
+        }
         pendingFieldPlan = plan
+        fieldStarting = true
         try {
             startForegroundService(Intent(this, javaClass).setAction(ACTION_START_FIELD))
         } catch (_: IllegalStateException) {
-            pendingFieldPlan = null
-            coordinator.pause(ReportSessionState.interrupted)
-            message = "Open TrailMesh to start sharing."
+            cancelQueuedStart(ReportSessionState.interrupted, "Open TrailMesh to start sharing.")
         } catch (_: SecurityException) {
-            pendingFieldPlan = null
-            coordinator.pause(ReportSessionState.permissionDenied)
-            message = "Nearby permission is required."
+            cancelQueuedStart(ReportSessionState.permissionDenied, "Nearby permission is required.")
+        }
+    }
+
+    private fun cancelQueuedStart(state: ReportSessionState, explanation: String) {
+        pendingFieldPlan = null
+        fieldStarting = false
+        coordinator.pause(state)
+        message = explanation
+        leaveForeground()
+    }
+
+    private fun launchRequestedSession(action: String, consent: Boolean) {
+        val plan = pendingFieldPlan
+        pendingFieldPlan = null
+        fieldStarting = false
+        try {
+            // Fulfill Android's foreground obligation even if Stop canceled the plan or
+            // the radio changed after the request. Discovery starts only after validation.
+            if (!promoted) promote()
+            if (fieldSession && action == ACTION_START_FIELD && plan != null) {
+                fieldPlan = plan
+                activate(plan.context, true)
+            } else if (!fieldSession && action != ACTION_START_FIELD) {
+                activate(TEST_CONTEXT, consent)
+            }
+        } catch (_: SecurityException) {
+            if (::coordinator.isInitialized) coordinator.pause(ReportSessionState.permissionDenied)
+            message = "Nearby or foreground permission denied."
+        } catch (_: Exception) {
+            if (::coordinator.isInitialized) coordinator.pause(ReportSessionState.radioUnavailable)
+            message = "Radio session could not start. Check settings, then Resume."
+        } finally {
+            if (state != ReportSessionState.active) {
+                leaveForeground()
+                stopSelf()
+            }
         }
     }
 
@@ -206,116 +235,98 @@ open class ReportSessionService : Service() {
         if (state == ReportSessionState.active) return
         if (!ready) {
             message = "Storage is still opening. Tap Start again when ready."
-            stopSelf()
             return
         }
         if (!consent) {
             coordinator.start(context, false)
             message = "Public sharing consent is required."
-            stopSelf()
             return
         }
         if (neededPermissions().isNotEmpty()) {
             coordinator.pause(ReportSessionState.permissionDenied)
             message = "Nearby permissions denied. Allow them, then Resume."
-            stopSelf()
             return
         }
         if (!bluetoothEnabled()) {
             coordinator.pause(ReportSessionState.radioUnavailable)
             message = "Bluetooth is off. Enable it, then Resume."
-            stopSelf()
             return
         }
         if (!ReportRadioOwner.acquire(this)) {
             coordinator.pause(ReportSessionState.interrupted)
             message = "Another Nearby session is running. Stop it first."
-            stopSelf()
             return
         }
-        try {
-            val notification =
-                Notification.Builder(this, CHANNEL)
-                    .setSmallIcon(android.R.drawable.stat_sys_upload_done)
-                    .setContentTitle("TrailMesh public sharing active")
-                    .setContentText(
-                        "Unverified nearby participants; up to four links. No screen-off guarantee.",
-                    )
-                    .setContentIntent(
-                        PendingIntent.getActivity(
-                            this,
-                            0,
-                            Intent(this, org.trailmesh.app.MainActivity::class.java).apply {
-                                if (fieldSession) {
-                                    action = OPEN_NEARBY
-                                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                                }
-                            },
-                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                        ),
-                    )
-                    .setOngoing(true)
-                    .addAction(
-                        Notification.Action.Builder(
-                                null,
-                                "Stop",
-                                PendingIntent.getService(
-                                    this,
-                                    1,
-                                    Intent(this, javaClass).setAction(ACTION_STOP),
-                                    PendingIntent.FLAG_UPDATE_CURRENT or
-                                        PendingIntent.FLAG_IMMUTABLE,
-                                ),
-                            )
-                            .build(),
-                    )
-                    .build()
-            if (Build.VERSION.SDK_INT >= 29)
-                startForeground(
-                    42,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-                )
-            else startForeground(42, notification)
-            promoted = true
-            if (!preferences.edit().putBoolean("open_intent", true).commit()) {
-                coordinator.pause(ReportSessionState.storageFailure)
-                leaveForeground()
-                message = "Could not save session intent."
-                return
-            }
-            coordinator.start(context, true)
-            if (state != ReportSessionState.active) {
-                leaveForeground()
-                message =
-                    "Public sharing paused (${state.name}). Check permissions/radio and Resume."
-                stopSelf()
-                return
-            }
-            message =
-                if (fieldSession) "Public report exchange is running."
-                else "Public session active. Reports/inventories are visible to nearby unverified participants; signatures protect report integrity, not a person's identity."
-        } catch (_: SecurityException) {
-            coordinator.pause(ReportSessionState.permissionDenied)
-            leaveForeground()
-            message = "Nearby or foreground permission denied."
-            stopSelf()
-        } catch (_: Exception) {
-            coordinator.pause(ReportSessionState.radioUnavailable)
-            leaveForeground()
-            message = "Radio session could not start. Check settings, then Resume."
-            stopSelf()
+        if (!preferences.edit().putBoolean("open_intent", true).commit()) {
+            coordinator.pause(ReportSessionState.storageFailure)
+            message = "Could not save session intent."
+            return
         }
+        coordinator.start(context, true)
+        if (state != ReportSessionState.active) {
+            message = "Public sharing paused (${state.name}). Check permissions/radio and Resume."
+            return
+        }
+        message =
+            if (fieldSession) "Public report exchange is running."
+            else "Public session active. Reports/inventories are visible to nearby unverified participants; signatures protect report integrity, not a person's identity."
+    }
+
+    private fun promote() {
+        val notification =
+            Notification.Builder(this, CHANNEL)
+                .setSmallIcon(android.R.drawable.stat_sys_upload_done)
+                .setContentTitle(if (fieldSession) "TrailMesh Nearby" else "TrailMesh report diagnostics")
+                .setContentText("Stop the public report session at any time.")
+                .setContentIntent(
+                    PendingIntent.getActivity(
+                        this,
+                        0,
+                        Intent(this, org.trailmesh.app.MainActivity::class.java).apply {
+                            if (fieldSession) {
+                                action = OPEN_NEARBY
+                                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            }
+                        },
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                    ),
+                )
+                .setOngoing(true)
+                .addAction(
+                    Notification.Action.Builder(
+                            null,
+                            "Stop",
+                            PendingIntent.getService(
+                                this,
+                                1,
+                                Intent(this, javaClass).setAction(ACTION_STOP),
+                                PendingIntent.FLAG_UPDATE_CURRENT or
+                                    PendingIntent.FLAG_IMMUTABLE,
+                            ),
+                        )
+                        .build(),
+                )
+                .build()
+        val notificationId = if (fieldSession) 43 else 42
+        if (Build.VERSION.SDK_INT >= 29)
+            startForeground(
+                notificationId,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+            )
+        else startForeground(notificationId, notification)
+        promoted = true
     }
 
     fun stopSharing() {
+        stopRevision += 1
         pendingFieldPlan = null
         fieldPlan = null
         if (::coordinator.isInitialized) coordinator.stop()
         preferences.edit().putBoolean("open_intent", false).commit()
         leaveForeground()
         message = "Stopped. Committed reports remain saved locally."
-        stopSelf()
+        if (!fieldStarting) stopSelf()
     }
 
     fun createSyntheticReport() {

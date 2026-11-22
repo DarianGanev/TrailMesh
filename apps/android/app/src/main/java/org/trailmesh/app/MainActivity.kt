@@ -80,6 +80,7 @@ import org.trailmesh.app.maps.remainingFreshMillis
 import org.trailmesh.app.relevance.Area
 import org.trailmesh.app.relevance.GeoPoint
 import org.trailmesh.app.relevance.RelevanceContext
+import org.trailmesh.app.session.FIELD_NEARBY_NOTIFICATION_REQUEST
 import org.trailmesh.app.session.FIELD_NEARBY_PERMISSION_REQUEST
 import org.trailmesh.app.session.FieldReportUpdates
 import org.trailmesh.app.session.FieldSessionPanel
@@ -912,6 +913,10 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(request, permissions, grants)
         if (request == FIELD_NEARBY_PERMISSION_REQUEST) {
             nearbyPanel?.permissionsResult()
+            return
+        }
+        if (request == FIELD_NEARBY_NOTIFICATION_REQUEST) {
+            nearbyPanel?.notificationPermissionResult()
             return
         }
         if (request != FIELD_LOCATION_REQUEST) return

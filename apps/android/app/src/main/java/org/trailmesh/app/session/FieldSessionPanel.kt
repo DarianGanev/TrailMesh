@@ -1,14 +1,17 @@
 package org.trailmesh.app.session
 
 import android.Manifest.permission.ACCESS_FINE_LOCATION
+import android.Manifest.permission.POST_NOTIFICATIONS
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
+import android.app.NotificationManager
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
@@ -35,6 +38,7 @@ import org.trailmesh.app.relevance.RelevanceContext
 import kotlin.math.roundToInt
 
 internal const val FIELD_NEARBY_PERMISSION_REQUEST = 22
+internal const val FIELD_NEARBY_NOTIFICATION_REQUEST = 23
 
 /** Held only in process. The summary and geometry are never sent to the radio. */
 internal data class FieldSessionPlan(val context: RelevanceContext, val summary: String)
@@ -59,7 +63,9 @@ internal class FieldSessionPanel(
     private var binding = false
     private var connectionFailed = false
     private var approved: FieldSessionPlan? = null
+    private var observedStopRevision = 0L
     private var awaitingPermission = false
+    private var notificationRequested = false
     private var stateView: TextView? = null
     private var detailView: TextView? = null
     private var primary: Button? = null
@@ -69,6 +75,7 @@ internal class FieldSessionPanel(
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             service = (binder as? ReportSessionService.LocalBinder)?.session as? FieldReportSessionService
+            observedStopRevision = service?.stopRevision ?: 0L
             connectionFailed = service == null
             refresh()
         }
@@ -127,6 +134,12 @@ internal class FieldSessionPanel(
         refresh()
     }
 
+    fun notificationPermissionResult() {
+        if (!awaitingPermission || dialog?.isShowing != true) return
+        awaitingPermission = false
+        startApproved()
+    }
+
     fun close() {
         dialog?.dismiss()
         detach()
@@ -180,6 +193,7 @@ internal class FieldSessionPanel(
 
     private fun startApproved() {
         val owner = service ?: return
+        synchronizeStop(owner)
         val plan = approved ?: owner.fieldPlan ?: return
         if (dialog?.isShowing != true || awaitingPermission) return
         val missing = owner.neededPermissions()
@@ -188,7 +202,15 @@ internal class FieldSessionPanel(
             val permissions = ReportNearbyPermissions.forRequest(Build.VERSION.SDK_INT, missing)
             activity.requestPermissions(permissions.toTypedArray(), FIELD_NEARBY_PERMISSION_REQUEST)
         } else if (owner.bluetoothEnabled()) {
-            owner.startFieldSharing(plan)
+            if (Build.VERSION.SDK_INT >= 33 && !notificationRequested &&
+                activity.checkSelfPermission(POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ) {
+                notificationRequested = true
+                awaitingPermission = true
+                activity.requestPermissions(arrayOf(POST_NOTIFICATIONS), FIELD_NEARBY_NOTIFICATION_REQUEST)
+            } else {
+                owner.startFieldSharing(plan)
+            }
         }
         refresh()
     }
@@ -215,6 +237,7 @@ internal class FieldSessionPanel(
 
     private fun refresh() {
         val owner = service
+        if (owner != null) synchronizeStop(owner)
         val consented = approved != null || owner?.fieldPlan != null
         val missingPermissions = owner?.neededPermissions().orEmpty()
         val screen = when {
@@ -226,7 +249,9 @@ internal class FieldSessionPanel(
             )
             owner.state == ReportSessionState.active -> Screen(
                 "Nearby session active",
-                "${owner.fieldPlan?.summary.orEmpty()}\n\nKeep TrailMesh open for Nearby exchange. Background and screen-off exchange depend on your device and have not been verified.",
+                "${owner.fieldPlan?.summary.orEmpty()}\n\nKeep TrailMesh open for Nearby exchange. Background and screen-off exchange depend on your device and have not been verified." +
+                    if (activity.getSystemService(NotificationManager::class.java).areNotificationsEnabled()) ""
+                    else "\n\nNotifications are off. To stop sharing, return to Nearby.",
                 "Stop sharing", Command.Stop,
             )
             owner.fieldStarting || awaitingPermission -> Screen("Starting Nearby", "Waiting for Android.")
@@ -295,6 +320,13 @@ internal class FieldSessionPanel(
                 else stop()
             }
         }
+    }
+
+    private fun synchronizeStop(owner: FieldReportSessionService) {
+        if (observedStopRevision == owner.stopRevision) return
+        observedStopRevision = owner.stopRevision
+        approved = null
+        awaitingPermission = false
     }
 
     private fun stop() {
