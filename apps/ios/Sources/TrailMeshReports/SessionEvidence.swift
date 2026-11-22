@@ -4,6 +4,20 @@ import GRDB
 
 public enum SyntheticTestReport {
     public static let notePrefix = "SYNTHETIC TrailMesh test "
+
+    /// Match the fixture used in the isolated diagnostics store on both platforms.
+    /// This is an evidence check, not a wire-level trust signal.
+    static func matches(_ report: StoredReport, maxHops: Int) -> Bool {
+        guard report.category == "trail", report.status == "muddy",
+              report.latitude == 426977000, report.longitude == 233219000,
+              [1, 10].contains(report.accuracy), report.supersedes == nil,
+              report.expiresAt - report.observedAt == 3_600_000, maxHops == 3,
+              report.note.hasPrefix(notePrefix) else { return false }
+        let suffix = report.note.utf8.dropFirst(notePrefix.utf8.count)
+        return suffix.count == 8 && suffix.allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95
+        }
+    }
 }
 public struct SavedTestReportEvidence: Codable, Sendable {
     public let bundleID: String
@@ -30,7 +44,7 @@ extension ReportRepository {
             accuracy: 10, note: SyntheticTestReport.notePrefix + String(UUID().uuidString.prefix(8)), expiresAt: now + 3600000, maxHops: 3), identity: identity, clock: clock)
     }
     /// At most 64 raw rows, with signed-byte verification before any hash is exposed.
-    /// Prefix selection is diagnostic only; it is never used for report admission.
+    /// The caller uses the isolated diagnostic store. Fixture matching never affects admission.
     public func savedTestReportEvidence(now: Int64) throws -> [SavedTestReportEvidence] {
         try savedTestReportEvidence(clock: { now })
     }
@@ -52,8 +66,9 @@ extension ReportRepository {
             return try rows.compactMap { row in
                 let verified = try Self.verifyStoredRow(row, now: now)
                 let report = verified.report
-                let remaining = try Self.remainingHops(db, id: report.bundleID, cap: row.decode(Int.self, forColumn: "max_hops"))
-                guard report.category == "trail", report.status == "muddy", report.note.hasPrefix(SyntheticTestReport.notePrefix) else { return nil }
+                let maxHops = try row.decode(Int.self, forColumn: "max_hops")
+                guard SyntheticTestReport.matches(report, maxHops: maxHops) else { return nil }
+                let remaining = try Self.remainingHops(db, id: report.bundleID, cap: maxHops)
                 return SavedTestReportEvidence(bundleID: report.bundleID,
                     canonicalCoreSHA256: SHA256.hash(data: verified.canonical).map { String(format: "%02x", $0) }.joined(),
                     originalWireSHA256: SHA256.hash(data: verified.wire).map { String(format: "%02x", $0) }.joined(),
