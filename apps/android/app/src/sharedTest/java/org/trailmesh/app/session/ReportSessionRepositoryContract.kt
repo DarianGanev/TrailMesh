@@ -291,6 +291,7 @@ abstract class ReportSessionRepositoryContract {
     fun sharedSessionProfileMatchesActualProductContractAndDiagnosticsAreBounded() {
         val p = JSONObject(String(resource("session-v1-profile.json")))
         assertEquals(p.getString("service_id"), ReportAdvertisement.SERVICE)
+        assertEquals(p.getString("field_service_id"), ReportAdvertisement.FIELD_SERVICE)
         assertEquals(p.getString("test_note_prefix"), ReportSessionCoordinator.TEST_NOTE_PREFIX)
         assertEquals(p.getInt("advertisement_bytes"), ("TMR1|" + "1".repeat(32)).toByteArray().size)
         val limits = p.getJSONObject("limits")

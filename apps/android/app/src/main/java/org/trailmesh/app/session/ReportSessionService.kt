@@ -13,7 +13,9 @@ import org.trailmesh.app.relevance.*
 import org.trailmesh.app.security.*
 
 /** User-started foreground owner. Binding the development panel never starts discovery. */
-class ReportSessionService : Service() {
+open class ReportSessionService : Service() {
+    protected open val fieldSession = false
+
     inner class LocalBinder : Binder() {
         val session
             get() = this@ReportSessionService
@@ -26,9 +28,16 @@ class ReportSessionService : Service() {
     private var repository: ReportRepository? = null
     private var signer: ReportSigner? = null
     private var promoted = false
+    private var opening: Job? = null
+    private var pendingFieldPlan: FieldSessionPlan? = null
+    internal var fieldPlan: FieldSessionPlan? = null
+        private set
+    internal val fieldStarting get() = pendingFieldPlan != null
     private var extraPermissions = emptyList<String>()
     private lateinit var coordinator: ReportSessionCoordinator
-    private val preferences by lazy { getSharedPreferences("public-report-session", MODE_PRIVATE) }
+    private val preferences by lazy {
+        getSharedPreferences(if (fieldSession) "field-report-session" else "public-report-session", MODE_PRIVATE)
+    }
     @Volatile
     var message = "Opening protected report storage..."
         private set
@@ -59,7 +68,10 @@ class ReportSessionService : Service() {
             override fun run() {
                 if (::coordinator.isInitialized) {
                     coordinator.tick()
-                    if (state != ReportSessionState.active && promoted) leaveForeground()
+                    if (state != ReportSessionState.active && promoted) {
+                        leaveForeground()
+                        if (fieldSession) stopSelf()
+                    }
                 }
                 handler.postDelayed(this, ReportSessionLimits.TICK_MS)
             }
@@ -75,6 +87,7 @@ class ReportSessionService : Service() {
                     coordinator.pause(ReportSessionState.radioUnavailable)
                     message = "Bluetooth is off. Enable it, then Resume."
                     leaveForeground()
+                    if (fieldSession) stopSelf()
                 }
             }
         }
@@ -94,10 +107,13 @@ class ReportSessionService : Service() {
             registerReceiver(bluetoothReceiver, filter, RECEIVER_EXPORTED)
         else @Suppress("DEPRECATION") registerReceiver(bluetoothReceiver, filter)
         handler.post(ticker)
-        scope.launch {
+        opening = scope.launch {
             try {
-                repository = ProductReportAccess.open(this@ReportSessionService)
-                signer = ProductReportAccess.signer(this@ReportSessionService)
+                withContext(Dispatchers.IO) {
+                    repository = if (fieldSession) ProductReportAccess.open(this@ReportSessionService)
+                        else ProductReportAccess.openDiagnostics(this@ReportSessionService)
+                }
+                if (!fieldSession) signer = ProductReportAccess.signer(this@ReportSessionService, diagnostic = true)
                 val radio =
                     NearbyReportRadio(
                         this@ReportSessionService,
@@ -107,6 +123,8 @@ class ReportSessionService : Service() {
                             message =
                                 "Nearby requires additional Location permission. Tap Resume to allow it."
                         },
+                        if (fieldSession) ReportAdvertisement.FIELD_SERVICE else ReportAdvertisement.SERVICE,
+                        { ReportRadioOwner.isOwnedBy(this@ReportSessionService) },
                     )
                 coordinator =
                     ReportSessionCoordinator(
@@ -116,18 +134,24 @@ class ReportSessionService : Service() {
                                 repository!!,
                                 context,
                                 System::currentTimeMillis,
+                                productOnly = fieldSession,
                             )
                         },
                         scope,
                         System::currentTimeMillis,
                         SystemClock::elapsedRealtime,
-                        event = diagnostics::record,
+                        event = { event -> if (!fieldSession) diagnostics.record(event) },
+                        reportCommitted = { if (fieldSession) FieldReportUpdates.publish() },
+                        recordSyntheticEvidence = !fieldSession,
                     )
                 ready = true
                 message =
                     if (canResume) "Interrupted session. Explicit Resume is required."
+                    else if (fieldSession) "Ready to share public reports."
                     else "Ready. Synthetic Sofia test area; no radio session running."
                 refresh()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: IdentityException) {
                 message =
                     "Protected identity unavailable (${e.reason.name}). Existing identity was not replaced."
@@ -142,7 +166,15 @@ class ReportSessionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START,
-            ACTION_RESUME -> startSharing(intent.getBooleanExtra("consent", false))
+            ACTION_RESUME -> if (!fieldSession) startSharing(intent.getBooleanExtra("consent", false)) else stopSelf()
+            ACTION_START_FIELD -> {
+                val plan = pendingFieldPlan
+                pendingFieldPlan = null
+                if (fieldSession && plan != null) {
+                    fieldPlan = plan
+                    activate(plan.context, true)
+                } else if (!promoted) stopSelf()
+            }
             ACTION_STOP -> stopSharing()
             else -> if (!promoted) stopSelf()
         }
@@ -150,13 +182,35 @@ class ReportSessionService : Service() {
     }
 
     fun startSharing(consent: Boolean) {
+        if (!fieldSession) activate(TEST_CONTEXT, consent)
+    }
+
+    /** Route and consent are submitted through the in-process binder, never an Intent extra. */
+    internal fun startFieldSharing(plan: FieldSessionPlan) {
+        if (!fieldSession || !ready || state == ReportSessionState.active || pendingFieldPlan != null) return
+        pendingFieldPlan = plan
+        try {
+            startForegroundService(Intent(this, javaClass).setAction(ACTION_START_FIELD))
+        } catch (_: IllegalStateException) {
+            pendingFieldPlan = null
+            coordinator.pause(ReportSessionState.interrupted)
+            message = "Open TrailMesh to start sharing."
+        } catch (_: SecurityException) {
+            pendingFieldPlan = null
+            coordinator.pause(ReportSessionState.permissionDenied)
+            message = "Nearby permission is required."
+        }
+    }
+
+    private fun activate(context: RelevanceContext, consent: Boolean) {
+        if (state == ReportSessionState.active) return
         if (!ready) {
             message = "Storage is still opening. Tap Start again when ready."
             stopSelf()
             return
         }
         if (!consent) {
-            coordinator.start(TEST_CONTEXT, false)
+            coordinator.start(context, false)
             message = "Public sharing consent is required."
             stopSelf()
             return
@@ -173,6 +227,12 @@ class ReportSessionService : Service() {
             stopSelf()
             return
         }
+        if (!ReportRadioOwner.acquire(this)) {
+            coordinator.pause(ReportSessionState.interrupted)
+            message = "Another Nearby session is running. Stop it first."
+            stopSelf()
+            return
+        }
         try {
             val notification =
                 Notification.Builder(this, CHANNEL)
@@ -185,7 +245,12 @@ class ReportSessionService : Service() {
                         PendingIntent.getActivity(
                             this,
                             0,
-                            Intent(this, org.trailmesh.app.MainActivity::class.java),
+                            Intent(this, org.trailmesh.app.MainActivity::class.java).apply {
+                                if (fieldSession) {
+                                    action = OPEN_NEARBY
+                                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                                }
+                            },
                             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                         ),
                     )
@@ -197,8 +262,7 @@ class ReportSessionService : Service() {
                                 PendingIntent.getService(
                                     this,
                                     1,
-                                    Intent(this, ReportSessionService::class.java)
-                                        .setAction(ACTION_STOP),
+                                    Intent(this, javaClass).setAction(ACTION_STOP),
                                     PendingIntent.FLAG_UPDATE_CURRENT or
                                         PendingIntent.FLAG_IMMUTABLE,
                                 ),
@@ -220,15 +284,17 @@ class ReportSessionService : Service() {
                 message = "Could not save session intent."
                 return
             }
-            coordinator.start(TEST_CONTEXT, true)
+            coordinator.start(context, true)
             if (state != ReportSessionState.active) {
                 leaveForeground()
                 message =
                     "Public sharing paused (${state.name}). Check permissions/radio and Resume."
+                stopSelf()
                 return
             }
             message =
-                "Public session active. Reports/inventories are visible to nearby unverified participants; signatures protect report integrity, not a person's identity."
+                if (fieldSession) "Public report exchange is running."
+                else "Public session active. Reports/inventories are visible to nearby unverified participants; signatures protect report integrity, not a person's identity."
         } catch (_: SecurityException) {
             coordinator.pause(ReportSessionState.permissionDenied)
             leaveForeground()
@@ -243,6 +309,8 @@ class ReportSessionService : Service() {
     }
 
     fun stopSharing() {
+        pendingFieldPlan = null
+        fieldPlan = null
         if (::coordinator.isInitialized) coordinator.stop()
         preferences.edit().putBoolean("open_intent", false).commit()
         leaveForeground()
@@ -251,7 +319,7 @@ class ReportSessionService : Service() {
     }
 
     fun createSyntheticReport() {
-        if (!ready) return
+        if (fieldSession || !ready) return
         scope.launch {
             try {
                 val now = System.currentTimeMillis()
@@ -299,7 +367,7 @@ class ReportSessionService : Service() {
     }
 
     fun refresh() {
-        if (!ready) return
+        if (fieldSession || !ready) return
         scope.launch {
             try {
                 saved = repository!!.syntheticTestEvidence(System::currentTimeMillis)
@@ -325,6 +393,7 @@ class ReportSessionService : Service() {
     }
 
     suspend fun exportedLog(): String {
+        check(!fieldSession)
         val evidence = repository?.syntheticTestEvidence(System::currentTimeMillis) ?: emptyList()
         return diagnostics.export(
             "${Build.MANUFACTURER} ${Build.MODEL}",
@@ -342,6 +411,8 @@ class ReportSessionService : Service() {
         // Invalidate loaded report frames before quarantine begins. Keep this bound
         // service alive so the recovery transaction can finish after radio shutdown.
         if (::coordinator.isInitialized) coordinator.stop()
+        pendingFieldPlan = null
+        fieldPlan = null
         preferences.edit().putBoolean("open_intent", false).commit()
         leaveForeground()
         scope.launch {
@@ -374,7 +445,7 @@ class ReportSessionService : Service() {
             checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
         }
 
-    private fun bluetoothEnabled() =
+    internal fun bluetoothEnabled() =
         try {
             getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
         } catch (_: SecurityException) {
@@ -386,15 +457,20 @@ class ReportSessionService : Service() {
             stopForeground(STOP_FOREGROUND_REMOVE)
             promoted = false
         }
+        ReportRadioOwner.release(this)
     }
 
     override fun onDestroy() {
         if (::coordinator.isInitialized) coordinator.stop()
         handler.removeCallbacks(ticker)
         unregisterReceiver(bluetoothReceiver)
-        val repo = repository
+        leaveForeground()
+        val initialLoad = opening
         scope.cancel()
-        if (repo != null) CoroutineScope(Dispatchers.IO).launch { repo.close() }
+        CoroutineScope(Dispatchers.IO).launch {
+            initialLoad?.join()
+            repository?.close()
+        }
         super.onDestroy()
     }
 
@@ -402,10 +478,36 @@ class ReportSessionService : Service() {
         const val ACTION_START = "org.trailmesh.app.START_REPORT_SESSION"
         const val ACTION_RESUME = "org.trailmesh.app.RESUME_REPORT_SESSION"
         const val ACTION_STOP = "org.trailmesh.app.STOP_REPORT_SESSION"
+        const val OPEN_NEARBY = "org.trailmesh.app.OPEN_FIELD_NEARBY"
+        private const val ACTION_START_FIELD = "org.trailmesh.app.START_FIELD_REPORT_SESSION"
         private const val CHANNEL = "public_report_session"
         val TEST_CONTEXT = RelevanceContext(manualArea = Area(GeoPoint(426977000, 233219000), 5000))
 
         fun requiredPermissions(): List<String> =
             ReportNearbyPermissions.required(Build.VERSION.SDK_INT)
+    }
+}
+
+class FieldReportSessionService : ReportSessionService() {
+    override val fieldSession = true
+}
+
+/** Both modes share one underlying Nearby client per app. */
+private object ReportRadioOwner {
+    private var owner: ReportSessionService? = null
+
+    @Synchronized
+    fun acquire(service: ReportSessionService): Boolean {
+        if (owner != null && owner !== service) return false
+        owner = service
+        return true
+    }
+
+    @Synchronized
+    fun isOwnedBy(service: ReportSessionService) = owner === service
+
+    @Synchronized
+    fun release(service: ReportSessionService) {
+        if (owner === service) owner = null
     }
 }

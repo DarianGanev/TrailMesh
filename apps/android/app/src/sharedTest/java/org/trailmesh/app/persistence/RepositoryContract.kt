@@ -357,6 +357,31 @@ abstract class RepositoryContract {
     }
 
     @Test
+    fun productMapAndOutboundDistinguishLegacyFixturesFromSimilarNotes() = runBlocking {
+        val (_, now) = fixture()
+        val repo = ReportRepository.open(context, name())
+        try {
+            val key = signer()
+            val legacy = draft(now, "SYNTHETIC TrailMesh test abcd1234").copy(
+                category = "trail", status = "muddy", latE7 = 426977000, lonE7 = 233219000,
+                accuracyM = 1, maxHops = 3, expiresAt = now + 3_600_000,
+            )
+            val legacyId = (repo.author(legacy, key, now) as StoreOutcome.Stored).id
+            val realId = (repo.author(legacy.copy(expiresAt = now + 7_200_000), key, now) as StoreOutcome.Stored).id
+            val area = RelevanceContext(manualArea = Area(GeoPoint(426977000, 233219000), 5000))
+            val product = SelectedRepositoryExchangeStore(repo, area, { now }, productOnly = true)
+
+            val map = collectCurrentMapReports({ now }) { cursor -> repo.reportPage(now, after = cursor) }
+            assertEquals(listOf(realId), map.map { it.bundleID })
+            assertEquals(listOf(realId), product.inventoryPage(null, 8, now).reports.map { it.id })
+            assertNull(product.load(legacyId, now))
+            assertNotNull(product.load(realId, now))
+        } finally {
+            repo.close()
+        }
+    }
+
+    @Test
     fun syntheticEvidenceHashesVerifiedOriginalBytesAndRetainsHopZero() = runBlocking {
         val (_,now)=fixture()
         val repo=ReportRepository.open(context,name())

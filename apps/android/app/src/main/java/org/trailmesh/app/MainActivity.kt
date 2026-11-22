@@ -77,6 +77,14 @@ import org.trailmesh.app.maps.latLng
 import org.trailmesh.app.maps.mapPoint
 import org.trailmesh.app.maps.reportAccuracy
 import org.trailmesh.app.maps.remainingFreshMillis
+import org.trailmesh.app.relevance.Area
+import org.trailmesh.app.relevance.GeoPoint
+import org.trailmesh.app.relevance.RelevanceContext
+import org.trailmesh.app.session.FIELD_NEARBY_PERMISSION_REQUEST
+import org.trailmesh.app.session.FieldReportUpdates
+import org.trailmesh.app.session.FieldSessionPanel
+import org.trailmesh.app.session.FieldSessionPlan
+import org.trailmesh.app.session.ReportSessionService
 import org.trailmesh.app.persistence.ReportBounds
 import org.trailmesh.app.persistence.StoredReport
 
@@ -118,10 +126,14 @@ class MainActivity : Activity() {
     private var pickLocation: LinearLayout? = null
     private var progressBar: ProgressBar? = null
     private var progressText: TextView? = null
+    private var nearbyPanel: FieldSessionPanel? = null
+    private var showNearbyOnResume = false
+    private var refreshAfterReceive: Job? = null
 
     @Suppress("DEPRECATION")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        showNearbyOnResume = savedInstanceState == null && intent.action == ReportSessionService.OPEN_NEARBY
         restoredCamera = savedInstanceState?.getParcelable(CAMERA_STATE)
         region = lastNonConfigurationInstance as? RilaRegion
             ?: RilaRegion(File(filesDir, "offline-regions"))
@@ -162,6 +174,7 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 28) {
             header.getChildAt(0).isAccessibilityHeading = true
         }
+        header.addView(button("Nearby") { showNearby() })
         if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             header.addView(button("⋮") { showDiagnostics() }.apply {
                 contentDescription = "Developer tools"
@@ -179,6 +192,20 @@ class MainActivity : Activity() {
         }
 
         scope.launch { region.state.collect(::render) }
+        scope.launch {
+            FieldReportUpdates.committed.collect {
+                if (refreshAfterReceive?.isActive != true) refreshAfterReceive = scope.launch {
+                    delay(350L)
+                    refreshFieldReports()
+                }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.action != ReportSessionService.OPEN_NEARBY) return
+        if (resumed) showNearby() else showNearbyOnResume = true
     }
 
     override fun onRetainNonConfigurationInstance(): Any = region
@@ -216,6 +243,10 @@ class MainActivity : Activity() {
             else if (!locationPermissionPending) fieldRoutes?.locationUnavailable()
         }
         refreshFieldReports()
+        if (showNearbyOnResume) {
+            showNearbyOnResume = false
+            showNearby()
+        }
     }
 
     override fun onPause() {
@@ -244,6 +275,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        nearbyPanel?.close()
+        nearbyPanel = null
         scope.cancel()
         destroyMap()
         if (!isChangingConfigurations) region.close()
@@ -636,6 +669,7 @@ class MainActivity : Activity() {
             button("Route") { fieldRoutes?.open() },
             button("Reports") { fieldReports?.show(reportBounds(state)) },
             button("Locate") { locateOnMap() },
+            button("Nearby") { showNearby() },
         )
         for (action in actions) {
             action.isEnabled = false
@@ -649,6 +683,35 @@ class MainActivity : Activity() {
             bottomMargin = dp(54)
         })
         return listOf(search, options) + actions
+    }
+
+    private fun showNearby() {
+        if (nearbyPanel != null) return
+        nearbyPanel = FieldSessionPanel(this, scope, ::nearbyPlans) {
+            nearbyPanel = null
+            refreshFieldReports()
+        }.also { it.show() }
+    }
+
+    private fun nearbyPlans(): List<FieldSessionPlan> {
+        val installed = region.state.value as? ExploreRegionState.Ready ?: return emptyList()
+        return buildList {
+            val route = region.fieldRouteSession.route
+            if (route != null) {
+                try {
+                    add(FieldSessionPlan(route.relevance(), "Selected route · Within 1 km"))
+                } catch (_: MapFailure) {
+                    // When the route is too detailed, the user can explicitly choose the map area.
+                }
+            }
+            val point = nativeMap?.cameraPosition?.target?.mapPoint()
+            if (point != null && installed.region.manifest.bounds.contains(point)) {
+                add(FieldSessionPlan(
+                    RelevanceContext(manualArea = Area(GeoPoint(point.latE7, point.lonE7), 5_000)),
+                    "Map center · Within 5 km",
+                ))
+            }
+        }
     }
 
     private fun showOfflineMaps(state: ExploreRegionState.Ready) {
@@ -847,6 +910,10 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(request: Int, permissions: Array<out String>, grants: IntArray) {
         super.onRequestPermissionsResult(request, permissions, grants)
+        if (request == FIELD_NEARBY_PERMISSION_REQUEST) {
+            nearbyPanel?.permissionsResult()
+            return
+        }
         if (request != FIELD_LOCATION_REQUEST) return
         locationPermissionPending = false
         if (grants.any { it == PackageManager.PERMISSION_GRANTED }) {

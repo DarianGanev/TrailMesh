@@ -266,7 +266,7 @@ class ReportDiagnosticsActivity : Activity() {
             needed.add(android.Manifest.permission.POST_NOTIFICATIONS)
         if (needed.isNotEmpty()) {
             requestPermissions(
-                needed.toTypedArray(),
+                ReportNearbyPermissions.forRequest(Build.VERSION.SDK_INT, needed).toTypedArray(),
                 if (resume) RESUME_PERMISSION else START_PERMISSION,
             )
             return

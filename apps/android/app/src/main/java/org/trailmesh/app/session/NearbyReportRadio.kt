@@ -12,6 +12,8 @@ class NearbyReportRadio(
     context: Context,
     private val owner: () -> ReportSessionCoordinator,
     private val permissionsRequired: (List<String>) -> Unit = {},
+    private val serviceId: String = ReportAdvertisement.SERVICE,
+    private val ownsRadio: () -> Boolean = { true },
 ) : ReportSessionRadio {
     private val client = Nearby.getConnectionsClient(context.applicationContext)
     private val transfers =
@@ -22,7 +24,7 @@ class NearbyReportRadio(
             client
                 .startAdvertising(
                     advertisement,
-                    ReportAdvertisement.SERVICE,
+                    serviceId,
                     lifecycle(epoch),
                     AdvertisingOptions.Builder()
                         .setStrategy(Strategy.P2P_CLUSTER)
@@ -33,7 +35,7 @@ class NearbyReportRadio(
                 .addOnFailureListener { failure(epoch, it) }
             client
                 .startDiscovery(
-                    ReportAdvertisement.SERVICE,
+                    serviceId,
                     object : EndpointDiscoveryCallback() {
                         override fun onEndpointFound(
                             endpointId: String,
@@ -78,6 +80,7 @@ class NearbyReportRadio(
 
     override fun stop() {
         transfers.clear()
+        if (!ownsRadio()) return
         try {
             client.stopAdvertising()
             client.stopDiscovery()

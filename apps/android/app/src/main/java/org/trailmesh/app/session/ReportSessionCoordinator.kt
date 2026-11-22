@@ -11,6 +11,7 @@ import org.trailmesh.app.relevance.*
 
 object ReportAdvertisement {
     const val SERVICE = "org.trailmesh.reports.v1"
+    const val FIELD_SERVICE = "org.trailmesh.reports.field.v1"
 
     fun parse(value: String): String? =
         value
@@ -91,6 +92,8 @@ class ReportSessionCoordinator(
     private val randomID: () -> String = ReportAdvertisement::randomID,
     private val jitter: () -> Long = { kotlin.random.Random.nextLong(0, 501) },
     private val event: (ReportSessionEvent) -> Unit = {},
+    private val reportCommitted: () -> Unit = {},
+    private val recordSyntheticEvidence: Boolean = true,
 ) {
     private val gate = Any()
     @Volatile
@@ -374,9 +377,10 @@ class ReportSessionCoordinator(
                         clock: () -> Long,
                     ): StoreOutcome {
                         val result = check { delegate.ingest(wire, remainingHops, clock) }
-                        val verified =
-                            org.trailmesh.app.protocol.ReportAdmission.validate(wire, clock())
-                                .verified
+                        if (result is StoreOutcome.Stored) reportCommitted()
+                        val verified = if (recordSyntheticEvidence)
+                            org.trailmesh.app.protocol.ReportAdmission.validate(wire, clock()).verified
+                            else null
                         synchronized(gate) {
                             if (current(link.token) === link) {
                                 if (result is StoreOutcome.Stored) cooldowns[link.peer] = Cooldown()
@@ -584,6 +588,6 @@ class ReportSessionCoordinator(
     }
 
     companion object {
-        const val TEST_NOTE_PREFIX = "SYNTHETIC TrailMesh test "
+        const val TEST_NOTE_PREFIX = DiagnosticReportFixture.NOTE_PREFIX
     }
 }
