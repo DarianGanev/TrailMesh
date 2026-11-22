@@ -9,6 +9,7 @@ import kotlinx.coroutines.*
 import org.junit.Assert.*
 import org.junit.Test
 import org.trailmesh.app.exchange.SelectedRepositoryExchangeStore
+import org.trailmesh.app.maps.collectCurrentMapReports
 import org.trailmesh.app.protocol.*
 import org.trailmesh.app.relevance.*
 import org.trailmesh.app.security.ReportSigner
@@ -206,6 +207,25 @@ abstract class RepositoryContract {
     }
 
     @Test
+    fun reportPageSamplesLiveClockInsideStoreTransaction() = runBlocking {
+        val (wire, now) = fixture()
+        val repo = ReportRepository.open(context, name())
+        try {
+            assertTrue(repo.ingest(wire, now) is StoreOutcome.Stored)
+            var samples = 0
+            val page = repo.reportPage(clock = {
+                assertTrue(repo.database.inTransaction())
+                samples++
+                now
+            }, limit = 1)
+            assertEquals(1, samples)
+            assertEquals(1, page.reports.size)
+        } finally {
+            repo.close()
+        }
+    }
+
+    @Test
     fun reportPagesUseRawCursorBoundAndPreserveObservationIDOrdering() = runBlocking {
         val (_, now) = fixture()
         val repo = ReportRepository.open(context,name())
@@ -286,6 +306,54 @@ abstract class RepositoryContract {
         assertEquals(1,first.inspectedCount)
         assertEquals("inside",repo.reportPage(now,bounds,after=first.nextCursor,limit=1).reports.single().note)
         repo.close()
+    }
+
+    @Test
+    fun fieldMapContinuesPastAnEmptyPageAndPreservesLocalProvenance() = runBlocking {
+        val (_, now) = fixture()
+        val repo = ReportRepository.open(context, name())
+        try {
+            val key = signer()
+            repo.author(draft(now, "outside").copy(latE7 = 10000000), key, now)
+            repo.author(draft(now, "inside").copy(observedAt = now - 1), key, now)
+            val bounds = ReportBounds(south = -100, north = 100, west = -100, east = 100)
+            val reports = collectCurrentMapReports({ now }) { cursor ->
+                repo.reportPage(now, bounds, after = cursor, limit = 1)
+            }
+            val report = reports.single()
+            assertEquals("inside", report.note)
+            assertTrue(report.isLocal)
+            assertTrue(report.isCurrentAt(report.effectiveExpiresAt - 1))
+            assertFalse(report.isCurrentAt(report.effectiveExpiresAt))
+        } finally {
+            repo.close()
+        }
+    }
+
+    @Test
+    fun cachedReceivedReportExpiresAtTheEarlierLocalCap() = runBlocking {
+        val (_, now) = fixture()
+        val source = ReportRepository.open(context, name())
+        val target = ReportRepository.open(context, name())
+        try {
+            val future = now + 30_000
+            val authored = source.author(
+                draft(future).copy(expiresAt = future + 259_200_000),
+                signer(),
+                future,
+            ) as StoreOutcome.Stored
+            val signed = source.forwardable(future).single { it.bundleID == authored.id }.originalWire
+            assertTrue(target.ingest(signed, now) is StoreOutcome.Stored)
+            val row = target.reportPage(now).reports.single()
+            assertFalse(row.isLocal)
+            assertEquals(now + 259_200_000, row.effectiveExpiresAt)
+            assertEquals(future + 259_200_000, row.expiresAt)
+            assertTrue(row.isCurrentAt(row.effectiveExpiresAt - 1))
+            assertFalse(row.isCurrentAt(row.effectiveExpiresAt))
+        } finally {
+            source.close()
+            target.close()
+        }
     }
 
     @Test

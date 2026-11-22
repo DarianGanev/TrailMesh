@@ -96,27 +96,8 @@ class ReportSessionService : Service() {
         handler.post(ticker)
         scope.launch {
             try {
-                repository =
-                    ReportRepository.open(this@ReportSessionService, "product-reports.sqlite")
-                signer =
-                    withContext(Dispatchers.IO) {
-                        val identity = ProtectedSigningIdentityStore(this@ReportSessionService)
-                        ReportIdentityBootstrap.load(
-                            initialized = { preferences.getBoolean("identity_initialized", false) },
-                            markInitialized = {
-                                if (
-                                    !preferences.getBoolean("identity_initialized", false) &&
-                                        !preferences
-                                            .edit()
-                                            .putBoolean("identity_initialized", true)
-                                            .commit()
-                                )
-                                    throw IdentityException(IdentityFailure.STORAGE_FAILURE)
-                            },
-                            loadExisting = identity::loadExisting,
-                            createNew = identity::createNew,
-                        )
-                    }
+                repository = ProductReportAccess.open(this@ReportSessionService)
+                signer = ProductReportAccess.signer(this@ReportSessionService)
                 val radio =
                     NearbyReportRadio(
                         this@ReportSessionService,

@@ -2,6 +2,7 @@ package org.trailmesh.app.maps
 
 import android.content.Intent
 import android.view.View
+import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -23,7 +24,9 @@ class ExploreLaunchTest {
                 val decor = activity.window.decorView
                 decor.findViewsWithText(titles, "Explore", View.FIND_VIEWS_WITH_TEXT)
                 if (titles.none { it.isShown }) {
+                    titles.clear()
                     decor.findViewsWithText(titles, "Rila", View.FIND_VIEWS_WITH_TEXT)
+                    titles.removeAll { (it as? TextView)?.text?.toString() != "Rila" }
                 }
                 assertEquals(1, titles.count { it.isShown })
             }

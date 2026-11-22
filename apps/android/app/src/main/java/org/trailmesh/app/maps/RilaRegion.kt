@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 
 internal sealed interface ExploreRegionState {
     data object Checking : ExploreRegionState
@@ -23,6 +25,7 @@ internal sealed interface ExploreRegionState {
 
 /** Survives configuration changes. The activity destroys its renderer before releasing this owner. */
 internal class RilaRegion(private val root: File) {
+    val fieldRouteSession = FieldRouteSession()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutableState = MutableStateFlow<ExploreRegionState>(ExploreRegionState.Checking)
     val state: StateFlow<ExploreRegionState> = mutableState
@@ -88,7 +91,7 @@ internal class RilaRegion(private val root: File) {
                     }
                     val acquired = store.acquire(ID, REVISION, MANIFEST_HASH)
                     opened = acquired
-                    ExploreRegionState.Ready(acquired.region, acquired.region.style())
+                    ExploreRegionState.Ready(acquired.region, exploreStyle(acquired.region.style()))
                 }
                 lease = opened
                 opened = null
@@ -106,6 +109,34 @@ internal class RilaRegion(private val root: File) {
                 opened?.close()
                 install = null
             }
+        }
+    }
+
+    /** Caller destroys the map renderer before removal. The route worker closes its lease first. */
+    fun removeMap(routeClosed: java.util.concurrent.Future<*>?, complete: (Boolean) -> Unit) {
+        if (state.value !is ExploreRegionState.Ready) return
+        mutableState.value = ExploreRegionState.Checking
+        scope.launch {
+            val removed = withContext(Dispatchers.IO) {
+                try {
+                    routeClosed?.get()
+                    lease?.close()
+                    RegionStore(root).remove(ID, REVISION)
+                    true
+                } catch (_: Exception) {
+                    false
+                }
+            }
+            if (removed) {
+                fieldRouteSession.clear()
+                lease = null
+                mutableState.value = ExploreRegionState.Available
+            } else {
+                lease?.close()
+                lease = null
+                prepare(null, false)
+            }
+            complete(removed)
         }
     }
 
@@ -139,4 +170,32 @@ internal class RilaRegion(private val root: File) {
         const val RELEASE_URL =
             "https://github.com/DarianGanev/TrailMesh/releases/download/maps-rila-$REVISION/"
     }
+}
+
+// Restyle a resolved, verified pack for display without modifying its files or sources.
+private fun exploreStyle(resolved: String): String {
+    val style = JSONObject(resolved)
+    val layers = style.getJSONArray("layers")
+    for (index in 0 until layers.length()) {
+        val layer = layers.getJSONObject(index)
+        when (layer.getString("id")) {
+            "mountain-relief" -> layer.getJSONObject("paint").apply {
+                put("hillshade-shadow-color", "#586664")
+                put("hillshade-exaggeration", 0.49)
+            }
+            "footpaths" -> layer.getJSONObject("paint").put("line-color", "#4b5350")
+            "streams" -> layer.getJSONObject("paint").put("line-color", "#357f9e")
+            "huts", "peaks" -> {
+                val layout = layer.getJSONObject("layout")
+                val label = layout.optJSONArray("text-field")?.optJSONArray(2)
+                if (label != null) layout.put("text-field", label)
+                layout.put("icon-image", if (layer.getString("id") == "huts") "trailmesh-hut" else "trailmesh-peak")
+                layout.put("text-anchor", "left")
+                layout.put("text-offset", JSONArray().put(0.8).put(0))
+                layout.put("text-optional", true)
+                layer.getJSONObject("paint").put("text-color", "#252c26")
+            }
+        }
+    }
+    return style.toString()
 }

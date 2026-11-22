@@ -59,6 +59,8 @@ class StoredReport(
     val observedAt: Long,
     val admittedAt: Long,
     val expiresAt: Long,
+    val effectiveExpiresAt: Long,
+    val isLocal: Boolean,
     val latE7: Long,
     val lonE7: Long,
     val accuracyM: Long,
@@ -68,6 +70,9 @@ class StoredReport(
     eventID: ByteArray,
     authorKey: ByteArray,
 ) {
+    /** A cached report can age out without another database query. */
+    fun isCurrentAt(now: Long) = !isExpired && !isQuarantined && now < effectiveExpiresAt
+
     private val event = eventID.copyOf()
     private val author = authorKey.copyOf()
     val eventID
@@ -456,14 +461,23 @@ private constructor(
         includeExpired: Boolean = false,
         after: ReportPageCursor? = null,
         limit: Int = 64,
+    ): ReportPage = reportPage({ now }, bounds, includeExpired, after, limit)
+
+    /** Read the wall clock only after taking the transaction so a concurrent writer cannot age it. */
+    suspend fun reportPage(
+        clock: () -> Long,
+        bounds: ReportBounds = ReportBounds(),
+        includeExpired: Boolean = false,
+        after: ReportPageCursor? = null,
+        limit: Int = 64,
     ): ReportPage {
-        validClock(now)
         require(limit in 1..64)
         require(after == null || (after.observedAt in 0..ReportJSON.SAFE_INTEGER && after.id.matches(Regex("[0-9a-f]{64}"))))
         if (bounds.south !in -900000000L..900000000L || bounds.north !in -900000000L..900000000L || bounds.south > bounds.north || bounds.west !in -1800000000L..1800000000L || bounds.east !in -1800000000L..1800000000L)
             throw ReportStoreException(StoreFailure.INVALID_BOUNDS)
         return transaction { db ->
-            observe(db,now)
+            val now = clock()
+            observe(db, now)
             // Two range seeks avoid rescanning the preceding index prefix for a late cursor.
             // Bounds and expiry filter only after the bounded signed-row verification budget.
             val candidates = mutableListOf<ReportPageCursor>()
@@ -795,6 +809,8 @@ private constructor(
                 if (c.isNull(c.getColumnIndexOrThrow("supersedes"))) null else text("supersedes")
             require(supersedes == p.supersedes)
             val q = number("quarantined") == 1L
+            val isLocal = number("is_local")
+            require(isLocal in 0L..1L)
             return Checked(
                 v,
                 StoredReport(
@@ -805,11 +821,13 @@ private constructor(
                     p.observedAt,
                     admitted,
                     expiry,
+                    local,
+                    isLocal == 1L,
                     p.latE7,
                     p.lonE7,
                     p.accuracyM,
                     p.supersedes,
-                    q || now >= minOf(expiry, local),
+                    q || now >= local,
                     q,
                     p.eventID,
                     v.authorKey,

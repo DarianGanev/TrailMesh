@@ -148,6 +148,44 @@ class RegionMapsTest {
     }
 
     @Test
+    fun `route directions keep verified shape positions`() {
+        val raw = """{"trip":{"status":0,"units":"kilometers","summary":{"length":0.1,"time":10},"legs":[{"shape":"??AA","maneuvers":[{"begin_shape_index":0,"end_shape_index":1,"instruction":"Continue on the trail"},{"begin_shape_index":1,"end_shape_index":1,"instruction":"Arrive"}]}]}}"""
+        val route = RouteParser.parse(raw, MapPoint(0, 0), MapPoint(10, 10))
+        assertEquals(listOf(HikingManeuver(0, 1, "Continue on the trail"), HikingManeuver(1, 1, "Arrive")), route.maneuvers)
+        rejects { RouteParser.parse(raw.replace(""" "end_shape_index":1""".trim(), """ "end_shape_index":2""".trim()), MapPoint(0, 0), MapPoint(10, 10)) }
+    }
+
+    @Test
+    fun `route does not announce terminal maneuvers before location confirms proximity`() {
+        val raw = """{"trip":{"status":0,"units":"kilometers","summary":{"length":0.1,"time":10},"legs":[{"shape":"??AA","maneuvers":[{"begin_shape_index":0,"end_shape_index":1,"instruction":"Arrive at your destination","type":4}]}]}}"""
+        val route = RouteParser.parse(raw, MapPoint(0, 0), MapPoint(10, 10))
+        assertTrue(route.maneuvers.single().arrival)
+        assertEquals(null, route.instructionsAt(0.5))
+    }
+
+    @Test
+    fun `cached GPS fixes expire from measurement time`() {
+        val measured = 10_000_000_000L
+        assertEquals(30_000L, remainingLocationFixMillis(measured, measured))
+        assertEquals(1_000L, remainingLocationFixMillis(measured, measured + 29_000_000_000L))
+        assertEquals(1L, remainingLocationFixMillis(measured, measured + 29_999_999_999L))
+        assertEquals(0L, remainingLocationFixMillis(measured, measured + 30_000_000_000L))
+        assertEquals(0L, remainingLocationFixMillis(measured, measured - 1))
+    }
+
+    @Test
+    fun `guidance matches the route segment and reports off route distance`() {
+        val route = HikingRoute(listOf(MapPoint(0, 0), MapPoint(0, 10000), MapPoint(10000, 10000)), 0.2, 180.0)
+        val mid = route.matchPosition(MapPoint(0, 5000))
+        assertEquals(0.5, mid.shapePosition, 0.001)
+        assertEquals(0.0, mid.distanceM, 0.001)
+        val next = route.matchPosition(MapPoint(5000, 10000))
+        assertEquals(1.5, next.shapePosition, 0.001)
+        val offRoute = route.matchPosition(MapPoint(-10000, 5000))
+        assertEquals(111.195, offRoute.distanceM, 0.01)
+    }
+
+    @Test
     fun `verified publication restart revalidation and lease removal`() {
         val root = Files.createTempDirectory("map-test").toFile()
         try {

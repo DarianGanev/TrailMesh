@@ -11,7 +11,18 @@ import org.trailmesh.app.relevance.GeoPoint
 import org.trailmesh.app.relevance.RelevanceContext
 import org.trailmesh.app.relevance.Route
 
-data class HikingRoute(val points: List<MapPoint>, val distanceKm: Double, val seconds: Double) {
+data class HikingManeuver(
+    val beginIndex: Int,
+    val endIndex: Int,
+    val instruction: String,
+    val arrival: Boolean = false,
+)
+data class HikingRoute(
+    val points: List<MapPoint>,
+    val distanceKm: Double,
+    val seconds: Double,
+    val maneuvers: List<HikingManeuver> = emptyList(),
+) {
     fun relevance(): RelevanceContext {
         need(points.size in 2..2048, MapError.RELEVANCE_TOO_COMPLEX)
         return RelevanceContext(route = Route(points.map { GeoPoint(it.latE7, it.lonE7) }))
@@ -68,12 +79,26 @@ object RouteParser {
             need(km >= 0 && seconds >= 0, MapError.INVALID_ENGINE)
             val legs = trip["legs"].arr()
             need(legs.size == 1, MapError.INVALID_ENGINE)
-            val points = decodePolyline(legs.single().obj()["shape"].str())
+            val leg = legs.single().obj()
+            val points = decodePolyline(leg["shape"].str())
+            val maneuvers = leg["maneuvers"]?.arr()?.map { item ->
+                val parts = item.obj()
+                val from = parts["begin_shape_index"].integer()
+                val to = parts["end_shape_index"].integer()
+                val instruction = parts["instruction"].str().trim()
+                need(from in 0L..points.lastIndex.toLong() && to in from..points.lastIndex.toLong(),
+                    MapError.INVALID_ENGINE)
+                need(instruction.length in 1..500, MapError.INVALID_ENGINE)
+                val arrival = (parts["type"]?.integer() ?: -1L) in 4L..6L
+                HikingManeuver(from.toInt(), to.toInt(), instruction, arrival)
+            }.orEmpty()
+            need(maneuvers.zipWithNext().all { (previous, next) -> previous.endIndex <= next.beginIndex },
+                MapError.INVALID_ENGINE)
             need(
                 distance(a, points.first()) <= 100 && distance(b, points.last()) <= 100,
                 MapError.INVALID_ENGINE,
             )
-            HikingRoute(points, km, seconds)
+            HikingRoute(points, km, seconds, maneuvers)
         } catch (e: MapFailure) {
             if (e.reason == MapError.CORRUPT) throw MapFailure(MapError.INVALID_ENGINE) else throw e
         } catch (_: Exception) {
