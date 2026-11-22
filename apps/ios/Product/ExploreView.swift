@@ -1,15 +1,53 @@
+import CoreLocation
 import MapLibre
 import SwiftUI
+import TrailMeshMaps
+import TrailMeshReports
 
 struct ExploreView: View {
+    private enum ReportDestination: Identifiable {
+        case list, compose, details(StoredReport)
+        var id: String {
+            switch self {
+            case .list: "reports"
+            case .compose: "compose"
+            case .details(let report): report.bundleID
+            }
+        }
+    }
+
     @State private var model = ExploreModel()
+    @State private var route = ExploreRoute()
+    @State private var location = ExploreLocation()
+    @State private var showingRoutes = false
+    @State private var followsHikePosition = true
+    @State private var locating = false
+    @State private var locationNotice: String?
+    @State private var reports = ExploreReports()
+    @State private var reportDraft = ExploreReportDraft()
+    @State private var reportDestination: ReportDestination?
+    @State private var pickingReportLocation = false
+    @State private var pickCenterRequest: UUID?
+    @State private var reportNotice: String?
+    private struct MarkerRefresh: Equatable {
+        let styleURL: URL
+        let revision: UUID
+        let foreground: Bool
+    }
+
+    @State private var markerRevision = UUID()
+    @State private var reportClock = Date.now
+    @State private var showingOfflineMaps = false
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
     @State private var showingCredits = false
+    @State private var creditedStyleURL: URL?
+    @State private var showingSearch = false
+    @State private var selectedPlace: Place?
     @State private var confirmingReplacement = false
     @State private var cameraRequest: ExploreCameraRequest?
     @State private var loadedStyleURL: URL?
     #if TRAILMESH_DEVELOPMENT
-    @Environment(\.scenePhase) private var phase
     @StateObject private var diagnostics = ReportDevelopmentModel()
     @State private var showingDiagnostics = false
     #endif
@@ -58,6 +96,22 @@ struct ExploreView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(showsMap ? .hidden : .visible, for: .navigationBar)
             .task { await model.reopen() }
+            .onChange(of: scenePhase) { _, phase in
+                location.setForeground(phase != .background)
+                if phase == .active {
+                    markerRevision = UUID()
+                    reportClock = .now
+                    if case .list? = reportDestination, case .ready(let resources) = model.state {
+                        Task { await reports.page(in: resources.region.manifest) }
+                    }
+                }
+            }
+            .onChange(of: showsMap) { _, ready in
+                if !ready {
+                    clearRoute()
+                    pickingReportLocation = false
+                }
+            }
             .confirmationDialog("Replace the saved Rila map?", isPresented: $confirmingReplacement, titleVisibility: .visible) {
                 Button("Replace and download", role: .destructive) { model.download(replacing: true) }
             } message: {
@@ -74,7 +128,7 @@ struct ExploreView: View {
             .sheet(isPresented: $showingDiagnostics, onDismiss: refreshAfterDiagnostics) {
                 ReportDevelopmentView(model: diagnostics)
             }
-            .onChange(of: phase, initial: true) { _, value in diagnostics.setForeground(value == .active) }
+            .onChange(of: scenePhase, initial: true) { _, value in diagnostics.setForeground(value == .active) }
             #endif
         }
     }
@@ -86,7 +140,10 @@ struct ExploreView: View {
 
     #if TRAILMESH_DEVELOPMENT
     private func refreshAfterDiagnostics() {
-        if case .ready = model.state { return }
+        if case .ready = model.state {
+            markerRevision = UUID()
+            return
+        }
         Task { await model.reopen() }
     }
     #endif
@@ -100,77 +157,299 @@ struct ExploreView: View {
         return ZStack {
             InteractiveRilaMap(
                 resources: resources, cameraRequest: cameraRequest,
+                route: route.result, routeID: route.geometryID,
+                currentPosition: location.recentFix.flatMap { MapPoint(coordinate: $0.coordinate) },
+                reports: reports.mapReports(in: resources.region.manifest, at: reportClock),
+                pickingReportLocation: pickingReportLocation,
+                pickCenterRequest: pickCenterRequest,
+                onReport: { reportDestination = .details($0) },
+                onPickReportLocation: { point in
+                    guard resources.region.manifest.contains(point) else {
+                        reportNotice = "Pick a point within the downloaded map."
+                        return
+                    }
+                    reportDraft.position = .init(point: point, accuracy: 100, isGPS: false)
+                    reportNotice = nil
+                    pickingReportLocation = false
+                    pickCenterRequest = nil
+                    reportDestination = .compose
+                },
                 onLoaded: { loadedStyleURL = resources.styleURL },
                 onFailure: { model.mapDidFail(resources) }
             )
             .id(resources.styleURL)
             .ignoresSafeArea()
         }
-        .overlay(alignment: .top) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Rila").font(.headline)
-                        .accessibilityAddTraits(.isHeader)
-                    Text(mapLoaded ? "Saved offline" : "Opening map…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(surface, in: RoundedRectangle(cornerRadius: 12))
-
-                Spacer(minLength: 0)
-                #if TRAILMESH_DEVELOPMENT
-                Menu {
-                    Button("Research diagnostics") { showingDiagnostics = true }
-                } label: {
-                    Label("Developer tools", systemImage: "ellipsis")
-                        .labelStyle(.iconOnly)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .foregroundStyle(.primary)
-                .background(surface, in: RoundedRectangle(cornerRadius: 12))
-                #endif
+        .overlay(alignment: .topTrailing) {
+            #if TRAILMESH_DEVELOPMENT
+            Menu {
+                Button("Research diagnostics") { showingDiagnostics = true }
+            } label: {
+                Label("Developer tools", systemImage: "ellipsis")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 44, height: 44)
+                    .exploreGlass(in: Circle())
             }
+            .foregroundStyle(.primary)
             .padding(12)
+            #endif
         }
         .overlay(alignment: .bottom) {
-            HStack(alignment: .bottom, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                if !mapLoaded {
+                    ProgressView("Opening map…")
+                        .padding(12)
+                        .background(.regularMaterial, in: Capsule())
+                }
+                if pickingReportLocation {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Tap the map at the observation").font(.headline)
+                        if let reportNotice { Text(reportNotice).font(.subheadline) }
+                        Button("Use map center") { pickCenterRequest = UUID() }
+                            .frame(minHeight: 44)
+                        Button("Back to report") {
+                            pickingReportLocation = false
+                            pickCenterRequest = nil
+                            reportNotice = nil
+                            reportDestination = .compose
+                        }
+                        .frame(minHeight: 44)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 16))
+                } else if route.result != nil {
+                    routeCard
+                } else if let selectedPlace {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(selectedPlace.name)
+                                .font(.title3.bold())
+                            Text(ExplorePlaceSearch.kindName(selectedPlace.kind))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                        Button {
+                            showingRoutes = true
+                        } label: {
+                            Label("Plan a route here", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                                .labelStyle(.iconOnly)
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.borderless)
+                        Button {
+                            self.selectedPlace = nil
+                        } label: {
+                            Label("Dismiss place", systemImage: "xmark")
+                                .labelStyle(.iconOnly)
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .padding(.leading, 16)
+                    .padding(.trailing, 8)
+                    .padding(.vertical, 8)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 22))
+                    .accessibilityElement(children: .contain)
+                }
+                if let locationNotice, !pickingReportLocation {
+                    HStack {
+                        Text(locationNotice).font(.subheadline)
+                        Spacer(minLength: 0)
+                        Button {
+                            self.locationNotice = nil
+                        } label: {
+                            Image(systemName: "xmark").frame(width: 44, height: 44)
+                        }
+                        .accessibilityLabel("Dismiss location message")
+                    }
+                    .padding(.leading, 12)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 16))
+                }
+                if let reportNotice, !pickingReportLocation {
+                    Text(reportNotice)
+                        .font(.subheadline)
+                        .padding(12)
+                        .background(.background, in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityAddTraits(.updatesFrequently)
+                        .onTapGesture { self.reportNotice = nil }
+                }
+                HStack(spacing: 8) {
+                    Button {
+                        showingSearch = true
+                    } label: {
+                        Label("Search Rila", systemImage: "magnifyingglass")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .exploreGlass(in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!mapLoaded)
+
+                    Menu {
+                        Button("My location", systemImage: "location") {
+                            locationNotice = nil
+                            if let fix = location.recentFix, let point = MapPoint(coordinate: fix.coordinate) {
+                                cameraRequest = ExploreCameraRequest(command: .location(point))
+                            } else {
+                                locating = true
+                                location.requestFix(for: .map)
+                                if let issue = location.issue { showLocationIssue(issue) }
+                            }
+                        }
+                        Button("Offline maps", systemImage: "arrow.down.circle") { showingOfflineMaps = true }
+                        Button("New report", systemImage: "plus") {
+                            reportNotice = nil
+                            reportDraft = ExploreReportDraft()
+                            reportDestination = .compose
+                        }
+                        Button("Rila overview", systemImage: "viewfinder") {
+                            selectedPlace = nil
+                            cameraRequest = ExploreCameraRequest(command: .overview)
+                        }
+                        Button("Zoom in", systemImage: "plus.magnifyingglass") {
+                            cameraRequest = ExploreCameraRequest(command: .zoom(1))
+                        }
+                        Button("Zoom out", systemImage: "minus.magnifyingglass") {
+                            cameraRequest = ExploreCameraRequest(command: .zoom(-1))
+                        }
+                    } label: {
+                        Label("Map controls", systemImage: "slider.horizontal.3")
+                            .labelStyle(.iconOnly)
+                            .frame(width: 48, height: 48)
+                            .exploreGlass(in: Circle())
+                    }
+                    .foregroundStyle(.primary)
+                    .disabled(!mapLoaded)
+                }
+                .disabled(pickingReportLocation)
+                if !pickingReportLocation {
+                    ViewThatFits {
+                        HStack(spacing: 12) { fieldActions(resources) }
+                        VStack(alignment: .leading, spacing: 4) { fieldActions(resources) }
+                    }
+                    .disabled(!mapLoaded)
+                }
                 Button {
                     showingCredits = true
                 } label: {
-                    Text("© OpenStreetMap")
-                        .font(.caption2)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(surface, in: RoundedRectangle(cornerRadius: 6))
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
+                    Group {
+                        if creditedStyleURL == resources.styleURL {
+                            Image(systemName: "info.circle")
+                                .font(.body)
+                        } else {
+                            Text("© OpenStreetMap")
+                                .font(.caption)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.regularMaterial, in: Capsule())
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(creditedStyleURL == resources.styleURL ? "Map credits" : "© OpenStreetMap")
                 .accessibilityHint("Opens map credits")
-                Spacer(minLength: 0)
-                VStack(spacing: 0) {
-                    mapButton("Show Rila overview", icon: "viewfinder", command: .overview)
-                    Divider()
-                    mapButton("Zoom in", icon: "plus", command: .zoom(1))
-                    Divider()
-                    mapButton("Zoom out", icon: "minus", command: .zoom(-1))
-                }
-                .frame(width: 44)
-                .background(surface, in: RoundedRectangle(cornerRadius: 12))
-                .disabled(!mapLoaded)
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 16)
+        }
+        .task(id: mapLoaded) {
+            guard mapLoaded, creditedStyleURL != resources.styleURL else { return }
+            do {
+                try await Task.sleep(for: .seconds(5))
+                creditedStyleURL = resources.styleURL
+            } catch {}
+        }
+        .task(id: MarkerRefresh(styleURL: resources.styleURL, revision: markerRevision,
+                                foreground: scenePhase != .background)) {
+            guard scenePhase != .background else { return }
+            await reports.refreshMapReports(in: resources.region.manifest)
+        }
+        .task(id: resources.styleURL) {
+            while !Task.isCancelled {
+                guard (try? await Task.sleep(for: .seconds(15))) != nil else { return }
+                let now = Date.now
+                if reports.discardExpiredMarkers(at: now) { markerRevision = UUID() }
+                reportClock = now
+            }
+        }
+        .sheet(isPresented: $showingOfflineMaps) { offlineMaps(resources.region.manifest) }
+        .onChange(of: location.fix) { _, fix in
+            route.updateGuidance(using: location.recentFix)
+            guard !pickingReportLocation, locating || (route.navigating && followsHikePosition),
+                  let fix, location.recentFix != nil,
+                  let point = MapPoint(coordinate: fix.coordinate) else { return }
+            cameraRequest = ExploreCameraRequest(command: .location(point))
+            locating = false
+        }
+        .onChange(of: location.issue) { _, issue in
+            guard locating, let issue else { return }
+            showLocationIssue(issue)
+        }
+        .sheet(item: $reportDestination) { destination in
+            switch destination {
+            case .list:
+                ExploreReportsList(entries: reports, manifest: resources.region.manifest) {
+                    reportDraft = ExploreReportDraft()
+                    reportDestination = .compose
+                } onMap: { report in
+                    reportDestination = nil
+                    cameraRequest = ExploreCameraRequest(command: .location(MapPoint(latE7: report.latitude, lonE7: report.longitude)))
+                } refreshMarkers: {
+                    markerRevision = UUID()
+                }
+            case .compose:
+                ExploreReportComposer(form: reportDraft, reports: reports, location: location, manifest: resources.region.manifest) {
+                    reportDestination = nil
+                    pickingReportLocation = true
+                } saved: { point in
+                    reportDestination = nil
+                    reportNotice = "Report saved on this phone."
+                    cameraRequest = ExploreCameraRequest(command: .location(point))
+                    markerRevision = UUID()
+                } refreshMarkers: {
+                    markerRevision = UUID()
+                }
+            case .details(let report):
+                NavigationStack {
+                    ExploreReportDetails(report: report)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Close") { reportDestination = nil }
+                            }
+                        }
+                }
+            }
+        }
+        .sheet(isPresented: $showingRoutes) {
+            ExploreRoutePlanner(index: resources.places, initialDestination: selectedPlace, region: resources.region,
+                                route: route, location: location) {
+                if let result = route.result {
+                    cameraRequest = ExploreCameraRequest(command: .route(result.points))
+                }
+            }
+        }
+        .sheet(isPresented: $showingSearch) {
+            ExplorePlaceSearch(index: resources.places) { place in
+                selectedPlace = place
+                cameraRequest = ExploreCameraRequest(command: .place(place))
+                showingSearch = false
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showingCredits) {
             NavigationStack {
                 ScrollView {
-                    Text(resources.region.manifest.attribution)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(24)
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(resources.region.manifest.attribution)
+                        Link("OpenStreetMap licence", destination: URL(string: "https://www.openstreetmap.org/copyright")!)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(24)
                 }
                 .navigationTitle("Map credits")
                 .toolbar {
@@ -182,17 +461,108 @@ struct ExploreView: View {
         }
     }
 
-    private func mapButton(_ title: String, icon: String, command: ExploreCameraCommand) -> some View {
+    private func showLocationIssue(_ issue: ExploreLocation.Issue) {
+        locationNotice = issue == .denied ? "Location access is off. You can still search the map." : "Couldn’t get your location."
+        locating = false
+    }
+
+    private func offlineMaps(_ manifest: RegionManifest) -> some View {
+        NavigationStack {
+            List {
+                Section("Downloaded") {
+                    LabeledContent(manifest.name,
+                                   value: ByteCountFormatter.string(fromByteCount: manifest.files.reduce(0) { $0 + $1.bytes }, countStyle: .file))
+                    Text("Includes hiking trails, place search, and routes.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Offline maps")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { showingOfflineMaps = false } }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func fieldActions(_ resources: ExploreMapResources) -> some View {
         Button {
-            cameraRequest = ExploreCameraRequest(command: command)
+            showingRoutes = true
         } label: {
-            Label(title, systemImage: icon)
-                .labelStyle(.iconOnly)
-                .font(.system(size: 17, weight: .medium))
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
+            Label("Route", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minHeight: 44)
+                .padding(.horizontal, 12)
+                .exploreGlass(in: Capsule())
         }
         .buttonStyle(.plain)
+        .disabled(route.navigating)
+        Button {
+            reportNotice = nil
+            reportDestination = .list
+            Task { await reports.page(in: resources.region.manifest) }
+        } label: {
+            Label("Reports", systemImage: "text.bubble")
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minHeight: 44)
+                .padding(.horizontal, 12)
+                .exploreGlass(in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var routeCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(route.destination).font(.headline)
+            if route.navigating {
+                Text(location.issue == .denied
+                    ? "Location access is off. The route is still visible on the map."
+                    : location.recentFix == nil ? "Waiting for your location"
+                    : route.turnInstruction ?? "Follow the trail shown on the map")
+                    .font(.subheadline)
+                ViewThatFits {
+                    HStack(spacing: 12) { hikeActions }
+                    VStack(alignment: .leading) { hikeActions }
+                }
+            } else {
+                HStack {
+                    Button("Start hike") {
+                        route.start(using: location.recentFix)
+                        followsHikePosition = true
+                        location.follow(true)
+                        centerOnHikePosition()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("Clear route", action: clearRoute)
+                }
+                .frame(minHeight: 44)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.background, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    @ViewBuilder
+    private var hikeActions: some View {
+        Button(followsHikePosition ? "Pause centering" : "Follow location") {
+            followsHikePosition.toggle()
+            centerOnHikePosition()
+        }
+        .frame(minHeight: 44)
+        Button("End hike", role: .destructive, action: clearRoute)
+            .frame(minHeight: 44)
+    }
+
+    private func centerOnHikePosition() {
+        guard followsHikePosition, let fix = location.recentFix,
+              let point = MapPoint(coordinate: fix.coordinate) else { return }
+        cameraRequest = ExploreCameraRequest(command: .location(point))
+    }
+
+    private func clearRoute() {
+        route.clear()
+        location.follow(false)
     }
 
     private func messagePage(title: String, detail: String, action: String, perform: @escaping () -> Void) -> some View {
@@ -210,7 +580,7 @@ struct ExploreView: View {
                         .frame(minHeight: 36)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(Color(red: 0.14, green: 0.27, blue: 0.18))
+                .tint(Color(red: 0.12, green: 0.32, blue: 0.65))
             }
             .frame(maxWidth: 420, alignment: .leading)
             .frame(maxWidth: .infinity)
@@ -220,8 +590,103 @@ struct ExploreView: View {
     }
 }
 
+private extension View {
+    @ViewBuilder
+    func exploreGlass<S: Shape>(in shape: S) -> some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            glassEffect(.regular.interactive(), in: shape)
+        } else {
+            background(.regularMaterial, in: shape)
+        }
+        #else
+        background(.regularMaterial, in: shape)
+        #endif
+    }
+}
+
+struct ExplorePlaceSearch: View {
+    let index: PlaceIndex
+    let select: (Place) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+    @State private var results: [Place] = []
+    @State private var resultsQuery: String?
+    private var searchTerm: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if !searchTerm.isEmpty, resultsQuery != searchTerm {
+                    ProgressView("Searching…")
+                } else if searchTerm.isEmpty || results.isEmpty {
+                    ContentUnavailableView(
+                        searchTerm.isEmpty ? "Find a place in Rila" : "No matching places",
+                        systemImage: "magnifyingglass",
+                        description: Text(searchTerm.isEmpty ? "Try a hut, summit, or trailhead." : "Try another name.")
+                    )
+                } else {
+                    List(results, id: \.id) { place in
+                        Button {
+                            if resultsQuery == searchTerm { select(place) }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(place.name)
+                                Text(Self.kindName(place.kind))
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .foregroundStyle(.primary)
+                    }
+                }
+            }
+            .navigationTitle("Find a place")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search Rila")
+            .task(id: searchTerm) {
+                let term = searchTerm
+                guard !term.isEmpty else {
+                    results = []
+                    resultsQuery = nil
+                    return
+                }
+                do {
+                    try await Task.sleep(for: .milliseconds(120))
+                    let matches = await Task.detached { [index] in index.search(term) }.value
+                    try Task.checkCancellation()
+                    results = matches
+                    resultsQuery = term
+                } catch {}
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+    }
+
+    static func kindName(_ kind: String) -> String {
+        switch kind {
+        case "hut": "Hut"
+        case "peak": "Summit"
+        case "shelter": "Shelter"
+        case "water": "Water"
+        case "trailhead": "Trailhead"
+        default: "Place"
+        }
+    }
+}
+
 private enum ExploreCameraCommand {
     case overview
+    case place(Place)
+    case location(MapPoint)
+    case route([MapPoint])
     case zoom(Double)
 }
 
@@ -233,11 +698,19 @@ private struct ExploreCameraRequest {
 private struct InteractiveRilaMap: UIViewRepresentable {
     let resources: ExploreMapResources
     let cameraRequest: ExploreCameraRequest?
+    let route: HikingRoute?
+    let routeID: UUID?
+    let currentPosition: MapPoint?
+    let reports: [StoredReport]
+    let pickingReportLocation: Bool
+    let pickCenterRequest: UUID?
+    let onReport: (StoredReport) -> Void
+    let onPickReportLocation: (MapPoint) -> Void
     let onLoaded: () -> Void
     let onFailure: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(resources: resources, cameraRequestID: cameraRequest?.id, onLoaded: onLoaded, onFailure: onFailure)
+        Coordinator(resources: resources, onLoaded: onLoaded, onFailure: onFailure)
     }
 
     func makeUIView(context: Context) -> MLNMapView {
@@ -250,16 +723,56 @@ private struct InteractiveRilaMap: UIViewRepresentable {
         map.isRotateEnabled = false
         map.showsLogoView = false
         let trailArea = CLLocationCoordinate2D(latitude: 42.181, longitude: 23.369)
-        map.setCenter(trailArea, zoomLevel: 11.6, animated: false)
+        map.setCenter(trailArea, zoomLevel: 12.3, animated: false)
         map.showsAttributionButton = false
+        let picker = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.pickReportLocation(_:)))
+        picker.isEnabled = false
+        for gesture in map.gestureRecognizers ?? [] {
+            if let tap = gesture as? UITapGestureRecognizer, tap.numberOfTapsRequired > 1 { picker.require(toFail: tap) }
+        }
+        map.addGestureRecognizer(picker)
+        context.coordinator.locationPicker = picker
         return map
     }
 
     func updateUIView(_ map: MLNMapView, context: Context) {
+        context.coordinator.updateRoute(route, id: routeID, on: map)
+        context.coordinator.updatePosition(currentPosition, on: map)
+        context.coordinator.updateReports(reports, on: map)
+        context.coordinator.onReport = onReport
+        context.coordinator.onPickReportLocation = onPickReportLocation
+        context.coordinator.locationPicker?.isEnabled = pickingReportLocation
+        if pickingReportLocation, let request = pickCenterRequest,
+           context.coordinator.centerRequestID != request {
+            context.coordinator.centerRequestID = request
+            if let point = MapPoint(coordinate: map.centerCoordinate) {
+                DispatchQueue.main.async { onPickReportLocation(point) }
+            }
+        }
         guard let cameraRequest, context.coordinator.cameraRequestID != cameraRequest.id else { return }
         context.coordinator.cameraRequestID = cameraRequest.id
         switch cameraRequest.command {
         case .overview: showOverview(on: map)
+        case .place(let place):
+            map.setCenter(
+                CLLocationCoordinate2D(latitude: Double(place.latE7) / 1e7, longitude: Double(place.lonE7) / 1e7),
+                zoomLevel: max(map.zoomLevel, 13.5),
+                animated: !UIAccessibility.isReduceMotionEnabled
+            )
+        case .location(let point):
+            map.setCenter(point.coordinate, zoomLevel: max(map.zoomLevel, 14),
+                          animated: !UIAccessibility.isReduceMotionEnabled)
+        case .route(let points):
+            if let south = points.map(\.latE7).min(), let north = points.map(\.latE7).max(),
+               let west = points.map(\.lonE7).min(), let east = points.map(\.lonE7).max(),
+               south != north || west != east {
+                map.setVisibleCoordinateBounds(
+                    MLNCoordinateBounds(sw: MapPoint(latE7: south, lonE7: west).coordinate,
+                                        ne: MapPoint(latE7: north, lonE7: east).coordinate),
+                    edgePadding: UIEdgeInsets(top: 76, left: 30, bottom: 186, right: 30),
+                    animated: !UIAccessibility.isReduceMotionEnabled, completionHandler: nil
+                )
+            }
         case .zoom(let step): map.zoomLevel += step
         }
     }
@@ -282,16 +795,119 @@ private struct InteractiveRilaMap: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, MLNMapViewDelegate {
+        // Retain the verified pack until MapLibre has released this renderer.
         private let resources: ExploreMapResources
         private let onLoaded: () -> Void
         private let onFailure: () -> Void
         var cameraRequestID: UUID?
+        var centerRequestID: UUID?
+        private var renderedRouteID: UUID?
+        private var line: MLNPolyline?
+        private var locationPoint: MapPoint?
+        private var locationMarker: MLNPointAnnotation?
+        private var reportMarkers: [String: MLNPointAnnotation] = [:]
+        private var visibleReports: [ObjectIdentifier: StoredReport] = [:]
+        weak var locationPicker: UITapGestureRecognizer?
+        var onReport: ((StoredReport) -> Void)?
+        var onPickReportLocation: ((MapPoint) -> Void)?
 
-        init(resources: ExploreMapResources, cameraRequestID: UUID?, onLoaded: @escaping () -> Void, onFailure: @escaping () -> Void) {
+        init(resources: ExploreMapResources, onLoaded: @escaping () -> Void, onFailure: @escaping () -> Void) {
             self.resources = resources
-            self.cameraRequestID = cameraRequestID
             self.onLoaded = onLoaded
             self.onFailure = onFailure
+        }
+
+        func updateRoute(_ route: HikingRoute?, id: UUID?, on map: MLNMapView) {
+            guard id != renderedRouteID else { return }
+            renderedRouteID = id
+            if let line { map.removeAnnotation(line) }
+            line = nil
+            guard var coordinates = route?.points.map(\.coordinate), coordinates.count >= 2 else { return }
+            let overlay = MLNPolyline(coordinates: &coordinates, count: UInt(coordinates.count))
+            line = overlay
+            map.addAnnotation(overlay)
+        }
+
+        func updatePosition(_ point: MapPoint?, on map: MLNMapView) {
+            guard point != locationPoint else { return }
+            locationPoint = point
+            if let locationMarker { map.removeAnnotation(locationMarker) }
+            locationMarker = nil
+            guard let point else { return }
+            let marker = MLNPointAnnotation()
+            marker.coordinate = point.coordinate
+            marker.title = "My location"
+            locationMarker = marker
+            map.addAnnotation(marker)
+        }
+
+        func updateReports(_ reports: [StoredReport], on map: MLNMapView) {
+            let ids = Set(reports.map(\.bundleID))
+            for id in Array(reportMarkers.keys) where !ids.contains(id) {
+                if let marker = reportMarkers.removeValue(forKey: id) {
+                    visibleReports.removeValue(forKey: ObjectIdentifier(marker))
+                    map.removeAnnotation(marker)
+                }
+            }
+            for report in reports where reportMarkers[report.bundleID] == nil {
+                let marker = MLNPointAnnotation()
+                marker.coordinate = MapPoint(latE7: report.latitude, lonE7: report.longitude).coordinate
+                marker.title = ReportCategory.title(for: report)
+                reportMarkers[report.bundleID] = marker
+                visibleReports[ObjectIdentifier(marker)] = report
+                map.addAnnotation(marker)
+            }
+        }
+
+        @objc func pickReportLocation(_ recognizer: UITapGestureRecognizer) {
+            guard let map = recognizer.view as? MLNMapView,
+                  let point = MapPoint(coordinate: map.convert(recognizer.location(in: map), toCoordinateFrom: map)) else { return }
+            onPickReportLocation?(point)
+        }
+
+        func mapView(_ mapView: MLNMapView, didSelect annotation: any MLNAnnotation) {
+            guard let point = annotation as? MLNPointAnnotation,
+                  locationPicker?.isEnabled == false,
+                  let report = visibleReports[ObjectIdentifier(point)], ExploreReports.current(report) else { return }
+            mapView.deselectAnnotation(annotation, animated: false)
+            DispatchQueue.main.async { [weak self] in self?.onReport?(report) }
+        }
+
+        func mapView(_ mapView: MLNMapView, strokeColorForShapeAnnotation annotation: MLNShape) -> UIColor {
+            UIColor.systemBlue
+        }
+
+        func mapView(_ mapView: MLNMapView, lineWidthForPolylineAnnotation annotation: MLNPolyline) -> CGFloat {
+            5
+        }
+
+        func mapView(_ mapView: MLNMapView, imageFor annotation: any MLNAnnotation) -> MLNAnnotationImage? {
+            guard let point = annotation as? MLNPointAnnotation else { return nil }
+            let isLocation = point === locationMarker
+            guard isLocation || visibleReports[ObjectIdentifier(point)] != nil else { return nil }
+            let reuseID = isLocation ? "user-position" : "trail-report"
+            if let image = mapView.dequeueReusableAnnotationImage(withIdentifier: reuseID) { return image }
+            let image = UIGraphicsImageRenderer(size: CGSize(width: 24, height: 24)).image { context in
+                context.cgContext.setFillColor(UIColor.white.cgColor)
+                context.cgContext.fillEllipse(in: CGRect(x: 1, y: 1, width: 22, height: 22))
+                context.cgContext.setFillColor((isLocation ? UIColor.systemBlue : UIColor.systemOrange).cgColor)
+                context.cgContext.fillEllipse(in: CGRect(x: 4, y: 4, width: 16, height: 16))
+                if !isLocation {
+                    context.cgContext.setFillColor(UIColor.white.cgColor)
+                    context.cgContext.fill(CGRect(x: 8, y: 9, width: 8, height: 2))
+                    context.cgContext.fill(CGRect(x: 8, y: 13, width: 6, height: 2))
+                }
+            }
+            return MLNAnnotationImage(image: image, reuseIdentifier: reuseID)
+        }
+
+        func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
+            let configuration = UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+            for (name, symbol) in [("trailmesh-hut", "house.fill"), ("trailmesh-peak", "mountain.2.fill")] {
+                if let icon = UIImage(systemName: symbol, withConfiguration: configuration) {
+                    style.setImage(icon.withTintColor(.black, renderingMode: .alwaysOriginal), forName: name)
+                }
+            }
         }
 
         func mapViewDidFinishLoadingMap(_ mapView: MLNMapView) {

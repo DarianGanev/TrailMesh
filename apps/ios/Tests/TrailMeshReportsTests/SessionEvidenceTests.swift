@@ -34,6 +34,9 @@ final class SessionEvidenceTests: XCTestCase {
         let outgoing = try XCTUnwrap(loaded)
         XCTAssertEqual(records[0].originalWireSHA256, SHA256.hash(data: outgoing.wire).map { String(format: "%02x", $0) }.joined())
         _ = try await repository.author(ReportDraft(category: "note", status: "observed", observedAt: now, latitude: 0, longitude: 0, accuracy: 1, note: "normal report", expiresAt: now + 10000, maxHops: 1), identity: identity, now: now)
+        _ = try await repository.author(ReportDraft(category: "trail", status: "muddy", observedAt: now,
+            latitude: 0, longitude: 0, accuracy: 10, note: SyntheticTestReport.notePrefix + "abcdefgh",
+            expiresAt: now + 3_600_000, maxHops: 3), identity: identity, now: now)
         let filtered = try await repository.savedTestReportEvidence(now: now)
         XCTAssertEqual(filtered.count, 1)
         try await database.write { try $0.execute(sql: "UPDATE reports SET observed_at_ms = observed_at_ms + 1 WHERE bundle_id = ?", arguments: [id]) }

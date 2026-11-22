@@ -44,6 +44,69 @@ final class ReportPageTests: XCTestCase {
         let history = try await repository.reportPage(now: now + 10000, bounds: world, includeExpired: true)
         XCTAssertEqual(history.reports.count, 64); XCTAssertTrue(history.reports.allSatisfy(\.isExpired))
     }
+    func testMapScansPastFourFilteredPagesAndCapsCurrentMarkers() async throws {
+        let (_, now, _) = try exchangeFixture()
+        let repository = try ReportRepository(path: ":memory:")
+        let identity = try ReportIdentity.create(store: ExchangeMemoryKeyStore())
+        for i in 0..<130 {
+            _ = try await repository.author(draft(i, now: now, latitude: 2_000), identity: identity, now: now)
+        }
+        // Older in-bounds reports come after all 130 out-of-bounds rows.
+        for i in 130..<230 {
+            let candidate = ReportDraft(category: "note", status: "observed", observedAt: now - Int64(i + 10),
+                                        latitude: 0, longitude: 0, accuracy: 1, note: "map fixture",
+                                        expiresAt: now + 10_000, maxHops: 2)
+            _ = try await repository.author(candidate, identity: identity, now: now)
+        }
+        let local = ReportBounds(south: -1, north: 1, west: -1, east: 1)
+        let markers = try await repository.currentMapReports(bounds: local, clock: { now })
+        XCTAssertEqual(markers.count, 96)
+        XCTAssertTrue(markers.allSatisfy { $0.latitude == 0 && !$0.isExpired })
+        XCTAssertEqual(markers.map(\.observedAt), (130..<226).map { now - Int64($0 + 10) })
+    }
+
+    func testMapMarkersCanRefillWhenNewerReportsExpire() async throws {
+        let (_, now, _) = try exchangeFixture()
+        let repository = try ReportRepository(path: ":memory:")
+        let identity = try ReportIdentity.create(store: ExchangeMemoryKeyStore())
+        let older = ReportDraft(category: "note", status: "observed", observedAt: now - 1000,
+                                latitude: 0, longitude: 0, accuracy: 1, note: "older trail condition",
+                                expiresAt: now + 60_000, maxHops: 2)
+        guard case .stored(let olderID) = try await repository.author(older, identity: identity, now: now) else {
+            return XCTFail("Older report was not saved")
+        }
+        for i in 0..<96 {
+            _ = try await repository.author(draft(i, now: now), identity: identity, now: now)
+        }
+        let first = try await repository.currentMapReports(bounds: world, clock: { now })
+        XCTAssertEqual(first.count, 96)
+        XCTAssertFalse(first.contains { $0.bundleID == olderID })
+        let refreshed = try await repository.currentMapReports(bounds: world, clock: { now + 10_000 })
+        XCTAssertEqual(refreshed.map(\.bundleID), [olderID])
+    }
+
+    func testPageExposesVerifiedEffectiveExpiryAlongsideSignedExpiry() async throws {
+        let (_, now, _) = try exchangeFixture()
+        let source = try ReportRepository(path: ":memory:"), destination = try ReportRepository(path: ":memory:")
+        let identity = try ReportIdentity.create(store: ExchangeMemoryKeyStore())
+        let observed = now + 240_000
+        let expiry = observed + 259_200_000
+        let draft = ReportDraft(category: "note", status: "observed", observedAt: observed, latitude: 0,
+                                longitude: 0, accuracy: 1, note: "future within tolerance", expiresAt: expiry, maxHops: 2)
+        guard case .stored(let id) = try await source.author(draft, identity: identity, now: observed) else {
+            return XCTFail("source report rejected")
+        }
+        let outgoing = try await source.loadOutgoing(id, now: observed)
+        _ = try await destination.ingest(XCTUnwrap(outgoing).wire, now: now)
+        let page = try await destination.reportPage(now: now, bounds: world)
+        let saved = try XCTUnwrap(page.reports.first)
+        XCTAssertEqual(saved.expiresAt, expiry)
+        XCTAssertEqual(saved.effectiveExpiresAt, now + 259_200_000)
+        XCTAssertFalse(saved.isExpired)
+        let history = try await destination.reportPage(now: saved.effectiveExpiresAt, bounds: world, includeExpired: true)
+        XCTAssertEqual(history.reports.first?.isExpired, true)
+    }
+
     func testTamperingClockQuarantineAndPageLimitAreChecked() async throws {
         let (wire, now, _) = try exchangeFixture()
         let database = try ReportDatabase.open(path: ":memory:")

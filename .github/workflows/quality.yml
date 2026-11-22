@@ -440,7 +440,7 @@ jobs:
     name: iOS product simulator tests
     needs: [change-detection, map-region-build]
     if: needs.change-detection.outputs.ios == 'true'
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 35
     defaults:
       run:
@@ -449,8 +449,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Select Xcode with Swift 6.1
-        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+      - name: Select Xcode 26.6
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+          xcodebuild -version
       - name: Download verified regional test resources
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -464,7 +466,23 @@ jobs:
           cmp ../../protocol/exchange-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/exchange-v1-vectors.json
           cmp ../../protocol/relevance-v1-vectors.json Tests/TrailMeshReportsTests/Fixtures/relevance-v1-vectors.json
           cmp ../../protocol/session-v1-profile.json Tests/TrailMeshReportsTests/Fixtures/session-v1-profile.json
-          simulator_id="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; m=sorted(((r,x["udid"]) for r,es in d.items() if "iOS" in r for x in es if x["name"] == "iPhone 16"),reverse=True); print(m[0][1] if m else "")')"
+          simulator_id="$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          candidates = []
+          for runtime, entries in devices.items():
+              prefix = "com.apple.CoreSimulator.SimRuntime.iOS-"
+              if not runtime.startswith(prefix):
+                  continue
+              version = tuple(int(part) for part in runtime.removeprefix(prefix).split("-"))
+              if version[0] != 26:
+                  continue
+              candidates += [
+                  (version, device["name"] == "iPhone 17", device["udid"])
+                  for device in entries if device["name"] in ("iPhone 17", "iPhone 16")
+              ]
+          print(max(candidates)[2] if candidates else "")
+          ')"
           test -n "$simulator_id"
           echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
       - name: Run report repository tests on iPhone simulator
@@ -573,7 +591,7 @@ jobs:
     name: Unsigned iPhone product package
     needs: change-detection
     if: needs.change-detection.outputs.ios == 'true'
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 25
     defaults:
       run:
@@ -582,8 +600,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Select Xcode with Swift 6.1
-        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+      - name: Select Xcode 26.6
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+          xcodebuild -version
       - name: Build the distinct product app
         run: >-
           xcodebuild build -project Product/TrailMesh.xcodeproj -scheme TrailMesh

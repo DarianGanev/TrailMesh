@@ -96,6 +96,16 @@ public actor ReportRepository {
         }
     }
 
+    @discardableResult
+    public func recoverClockAfterUserConfirmation(clock: @Sendable () -> Int64) throws -> Int {
+        try recoverClockAfterUserConfirmation(now: clock())
+    }
+
+    @discardableResult
+    public func reclaimExpiredReportsAfterUserConfirmation(clock: @Sendable () -> Int64) throws -> Int {
+        try reclaimExpiredReportsAfterUserConfirmation(now: clock())
+    }
+
     /// Call only after the user confirms the device clock is corrected. Existing
     /// reports remain available as history but cannot become current or be relayed.
     @discardableResult
@@ -232,7 +242,8 @@ public actor ReportRepository {
                   body["supersedes"]?.string == supersedes else { throw ReportStoreError.conflictingStoredBundle }
             let report = StoredReport(bundleID: id, eventID: event, authorKey: author, category: category,
                 status: status, note: note, latitude: lat, longitude: lon, accuracy: accuracy,
-                observedAt: observed, admittedAt: admitted, expiresAt: expires, supersedes: supersedes,
+                observedAt: observed, admittedAt: admitted, expiresAt: expires,
+                effectiveExpiresAt: min(expires, localExpiry), supersedes: supersedes,
                 isExpired: quarantined || now >= min(expires, localExpiry), isQuarantined: quarantined)
             return (report, wire, canonical, signature)
         } catch {
@@ -426,6 +437,7 @@ public struct StoredReport: Sendable {
     public let observedAt: Int64
     public let admittedAt: Int64
     public let expiresAt: Int64
+    public let effectiveExpiresAt: Int64
     public let supersedes: String?
     public let isExpired: Bool
     public let isQuarantined: Bool

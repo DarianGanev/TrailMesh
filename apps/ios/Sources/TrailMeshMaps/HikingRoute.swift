@@ -1,10 +1,27 @@
 import Foundation
 
 public struct HikingRoute: Sendable {
+    public struct Maneuver: Sendable {
+        public let pointIndex: Int
+        public let instruction: String
+        public let type: Int?
+
+        public init(pointIndex: Int, instruction: String, type: Int? = nil) {
+            self.pointIndex = pointIndex
+            self.instruction = instruction
+            self.type = type
+        }
+
+        // Valhalla uses 4, 5, and 6 for destination, destination right, and destination left.
+        var isArrival: Bool { type.map { (4...6).contains($0) } ?? false }
+    }
+
     public let points: [MapPoint]
     public let distanceKm: Double, timeSeconds: Double
-    public init(points: [MapPoint], distanceKm: Double, timeSeconds: Double) {
+    public let maneuvers: [Maneuver]
+    public init(points: [MapPoint], distanceKm: Double, timeSeconds: Double, maneuvers: [Maneuver] = []) {
         self.points = points; self.distanceKm = distanceKm; self.timeSeconds = timeSeconds
+        self.maneuvers = maneuvers
     }
     public func relevancePoints() throws -> [MapPoint] {
         guard points.count >= 2, points.count <= 2048 else { throw MapFailure.relevanceTooComplex }
@@ -64,7 +81,22 @@ public struct HikingRoute: Sendable {
               let legs = trip["legs"] as? [[String: Any]], legs.count == 1, let shape = legs[0]["shape"] as? String else { throw MapFailure.invalidEngine }
         let points = try decodePolyline6(shape)
         guard meters(points[0], from) <= 100, meters(points[points.count - 1], to) <= 100 else { throw MapFailure.invalidEngine }
-        return HikingRoute(points: points, distanceKm: distance, timeSeconds: time)
+        var maneuvers: [Maneuver] = []
+        if let raw = legs[0]["maneuvers"] {
+            guard let maneuversJSON = raw as? [[String: Any]], maneuversJSON.count <= 2048 else {
+                throw MapFailure.invalidEngine
+            }
+            for maneuver in maneuversJSON {
+                guard let index = maneuver["begin_shape_index"] as? Int, points.indices.contains(index),
+                      let instruction = maneuver["instruction"] as? String, !instruction.isEmpty,
+                      instruction.utf8.count <= 1024,
+                      maneuvers.last.map({ $0.pointIndex <= index }) ?? true else {
+                    throw MapFailure.invalidEngine
+                }
+                maneuvers.append(Maneuver(pointIndex: index, instruction: instruction, type: maneuver["type"] as? Int))
+            }
+        }
+        return HikingRoute(points: points, distanceKm: distance, timeSeconds: time, maneuvers: maneuvers)
     }
     static func meters(_ a: MapPoint, _ b: MapPoint) -> Double {
         let lat1 = Double(a.latE7) * .pi / 1.8e9, lat2 = Double(b.latE7) * .pi / 1.8e9
