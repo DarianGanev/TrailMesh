@@ -32,4 +32,11 @@ object ReportNearbyPermissions {
                     )
                 else -> emptyList()
             }
+
+    fun forRequest(sdk: Int, missing: List<String>): List<String> {
+        val fine = Manifest.permission.ACCESS_FINE_LOCATION
+        val coarse = Manifest.permission.ACCESS_COARSE_LOCATION
+        // Android 12+ expects both in the same request, even if coarse was already granted.
+        return if (sdk >= 31 && fine in missing && coarse !in missing) missing + coarse else missing
+    }
 }

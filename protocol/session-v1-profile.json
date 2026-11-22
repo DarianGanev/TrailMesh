@@ -2,6 +2,7 @@
   "schema": "trailmesh.public-session-profile",
   "version": 1,
   "service_id": "org.trailmesh.reports.v1",
+  "field_service_id": "org.trailmesh.reports.field.v1",
   "advertisement_prefix": "TMR1|",
   "advertisement_bytes": 37,
   "advertisement_id": "32 lowercase hexadecimal characters, nonzero and temporary; lower ID initiates",

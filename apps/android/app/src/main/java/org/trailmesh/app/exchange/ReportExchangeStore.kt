@@ -49,10 +49,11 @@ class SelectedRepositoryExchangeStore(
     private val repository: ReportRepository,
     private val context: org.trailmesh.app.relevance.RelevanceContext?,
     private val clock: (() -> Long)? = null,
+    private val productOnly: Boolean = false,
 ) : ReportExchangeStore {
     override suspend fun initialCursor(now: Long) = repository.exchangeInventoryCursor(clock ?: {now})
-    override suspend fun inventoryPage(afterID: String?, limit: Int, now: Long) = repository.selectedInventoryPage(afterID,limit,clock ?: {now},context)
+    override suspend fun inventoryPage(afterID: String?, limit: Int, now: Long) = repository.selectedInventoryPage(afterID,limit,clock ?: {now},context,productOnly)
     override suspend fun currentIDs(ids: List<String>, now: Long) = repository.currentIDs(ids,clock ?: {now})
-    override suspend fun load(id: String, now: Long) = repository.loadSelectedForExchange(id,clock ?: {now},context)
+    override suspend fun load(id: String, now: Long) = repository.loadSelectedForExchange(id,clock ?: {now},context,productOnly)
     override suspend fun ingest(wire: ByteArray, remainingHops: Int, clock: () -> Long) = repository.ingestTransferred(wire,remainingHops,clock)
 }

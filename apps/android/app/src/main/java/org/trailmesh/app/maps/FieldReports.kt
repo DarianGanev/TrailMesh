@@ -27,6 +27,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import org.trailmesh.app.persistence.DiagnosticReportFixture
 import org.trailmesh.app.persistence.ReportBounds
 import org.trailmesh.app.persistence.ReportDraft
 import org.trailmesh.app.persistence.ReportPage
@@ -86,7 +87,7 @@ internal class FieldReports(
         withRepository { it.reportPage(System::currentTimeMillis, bounds, history, cursor, limit = 32) }
 
     fun fieldRows(rows: List<StoredReport>): List<StoredReport> = rows.filterNot {
-        isDiagnosticReportNote(it.note)
+        DiagnosticReportFixture.matches(it)
     }
 
     suspend fun mapRows(bounds: ReportBounds): List<StoredReport> =
@@ -443,7 +444,7 @@ internal suspend fun collectCurrentMapReports(
         val page = load(cursor)
         val now = clock()
         reports += page.reports.asSequence()
-            .filter { it.isCurrentAt(now) && !isDiagnosticReportNote(it.note) }
+            .filter { it.isCurrentAt(now) && !DiagnosticReportFixture.matches(it) }
             .take(96 - reports.size)
             .toList()
         cursor = page.nextCursor.takeIf { page.hasMore }

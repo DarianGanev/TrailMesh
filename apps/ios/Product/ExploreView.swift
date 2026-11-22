@@ -27,6 +27,10 @@ struct ExploreView: View {
     @State private var reportDraft = ExploreReportDraft()
     @State private var reportDestination: ReportDestination?
     @State private var pickingReportLocation = false
+    @State private var pickingNearbyArea = false
+    @State private var showingNearby = false
+    @State private var nearby = FieldNearbySession()
+    @State private var pickerNotice: String?
     @State private var pickCenterRequest: UUID?
     @State private var reportNotice: String?
     private struct MarkerRefresh: Equatable {
@@ -96,7 +100,8 @@ struct ExploreView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(showsMap ? .hidden : .visible, for: .navigationBar)
             .task { await model.reopen() }
-            .onChange(of: scenePhase) { _, phase in
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                synchronizeNearbyForeground()
                 location.setForeground(phase != .background)
                 if phase == .active {
                     markerRevision = UUID()
@@ -110,6 +115,9 @@ struct ExploreView: View {
                 if !ready {
                     clearRoute()
                     pickingReportLocation = false
+                    pickingNearbyArea = false
+                    showingNearby = false
+                    if nearby.intended { nearby.stop() }
                 }
             }
             .confirmationDialog("Replace the saved Rila map?", isPresented: $confirmingReplacement, titleVisibility: .visible) {
@@ -128,9 +136,26 @@ struct ExploreView: View {
             .sheet(isPresented: $showingDiagnostics, onDismiss: refreshAfterDiagnostics) {
                 ReportDevelopmentView(model: diagnostics)
             }
-            .onChange(of: scenePhase, initial: true) { _, value in diagnostics.setForeground(value == .active) }
+            .onChange(of: showingDiagnostics) { _, _ in synchronizeNearbyForeground() }
             #endif
         }
+    }
+
+    private var pickingMapPoint: Bool { pickingReportLocation || pickingNearbyArea }
+
+    private func synchronizeNearbyForeground() {
+        let active = scenePhase == .active
+        #if TRAILMESH_DEVELOPMENT
+        if showingDiagnostics {
+            nearby.setForeground(false)
+            diagnostics.setForeground(active)
+        } else {
+            diagnostics.setForeground(false)
+            nearby.setForeground(active)
+        }
+        #else
+        nearby.setForeground(active)
+        #endif
     }
 
     private var showsMap: Bool {
@@ -160,19 +185,21 @@ struct ExploreView: View {
                 route: route.result, routeID: route.geometryID,
                 currentPosition: location.recentFix.flatMap { MapPoint(coordinate: $0.coordinate) },
                 reports: reports.mapReports(in: resources.region.manifest, at: reportClock),
-                pickingReportLocation: pickingReportLocation,
+                pickingReportLocation: pickingMapPoint,
                 pickCenterRequest: pickCenterRequest,
                 onReport: { reportDestination = .details($0) },
                 onPickReportLocation: { point in
+                    guard pickingMapPoint else { return }
                     guard resources.region.manifest.contains(point) else {
-                        reportNotice = "Pick a point within the downloaded map."
+                        pickerNotice = "Pick a point within the downloaded map."
                         return
                     }
-                    reportDraft.position = .init(point: point, accuracy: 100, isGPS: false)
-                    reportNotice = nil
-                    pickingReportLocation = false
-                    pickCenterRequest = nil
-                    reportDestination = .compose
+                    if pickingNearbyArea {
+                        nearby.chooseArea(point)
+                    } else {
+                        reportDraft.position = .init(point: point, accuracy: 100, isGPS: false)
+                    }
+                    leavePointPicker()
                 },
                 onLoaded: { loadedStyleURL = resources.styleURL },
                 onFailure: { model.mapDidFail(resources) }
@@ -201,19 +228,15 @@ struct ExploreView: View {
                         .padding(12)
                         .background(.regularMaterial, in: Capsule())
                 }
-                if pickingReportLocation {
+                if pickingMapPoint {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Tap the map at the observation").font(.headline)
-                        if let reportNotice { Text(reportNotice).font(.subheadline) }
+                        Text(pickingNearbyArea ? "Tap the center of your 5 km sharing area" : "Tap the map at the observation")
+                            .font(.headline)
+                        if let pickerNotice { Text(pickerNotice).font(.subheadline) }
                         Button("Use map center") { pickCenterRequest = UUID() }
                             .frame(minHeight: 44)
-                        Button("Back to report") {
-                            pickingReportLocation = false
-                            pickCenterRequest = nil
-                            reportNotice = nil
-                            reportDestination = .compose
-                        }
-                        .frame(minHeight: 44)
+                        Button(pickingNearbyArea ? "Back to Nearby" : "Back to report", action: leavePointPicker)
+                            .frame(minHeight: 44)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
@@ -253,7 +276,7 @@ struct ExploreView: View {
                     .background(.background, in: RoundedRectangle(cornerRadius: 22))
                     .accessibilityElement(children: .contain)
                 }
-                if let locationNotice, !pickingReportLocation {
+                if let locationNotice, !pickingMapPoint {
                     HStack {
                         Text(locationNotice).font(.subheadline)
                         Spacer(minLength: 0)
@@ -267,7 +290,7 @@ struct ExploreView: View {
                     .padding(.leading, 12)
                     .background(.background, in: RoundedRectangle(cornerRadius: 16))
                 }
-                if let reportNotice, !pickingReportLocation {
+                if let reportNotice, !pickingMapPoint {
                     Text(reportNotice)
                         .font(.subheadline)
                         .padding(12)
@@ -324,8 +347,8 @@ struct ExploreView: View {
                     .foregroundStyle(.primary)
                     .disabled(!mapLoaded)
                 }
-                .disabled(pickingReportLocation)
-                if !pickingReportLocation {
+                .disabled(pickingMapPoint)
+                if !pickingMapPoint {
                     ViewThatFits {
                         HStack(spacing: 12) { fieldActions(resources) }
                         VStack(alignment: .leading, spacing: 4) { fieldActions(resources) }
@@ -376,10 +399,26 @@ struct ExploreView: View {
                 reportClock = now
             }
         }
+        .task(id: nearby.receiptRevision) {
+            guard nearby.receiptRevision != 0 else { return }
+            do {
+                try await Task.sleep(for: .milliseconds(350))
+                markerRevision = UUID()
+                reportClock = .now
+                if case .list? = reportDestination { await reports.page(in: resources.region.manifest) }
+            } catch {}
+        }
+        .sheet(isPresented: $showingNearby) {
+            FieldNearbyView(nearby: nearby, route: route.result) {
+                showingNearby = false
+                pickerNotice = nil
+                pickingNearbyArea = true
+            }
+        }
         .sheet(isPresented: $showingOfflineMaps) { offlineMaps(resources.region.manifest) }
         .onChange(of: location.fix) { _, fix in
             route.updateGuidance(using: location.recentFix)
-            guard !pickingReportLocation, locating || (route.navigating && followsHikePosition),
+            guard !pickingMapPoint, locating || (route.navigating && followsHikePosition),
                   let fix, location.recentFix != nil,
                   let point = MapPoint(coordinate: fix.coordinate) else { return }
             cameraRequest = ExploreCameraRequest(command: .location(point))
@@ -404,6 +443,7 @@ struct ExploreView: View {
             case .compose:
                 ExploreReportComposer(form: reportDraft, reports: reports, location: location, manifest: resources.region.manifest) {
                     reportDestination = nil
+                    pickerNotice = nil
                     pickingReportLocation = true
                 } saved: { point in
                     reportDestination = nil
@@ -461,6 +501,18 @@ struct ExploreView: View {
         }
     }
 
+    private func leavePointPicker() {
+        pickCenterRequest = nil
+        pickerNotice = nil
+        if pickingNearbyArea {
+            pickingNearbyArea = false
+            showingNearby = true
+        } else {
+            pickingReportLocation = false
+            reportDestination = .compose
+        }
+    }
+
     private func showLocationIssue(_ issue: ExploreLocation.Issue) {
         locationNotice = issue == .denied ? "Location access is off. You can still search the map." : "Couldn’t get your location."
         locating = false
@@ -509,6 +561,15 @@ struct ExploreView: View {
                 .exploreGlass(in: Capsule())
         }
         .buttonStyle(.plain)
+        Button { showingNearby = true } label: {
+            Label(nearby.state == .running ? "Sharing" : "Nearby", systemImage: "antenna.radiowaves.left.and.right")
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minHeight: 44)
+                .padding(.horizontal, 12)
+                .exploreGlass(in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens nearby report sharing")
     }
 
     private var routeCard: some View {

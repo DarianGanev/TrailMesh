@@ -210,13 +210,13 @@ internal class IdentityStoreCore(
 /**
  * Explicit creation and loading; a lost or invalidated identity is never replaced automatically.
  */
-class ProtectedSigningIdentityStore(context: android.content.Context) {
+class ProtectedSigningIdentityStore(context: android.content.Context, private val diagnostic: Boolean = false) {
     private val application = context.applicationContext
 
     private fun core() =
         IdentityStoreCore(
-            FileIdentityBlobStorage(File(application.noBackupFilesDir, "signing")),
-            AndroidWrappingKeys(),
+            FileIdentityBlobStorage(File(application.noBackupFilesDir, if (diagnostic) "diagnostic-signing" else "signing")),
+            AndroidWrappingKeys(if (diagnostic) "org.trailmesh.app.diagnostic-signing-wrap.v1" else "org.trailmesh.app.signing-wrap.v1"),
         )
 
     /** Creates once off the main thread; existing or orphaned wrapping keys are never replaced. */
@@ -230,8 +230,7 @@ class ProtectedSigningIdentityStore(context: android.content.Context) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { core().loadExisting() }
 }
 
-private class AndroidWrappingKeys : WrappingKeyProvider {
-    private val alias = "org.trailmesh.app.signing-wrap.v1"
+private class AndroidWrappingKeys(private val alias: String) : WrappingKeyProvider {
 
     private fun store() = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 

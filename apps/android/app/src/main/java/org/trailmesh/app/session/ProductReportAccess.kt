@@ -16,10 +16,13 @@ internal object ProductReportAccess {
 
     suspend fun open(context: Context) = ReportRepository.open(context, "product-reports.sqlite")
 
-    suspend fun signer(context: Context) = identityLock.withLock {
+    suspend fun openDiagnostics(context: Context) = ReportRepository.open(context, "diagnostic-reports.sqlite")
+
+    suspend fun signer(context: Context, diagnostic: Boolean = false) = identityLock.withLock {
         withContext(Dispatchers.IO) {
-            val preferences = context.getSharedPreferences("public-report-session", Context.MODE_PRIVATE)
-            val identity = ProtectedSigningIdentityStore(context)
+            val name = if (diagnostic) "diagnostic-report-identity" else "public-report-session"
+            val preferences = context.getSharedPreferences(name, Context.MODE_PRIVATE)
+            val identity = ProtectedSigningIdentityStore(context, diagnostic)
             ReportIdentityBootstrap.load(
                 initialized = { preferences.getBoolean(IDENTITY_INITIALIZED, false) },
                 markInitialized = {

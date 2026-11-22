@@ -61,6 +61,7 @@ class StoredReport(
     val expiresAt: Long,
     val effectiveExpiresAt: Long,
     val isLocal: Boolean,
+    val maxHops: Int,
     val latE7: Long,
     val lonE7: Long,
     val accuracyM: Long,
@@ -584,7 +585,10 @@ private constructor(
     suspend fun selectedInventoryPage(afterID: String?, limit: Int, now: Long, context: RelevanceContext?) = selectedInventoryPage(afterID,limit,{now},context)
 
     /** Selection and rotating cursor progress commit atomically under one fresh clock sample. */
-    suspend fun selectedInventoryPage(afterID: String?, limit: Int, clock: () -> Long, context: RelevanceContext?) = inventoryPageInternal(afterID,limit,clock,context,true)
+    suspend fun selectedInventoryPage(
+        afterID: String?, limit: Int, clock: () -> Long, context: RelevanceContext?,
+        productOnly: Boolean = false,
+    ) = inventoryPageInternal(afterID, limit, clock, context, true, productOnly)
 
     private suspend fun inventoryPageInternal(
         afterID: String?,
@@ -592,6 +596,7 @@ private constructor(
         clock: () -> Long,
         relevance: RelevanceContext? = null,
         applyRelevance: Boolean = false,
+        productOnly: Boolean = false,
     ): org.trailmesh.app.exchange.InventoryPage {
         require(limit in 1..8)
         require(afterID == null || afterID.matches(Regex("[0-9a-f]{64}")))
@@ -614,7 +619,9 @@ private constructor(
                         }
                         val checked = verified(c, now)
                         cursor = checked.report.bundleID
-                        if (!checked.report.isExpired && checked.remainingHops > 0 && (!applyRelevance || relevant(checked.report,relevance,now)))
+                        if (!checked.report.isExpired && checked.remainingHops > 0 &&
+                            (!productOnly || !DiagnosticReportFixture.matches(checked.report)) &&
+                            (!applyRelevance || relevant(checked.report, relevance, now)))
                             items.add(
                                 org.trailmesh.app.exchange.ReportDescriptor(
                                     cursor,
@@ -658,9 +665,14 @@ private constructor(
 
     suspend fun loadSelectedForExchange(id: String, now: Long, context: RelevanceContext?) = loadForExchangeInternal(id,{now},context,true)
 
-    suspend fun loadSelectedForExchange(id: String, clock: () -> Long, context: RelevanceContext?) = loadForExchangeInternal(id,clock,context,true)
+    suspend fun loadSelectedForExchange(
+        id: String, clock: () -> Long, context: RelevanceContext?, productOnly: Boolean = false,
+    ) = loadForExchangeInternal(id, clock, context, true, productOnly)
 
-    private suspend fun loadForExchangeInternal(id: String, clock: () -> Long, relevance: RelevanceContext?, applyRelevance: Boolean): org.trailmesh.app.exchange.OutgoingReport? =
+    private suspend fun loadForExchangeInternal(
+        id: String, clock: () -> Long, relevance: RelevanceContext?, applyRelevance: Boolean,
+        productOnly: Boolean = false,
+    ): org.trailmesh.app.exchange.OutgoingReport? =
         transaction { db ->
             val now=clock()
             observe(db, now)
@@ -668,7 +680,9 @@ private constructor(
                 if (!c.moveToFirst()) null
                 else {
                     val checked = verified(c, now)
-                    if (checked.report.isExpired || checked.remainingHops == 0 || (applyRelevance && !relevant(checked.report,relevance,now))) null
+                    if (checked.report.isExpired || checked.remainingHops == 0 ||
+                        (productOnly && DiagnosticReportFixture.matches(checked.report)) ||
+                        (applyRelevance && !relevant(checked.report, relevance, now))) null
                     else
                         org.trailmesh.app.exchange.OutgoingReport(
                             org.trailmesh.app.exchange.ReportDescriptor(
@@ -823,6 +837,7 @@ private constructor(
                     expiry,
                     local,
                     isLocal == 1L,
+                    v.maxHops,
                     p.latE7,
                     p.lonE7,
                     p.accuracyM,

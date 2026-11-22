@@ -172,6 +172,8 @@ final class ReportSessionTests: XCTestCase {
         let profile = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         let limits = try XCTUnwrap(profile["limits"] as? [String: Int])
         XCTAssertEqual(profile["service_id"] as? String, ReportAdvertisement.serviceID)
+        XCTAssertEqual(profile["field_service_id"] as? String, ReportAdvertisement.fieldServiceID)
+        XCTAssertNotEqual(ReportAdvertisement.fieldServiceID, ReportAdvertisement.serviceID)
         XCTAssertEqual(profile["advertisement_prefix"] as? String, "TMR1|")
         XCTAssertEqual(profile["advertisement_bytes"] as? Int, 37)
         XCTAssertEqual(profile["test_note_prefix"] as? String, SyntheticTestReport.notePrefix)
@@ -281,6 +283,8 @@ final class ReportSessionTests: XCTestCase {
         let identity = try ReportIdentity.create(store: ExchangeMemoryKeyStore())
         _ = try await repository.authorSyntheticTestReport(identity: identity, now: now)
         let coordinator = ReportSessionCoordinator(repository: repository, radio: radio, wallClock: { now }, monotonic: { 0 }, temporaryID: { "11111111111111111111111111111111" })
+        let receipts = ReceiptProbe()
+        coordinator.onReportStored = { receipts.count += 1 }
         coordinator.start(context: area, publicSharingConsent: true)
         let epoch = coordinator.radioEpoch
         let commonRepository = try ReportRepository(path: ":memory:")
@@ -293,6 +297,14 @@ final class ReportSessionTests: XCTestCase {
             let remote = try ReportRepository(path: ":memory:")
             let remoteIdentity = try ReportIdentity.create(store: ExchangeMemoryKeyStore())
             _ = try await remote.authorSyntheticTestReport(identity: remoteIdentity, now: now)
+            if i == 0 {
+                let draft = ReportDraft(category: "trail", status: "muddy", observedAt: now,
+                    latitude: 426977000, longitude: 233219000, accuracy: 10,
+                    note: "Ordinary trail report", expiresAt: now + 3600000, maxHops: 3)
+                guard case .stored = try await remote.author(draft, identity: remoteIdentity, now: now) else {
+                    return XCTFail("Couldn’t author the ordinary report")
+                }
+            }
             _ = try await remote.ingestTransferred(common, offeredHops: 3, now: now)
             repositories.append(remote)
             let endpoint = "peer\(i)"
@@ -314,10 +326,11 @@ final class ReportSessionTests: XCTestCase {
                 }
             } else { await Task.yield() }
             let local = try await repository.savedTestReportEvidence(now: now)
-            if local.count == 6, coordinator.activeLinkCount == 0 { break }
+            if local.count == 6, receipts.count == 6, coordinator.activeLinkCount == 0 { break }
         }
         let local = try await repository.savedTestReportEvidence(now: now)
         XCTAssertEqual(local.count, 6)
+        XCTAssertEqual(receipts.count, 6, "Five incoming test reports and one ordinary report each notify once")
         XCTAssertEqual(local.first { $0.bundleID == commonID }?.remainingHops, 1)
         XCTAssertTrue(local.contains { $0.remainingHops == 2 })
         for remote in repositories {
@@ -374,6 +387,11 @@ final class SessionTestClock: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: Int64 = 0
     var value: Int64 { get { lock.lock(); defer { lock.unlock() }; return stored } set { lock.lock(); stored = newValue; lock.unlock() } }
+}
+
+@MainActor
+private final class ReceiptProbe {
+    var count = 0
 }
 
 @MainActor

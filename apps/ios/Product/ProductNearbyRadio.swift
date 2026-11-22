@@ -8,6 +8,7 @@ import TrailMeshReports
 @MainActor
 final class ProductNearbyRadio: ReportSessionRadio {
     weak var delegate: (any ReportSessionRadioDelegate)?
+    private let serviceID: String
     private var manager: ConnectionManager?
     private var scanner: Discoverer?
     private var broadcaster: Advertiser?
@@ -15,10 +16,14 @@ final class ProductNearbyRadio: ReportSessionRadio {
     private var epoch: UInt64 = 0
     private var pending: [Int64: (ticket: UInt64, endpoint: String)] = [:]
     private enum SendFailure: Error { case unavailable, capacity }
+    init(serviceID: String = ReportAdvertisement.serviceID) {
+        self.serviceID = serviceID
+    }
+
     func start(advertisement: Data, epoch: UInt64) {
         stop()
         self.epoch = epoch
-        let manager = ConnectionManager(serviceID: ReportAdvertisement.serviceID, strategy: .cluster, queue: .main)
+        let manager = ConnectionManager(serviceID: serviceID, strategy: .cluster, queue: .main)
         manager.delegate = self
         let scanner = Discoverer(connectionManager: manager)
         scanner.delegate = self

@@ -21,7 +21,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="TrailMesh"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
-        <service android:name=".session.ReportSessionService" android:exported="false" android:foregroundServiceType="connectedDevice" />
+        <service android:name=".session.FieldReportSessionService" android:exported="false" android:foregroundServiceType="connectedDevice" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
