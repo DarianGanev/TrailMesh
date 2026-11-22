@@ -27,6 +27,7 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_AC50E857530F._tcp</string>
+		<string>_8DF410F9B55E._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>TrailMesh uses Nearby Connections for offline public-report exchange during your consented session.</string>

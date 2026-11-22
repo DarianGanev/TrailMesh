@@ -22,6 +22,8 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
     var beforeDispatchForTesting: (@MainActor (Data) async -> Void)?
     var readyActionBatchCount: Int { links.values.reduce(0) { $0 + $1.readyBatches.count } }
     public var onChange: (@MainActor () -> Void)?
+    /// Called after a new incoming report commits, even if the link closed while storage was finishing.
+    public var onReportStored: (@MainActor @Sendable () -> Void)?
     private let repository: ReportRepository
     private let radio: any ReportSessionRadio
     private let wallClock: @Sendable () -> Int64
@@ -177,7 +179,9 @@ public final class ReportSessionCoordinator: ReportSessionRadioDelegate {
             generation &+= 1
             let token = generation
             let selected = SelectedReportExchangeStore(repository: repository, context: context, clock: wallClock)
+            let onReportStored = self.onReportStored
             let store = SessionObservedStore(base: selected) { [weak self] outcome in
+                if case .stored = outcome { await onReportStored?() }
                 await self?.committed(outcome, peer: candidate.peer, generation: token)
             }
             let engine = ExchangeSession(store: store, nonce: try ReportAdvertisement.secureNonce(), generation: token, wallClock: wallClock)

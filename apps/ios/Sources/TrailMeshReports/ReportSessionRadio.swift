@@ -4,6 +4,7 @@ import Security
 /// Ephemeral compatible-session metadata, never an author identity or location.
 public struct ReportAdvertisement: Equatable, Sendable {
     public static let serviceID = "org.trailmesh.reports.v1"
+    public static let fieldServiceID = "org.trailmesh.reports.field.v1"
     public let sessionID: String
     public static func parse(_ data: Data) -> ReportAdvertisement? {
         guard data.count == 37, let text = String(data: data, encoding: .ascii), text.hasPrefix("TMR1|") else { return nil }
