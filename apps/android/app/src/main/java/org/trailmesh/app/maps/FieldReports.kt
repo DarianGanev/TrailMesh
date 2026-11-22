@@ -22,9 +22,11 @@ import android.widget.Spinner
 import android.widget.TextView
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.trailmesh.app.persistence.ReportBounds
 import org.trailmesh.app.persistence.ReportDraft
 import org.trailmesh.app.persistence.ReportPage
@@ -51,10 +53,33 @@ internal class FieldReports(
 ) {
     private val application = activity.applicationContext
     private var saving = false
+    private val activeReports = mutableMapOf<Dialog, () -> Unit>()
 
-    private suspend fun <T> withRepository(block: suspend (ReportRepository) -> T): T {
-        val repository = ProductReportAccess.open(application)
-        return try { block(repository) } finally { repository.close() }
+    fun refreshOpenReports() {
+        activeReports.toMap().forEach { (dialog, refresh) ->
+            if (dialog.isShowing) refresh()
+        }
+    }
+
+    fun close() {
+        activeReports.keys.toList().forEach { it.dismiss() }
+        activeReports.clear()
+    }
+
+    private suspend fun <T> withRepository(block: suspend (ReportRepository) -> T): T =
+        withContext(Dispatchers.IO) {
+            // Open and close before returning across the dispatcher boundary, where an already
+            // opened repository could otherwise be lost to prompt cancellation.
+            val repository = ProductReportAccess.open(application)
+            try { block(repository) } finally { repository.close() }
+        }
+
+    private fun registerRefresh(dialog: Dialog, refresh: () -> Unit, cleanup: () -> Unit) {
+        activeReports[dialog] = refresh
+        dialog.setOnDismissListener {
+            activeReports.remove(dialog)
+            cleanup()
+        }
     }
 
     suspend fun page(bounds: ReportBounds, history: Boolean = false, cursor: ReportPageCursor? = null): ReportPage =
@@ -77,6 +102,7 @@ internal class FieldReports(
         val rows = column()
         var history = false
         var next: ReportPageCursor? = null
+        var currentPage: ReportPageCursor? = null
         var loading: Job? = null
         var displayGeneration = 0
         val dialog = Dialog(activity, android.R.style.Theme_Material_Light_NoActionBar)
@@ -104,6 +130,7 @@ internal class FieldReports(
         dialog.setContentView(screen)
 
         fun load(cursor: ReportPageCursor? = null) {
+            currentPage = cursor
             val generation = ++displayGeneration
             loading?.cancel()
             next = null
@@ -163,7 +190,7 @@ internal class FieldReports(
         filters.addView(older, LinearLayout.LayoutParams(0, -2, 1f))
         panel.addView(filters)
         panel.addView(rows)
-        dialog.setOnDismissListener { loading?.cancel() }
+        registerRefresh(dialog, { load(currentPage) }, { loading?.cancel() })
         dialog.show()
         dialog.window?.let { window ->
             window.setLayout(-1, -1)
@@ -178,10 +205,10 @@ internal class FieldReports(
         val location = if (report.accuracyM == 0L) "Accuracy unavailable" else "About ${report.accuracyM} m accuracy"
         val source = if (report.isLocal) "Created on this phone" else "Received on this phone"
         val status = text("")
-        fun updateStatus() {
+        fun updateStatus(now: Long = System.currentTimeMillis()) {
             val state = when {
                 report.isQuarantined -> "Held after a clock change"
-                report.isCurrentAt(System.currentTimeMillis()) -> "Current"
+                report.isCurrentAt(now) -> "Current"
                 else -> "Expired"
             }
             status.text = "$state · $location"
@@ -208,14 +235,18 @@ internal class FieldReports(
             }
             .setNegativeButton("Close", null)
             .show()
-        val now = System.currentTimeMillis()
-        if (report.isCurrentAt(now)) {
-            val expiry = scope.launch {
+        var expiry: Job? = null
+        fun refresh() {
+            expiry?.cancel()
+            val now = System.currentTimeMillis()
+            updateStatus(now)
+            expiry = if (report.isCurrentAt(now)) scope.launch {
                 delay((report.effectiveExpiresAt - now).coerceAtLeast(1L))
                 updateStatus()
-            }
-            dialog.setOnDismissListener { expiry.cancel() }
+            } else null
         }
+        registerRefresh(dialog, ::refresh) { expiry?.cancel() }
+        refresh()
     }
 
     fun newReport(locationMessage: String = "Choose where you saw the condition.") {

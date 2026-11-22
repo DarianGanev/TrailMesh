@@ -25,6 +25,7 @@ internal sealed interface ExploreRegionState {
 
 /** Survives configuration changes. The activity destroys its renderer before releasing this owner. */
 internal class RilaRegion(private val root: File) {
+    val fieldRouteSession = FieldRouteSession()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutableState = MutableStateFlow<ExploreRegionState>(ExploreRegionState.Checking)
     val state: StateFlow<ExploreRegionState> = mutableState
@@ -127,6 +128,7 @@ internal class RilaRegion(private val root: File) {
                 }
             }
             if (removed) {
+                fieldRouteSession.clear()
                 lease = null
                 mutableState.value = ExploreRegionState.Available
             } else {

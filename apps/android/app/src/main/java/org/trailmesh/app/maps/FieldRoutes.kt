@@ -16,10 +16,28 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.ExecutionException
 import kotlin.math.roundToInt
 
+/** Main-thread route selection retained independently of any Activity, map or worker. */
+internal class FieldRouteSession {
+    var origin: MountainPlace? = null
+    var destination: MountainPlace? = null
+    var route: HikingRoute? = null
+    var maximumGrade = RouteParser.DEFAULT_HIKING_DIFFICULTY
+    var following = false
+
+    fun clear() {
+        origin = null
+        destination = null
+        route = null
+        maximumGrade = RouteParser.DEFAULT_HIKING_DIFFICULTY
+        following = false
+    }
+}
+
 internal class FieldRoutes(
     private val activity: Activity,
     private val scope: CoroutineScope,
     private val router: RegionRouter,
+    private val session: FieldRouteSession,
     private val selectPlace: ((MountainPlace) -> Unit) -> Unit,
     private val updateMap: (HikingRoute?, Boolean) -> Unit,
     private val updateGuidance: (String?) -> Unit,
@@ -27,17 +45,19 @@ internal class FieldRoutes(
     private val stopLocation: () -> Unit,
     private val openLocationSettings: () -> Unit,
 ) {
-    private var origin: MountainPlace? = null
-    private var destination: MountainPlace? = null
-    private var route: HikingRoute? = null
-    private var maximumGrade = RouteParser.DEFAULT_HIKING_DIFFICULTY
     private var computing = false
     private var guidanceJob: Job? = null
     private var routeJob: Job? = null
     private var planner: AlertDialog? = null
     private var waitingForLocation = false
-    var following = false
-        private set
+    val following: Boolean get() = session.following
+
+    fun restoreMap() {
+        val route = session.route ?: return
+        updateMap(route, false)
+        if (following) locationPaused()
+        else updateGuidance("Route ready · Start guidance from Route")
+    }
 
     fun open() {
         if (computing) {
@@ -46,7 +66,7 @@ internal class FieldRoutes(
         }
         if (following) {
             val controls = AlertDialog.Builder(activity)
-                .setTitle("Hike to ${destination?.name}")
+                .setTitle("Hike to ${session.destination?.name}")
                 .setMessage(if (waitingForLocation) "Allow location in Settings or follow the highlighted trail."
                     else "The route stays on this phone.")
                 .setPositiveButton("End guidance") { _, _ -> end() }
@@ -56,24 +76,24 @@ internal class FieldRoutes(
             return
         }
         val options = arrayOf(
-            "From · ${origin?.name ?: "Choose a start"}",
-            "To · ${destination?.name ?: "Choose a destination"}",
-            "Maximum trail grade · $maximumGrade",
+            "From · ${session.origin?.name ?: "Choose a start"}",
+            "To · ${session.destination?.name ?: "Choose a destination"}",
+            "Maximum trail grade · ${session.maximumGrade}",
         )
-        val current = route
+        val current = session.route
         val builder = AlertDialog.Builder(activity)
             .setTitle("Plan a hike")
             .setItems(options) { _, choice ->
                 if (choice == 2) {
                     val grades = Array(7) { "Grade $it" }
                     AlertDialog.Builder(activity).setTitle("Maximum trail grade")
-                        .setSingleChoiceItems(grades, maximumGrade) { dialog, grade ->
-                            maximumGrade = grade
+                        .setSingleChoiceItems(grades, session.maximumGrade) { dialog, grade ->
+                            session.maximumGrade = grade
                             dialog.dismiss()
                             resetPreview()
                         }.setNegativeButton("Back") { _, _ -> open() }.show()
                 } else selectPlace { place ->
-                    if (choice == 0) origin = place else destination = place
+                    if (choice == 0) session.origin = place else session.destination = place
                     resetPreview()
                 }
             }
@@ -90,28 +110,28 @@ internal class FieldRoutes(
             val header = LinearLayout(activity).apply { addView(summary) }
             builder.setCustomTitle(header)
                 .setPositiveButton("Start guidance") { _, _ ->
-                    following = true
+                    session.following = true
                     waitingForLocation = false
                     updateGuidance("Waiting for GPS · Follow the highlighted trail")
                     startLocation()
                 }
                 .setNeutralButton("Clear route") { _, _ -> end() }
-        } else if (origin != null && destination != null) {
+        } else if (session.origin != null && session.destination != null) {
             builder.setPositiveButton("Find route") { _, _ -> compute() }
         }
         planner = builder.show()
     }
 
     private fun resetPreview() {
-        route = null
+        session.route = null
         updateMap(null, false)
         updateGuidance(null)
         open()
     }
 
     private fun compute() {
-        val from = origin ?: return
-        val to = destination ?: return
+        val from = session.origin ?: return
+        val to = session.destination ?: return
         if (from.id == to.id || from.point == to.point) {
             AlertDialog.Builder(activity).setMessage("Choose a different start and destination.")
                 .setPositiveButton("OK") { _, _ -> open() }.show()
@@ -121,13 +141,13 @@ internal class FieldRoutes(
         updateGuidance("Finding a hiking route...")
         routeJob = scope.launch {
             try {
-                val pending = router.route(from.point, to.point, maximumGrade)
+                val pending = router.route(from.point, to.point, session.maximumGrade)
                 val result = try {
                     runInterruptible(Dispatchers.IO) { pending.get() }
                 } finally {
                     if (!isActive) pending.cancel(true)
                 }
-                route = result
+                session.route = result
                 updateMap(result, true)
                 updateGuidance("Route ready · Start guidance from Route")
             } catch (cancelled: CancellationException) {
@@ -136,7 +156,7 @@ internal class FieldRoutes(
                 val cause = (error as? ExecutionException)?.cause ?: error
                 val reason = (cause as? MapFailure)?.reason
                 updateGuidance(when (reason) {
-                    MapError.NO_ROUTE -> "No route at grade $maximumGrade. Check the endpoints and trail grade."
+                    MapError.NO_ROUTE -> "No route at grade ${session.maximumGrade}. Check the endpoints and trail grade."
                     MapError.OUTSIDE_COVERAGE -> "Both places need to be inside the offline map."
                     else -> "Could not calculate an offline route. Try again."
                 })
@@ -147,6 +167,7 @@ internal class FieldRoutes(
     }
 
     fun locationUnavailable() {
+        guidanceJob?.cancel()
         if (following) {
             waitingForLocation = true
             updateGuidance("Location unavailable · Follow the highlighted trail")
@@ -159,7 +180,7 @@ internal class FieldRoutes(
     }
 
     fun onLocation(fix: Location) {
-        val current = route ?: return
+        val current = session.route ?: return
         if (!following || guidanceJob?.isActive == true) return
         waitingForLocation = false
         if (fix.accuracy > 60f) {
@@ -169,7 +190,7 @@ internal class FieldRoutes(
         guidanceJob = scope.launch {
             val point = fix.mapPoint()
             val match = withContext(Dispatchers.Default) { current.matchPosition(point) }
-            if (route !== current || !following) return@launch
+            if (session.route !== current || !following) return@launch
             val lastPoint = current.points.last()
             when {
                 match.distanceM > maxOf(35.0, fix.accuracy * 2.0) ->
@@ -187,10 +208,10 @@ internal class FieldRoutes(
 
     fun end() {
         guidanceJob?.cancel()
-        following = false
+        session.following = false
         waitingForLocation = false
         stopLocation()
-        route = null
+        session.route = null
         updateMap(null, false)
         updateGuidance(null)
     }

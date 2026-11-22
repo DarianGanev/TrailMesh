@@ -13,6 +13,13 @@ import kotlin.math.ceil
 import kotlin.math.roundToLong
 
 internal const val FIELD_LOCATION_REQUEST = 21
+private const val FRESH_LOCATION_NANOS = 30_000_000_000L
+
+internal fun remainingLocationFixMillis(measuredAtNanos: Long, nowNanos: Long): Long {
+    if (measuredAtNanos < 0 || measuredAtNanos > nowNanos) return 0
+    val remaining = FRESH_LOCATION_NANOS - (nowNanos - measuredAtNanos)
+    return (remaining.coerceAtLeast(0) + 999_999L) / 1_000_000L
+}
 
 internal class FieldLocation(
     private val context: Context,
@@ -72,15 +79,14 @@ internal class FieldLocation(
     }
 
     private fun fresh(fix: Location): Boolean {
-        val age = SystemClock.elapsedRealtimeNanos() - fix.elapsedRealtimeNanos
-        return age in 0..FRESH_NANOS && fix.hasAccuracy() && fix.accuracy.isFinite() && fix.accuracy >= 0
+        return fix.remainingFreshMillis() > 0 && fix.hasAccuracy() && fix.accuracy.isFinite() && fix.accuracy >= 0
     }
 
     companion object {
         val PERMISSIONS = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
-        private const val FRESH_NANOS = 30_000_000_000L
     }
 }
 
 internal fun Location.mapPoint() = MapPoint((latitude * 1e7).roundToLong(), (longitude * 1e7).roundToLong())
 internal fun Location.reportAccuracy() = ceil(accuracy.toDouble()).toLong()
+internal fun Location.remainingFreshMillis() = remainingLocationFixMillis(elapsedRealtimeNanos, SystemClock.elapsedRealtimeNanos())

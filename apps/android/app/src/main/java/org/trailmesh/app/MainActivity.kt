@@ -2,7 +2,10 @@ package org.trailmesh.app
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.location.Location
@@ -73,6 +76,7 @@ import org.trailmesh.app.maps.ReportPoint
 import org.trailmesh.app.maps.latLng
 import org.trailmesh.app.maps.mapPoint
 import org.trailmesh.app.maps.reportAccuracy
+import org.trailmesh.app.maps.remainingFreshMillis
 import org.trailmesh.app.persistence.ReportBounds
 import org.trailmesh.app.persistence.StoredReport
 
@@ -106,6 +110,11 @@ class MainActivity : Activity() {
     private var mapReports: List<StoredReport> = emptyList()
     private var chooseReportPoint: ((ReportPoint) -> Unit)? = null
     private var guidance: TextView? = null
+    private val reportClockChanged = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_TIME_CHANGED) refreshFieldReports()
+        }
+    }
     private var pickLocation: LinearLayout? = null
     private var progressBar: ProgressBar? = null
     private var progressText: TextView? = null
@@ -188,6 +197,13 @@ class MainActivity : Activity() {
     override fun onStart() {
         super.onStart()
         started = true
+        val clockChanges = IntentFilter(Intent.ACTION_TIME_CHANGED)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(reportClockChanged, clockChanges, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(reportClockChanged, clockChanges)
+        }
         mapView?.onStart()
     }
 
@@ -199,8 +215,7 @@ class MainActivity : Activity() {
             if (location.hasPermission()) startFieldLocation()
             else if (!locationPermissionPending) fieldRoutes?.locationUnavailable()
         }
-        val ready = region.state.value as? ExploreRegionState.Ready
-        if (ready != null && fieldLayers != null) scheduleReports(ready)
+        refreshFieldReports()
     }
 
     override fun onPause() {
@@ -218,6 +233,7 @@ class MainActivity : Activity() {
 
     override fun onStop() {
         started = false
+        unregisterReceiver(reportClockChanged)
         mapView?.onStop()
         super.onStop()
     }
@@ -238,6 +254,7 @@ class MainActivity : Activity() {
         fieldRoutes?.close()
         fieldRoutes = null
         fieldLayers = null
+        fieldReports?.close()
         fieldReports = null
         reportRefresh?.cancel()
         reportExpiry?.cancel()
@@ -664,7 +681,7 @@ class MainActivity : Activity() {
         fieldRoutes = FieldRoutes(this, scope, RegionRouter(
             RegionStore(File(filesDir, "offline-regions")), manifest.id, manifest.revision,
             NativeValhallaFactory(cacheDir),
-        ), { select -> showPlaceSearch(state, select) }, ::showHikingRoute, ::showGuidance,
+        ), region.fieldRouteSession, { select -> showPlaceSearch(state, select) }, ::showHikingRoute, ::showGuidance,
             ::startFieldLocation, ::releaseUnusedLocation, ::openLocationSettings,
         )
         fieldReports = FieldReports(this, scope, ::startMapPointSelection, { result ->
@@ -700,7 +717,19 @@ class MainActivity : Activity() {
                 }
             }
         }
-        if (resumed) scheduleReports(state)
+        fieldRoutes?.restoreMap()
+        if (resumed) {
+            if (wantsContinuousLocation && location.hasPermission()) startFieldLocation()
+            else if (wantsContinuousLocation) fieldRoutes?.locationUnavailable()
+            scheduleReports(state)
+        }
+    }
+
+    private fun refreshFieldReports() {
+        if (!resumed) return
+        fieldReports?.refreshOpenReports()
+        val ready = region.state.value as? ExploreRegionState.Ready
+        if (ready != null && fieldLayers != null) scheduleReports(ready)
     }
 
     private fun reportBounds(state: ExploreRegionState.Ready) =
@@ -797,6 +826,7 @@ class MainActivity : Activity() {
     }
 
     private fun startFieldLocation() {
+        if (!resumed || fieldLayers == null || (!wantsContinuousLocation && locationOneShot == null)) return
         if (!location.hasPermission()) {
             if (!locationPermissionPending) {
                 locationPermissionPending = true
@@ -819,8 +849,9 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(request, permissions, grants)
         if (request != FIELD_LOCATION_REQUEST) return
         locationPermissionPending = false
-        if (grants.any { it == PackageManager.PERMISSION_GRANTED }) startFieldLocation()
-        else {
+        if (grants.any { it == PackageManager.PERMISSION_GRANTED }) {
+            if (wantsContinuousLocation || locationOneShot != null) startFieldLocation()
+        } else {
             locationRequested = false
             fieldRoutes?.locationUnavailable()
             finishLocationRequest(null)
@@ -828,13 +859,15 @@ class MainActivity : Activity() {
     }
 
     private fun showLocation(fix: Location) {
+        val remainingMillis = fix.remainingFreshMillis()
+        if (remainingMillis <= 0L) return
         val point = fix.mapPoint()
         if (wantsContinuousLocation) {
             fieldLayers?.showLocation(point)
             fieldRoutes?.onLocation(fix)
             fixExpiry?.cancel()
             fixExpiry = scope.launch {
-                delay(30_000L)
+                delay(remainingMillis)
                 fieldLayers?.showLocation(null)
                 fieldRoutes?.locationUnavailable()
             }

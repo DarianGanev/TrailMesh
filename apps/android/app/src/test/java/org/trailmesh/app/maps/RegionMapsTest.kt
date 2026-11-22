@@ -164,6 +164,16 @@ class RegionMapsTest {
     }
 
     @Test
+    fun `cached GPS fixes expire from measurement time`() {
+        val measured = 10_000_000_000L
+        assertEquals(30_000L, remainingLocationFixMillis(measured, measured))
+        assertEquals(1_000L, remainingLocationFixMillis(measured, measured + 29_000_000_000L))
+        assertEquals(1L, remainingLocationFixMillis(measured, measured + 29_999_999_999L))
+        assertEquals(0L, remainingLocationFixMillis(measured, measured + 30_000_000_000L))
+        assertEquals(0L, remainingLocationFixMillis(measured, measured - 1))
+    }
+
+    @Test
     fun `guidance matches the route segment and reports off route distance`() {
         val route = HikingRoute(listOf(MapPoint(0, 0), MapPoint(0, 10000), MapPoint(10000, 10000)), 0.2, 180.0)
         val mid = route.matchPosition(MapPoint(0, 5000))
