@@ -18,20 +18,15 @@ jobs:
           path: ${{ runner.temp }}/Rila
           github-token: ${{ github.token }}
           run-id: 45074808825
-      - name: Build real iPhone product for simulator
+      - name: Build and drive native iPhone menus
         shell: bash
         run: |
           sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
-          xcodebuild -version
-          xcodebuild build -project apps/ios/Product/TrailMesh.xcodeproj -scheme TrailMesh \
-            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/TrailMeshCapture" \
-            ARCHS=arm64 CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO -quiet
-      - name: Run and capture native product screens
-        run: python3 tools/ci/capture_iphone_screens.py "$RUNNER_TEMP"
+          python3 tools/ci/capture_iphone_screens.py "$RUNNER_TEMP" menus
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: TrailMesh-iPhone-UI-screens
+          name: TrailMesh-iPhone-UI-menus
           path: ${{ runner.temp }}/TrailMeshScreens
           retention-days: 14
           if-no-files-found: error
