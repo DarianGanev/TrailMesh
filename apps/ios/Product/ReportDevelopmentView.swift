@@ -6,6 +6,9 @@ struct ReportDevelopmentView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmRecovery = false
     @State private var confirmCleanup = false
+    #if targetEnvironment(simulator)
+    @State private var captureMaps = false
+    #endif
     var body: some View {
         NavigationStack {
             List {
@@ -50,6 +53,17 @@ struct ReportDevelopmentView: View {
                 }
             }
             .task { await model.load() }
+            #if targetEnvironment(simulator)
+            .navigationDestination(isPresented: $captureMaps) { MapDevelopmentView() }
+            .onAppear {
+                switch ScreenCapture.name {
+                case "diagnostics-clock-confirmation": confirmRecovery = true
+                case "diagnostics-cleanup-confirmation": confirmCleanup = true
+                case "diagnostics-maps": captureMaps = true
+                default: break
+                }
+            }
+            #endif
             .alert("Confirm corrected device clock?", isPresented: $confirmRecovery) {
                 Button("I corrected the clock") { model.recoverClockAfterConfirmation() }
                 Button("Cancel", role: .cancel) { }

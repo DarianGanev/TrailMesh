@@ -98,6 +98,10 @@ final class ExploreModel {
         self.manifestHash = manifestHash
     }
 
+    #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+    func capture(_ state: State) { self.state = state }
+    #endif
+
     func reopen() async {
         guard operation == nil, !opening else { return }
         opening = true

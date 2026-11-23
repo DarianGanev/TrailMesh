@@ -28,6 +28,34 @@ final class FieldNearbySession: NSObject, @preconcurrency CBCentralManagerDelega
     @ObservationIgnored private var bluetoothManager: CBCentralManager?
     @ObservationIgnored private var startTask: Task<Void, Never>?
 
+    #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+    func capture(_ name: String, point: MapPoint) {
+        switch name {
+        case "nearby-idle": return
+        case "nearby-stopped": didStop = true; return
+        case "nearby-interrupted": wasInterrupted = true; return
+        case "nearby-area-selected", "nearby-consented": chooseArea(point); return
+        default: break
+        }
+        if name != "nearby-active-route" { chooseArea(point) }
+        intended = true
+        bluetooth = .poweredOn
+        switch name {
+        case "nearby-active", "nearby-active-route": state = .running
+        case "nearby-received": state = .running; received = 2
+        case "nearby-bluetooth-off": bluetooth = .poweredOff
+        case "nearby-bluetooth-denied": bluetooth = .unauthorized
+        case "nearby-bluetooth-unsupported": bluetooth = .unsupported
+        case "nearby-bluetooth-pending": bluetooth = .unknown
+        case "nearby-opening": opening = true
+        case "nearby-storage-failed": state = .paused(.storageFailure)
+        case "nearby-radio-failed": state = .paused(.radioUnavailable)
+        case "nearby-route-unavailable": state = .paused(.configurationRequired)
+        default: state = .paused(.foregroundRequired)
+        }
+    }
+    #endif
+
     func selectRoute() {
         guard !intended else { return }
         scope = .route
@@ -154,7 +182,11 @@ struct FieldNearbyView: View {
     let nearby: FieldNearbySession
     let route: HikingRoute?
     let pickArea: () -> Void
+    #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+    @State private var consent = ScreenCapture.name == "nearby-consented"
+    #else
     @State private var consent = false
+    #endif
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
 

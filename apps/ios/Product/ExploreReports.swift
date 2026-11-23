@@ -65,6 +65,14 @@ final class ExploreReports {
     private var cursor: ReportPageCursor?
     private var requestID: UUID?
 
+    #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+    func capture(loading: Bool = false, error: String? = nil, hasMore: Bool = false) {
+        self.loading = loading
+        self.error = error
+        self.hasMore = hasMore
+    }
+    #endif
+
     func mapReports(in manifest: RegionManifest, at date: Date) -> [StoredReport] {
         guard markerRegion == manifest.key else { return [] }
         return mapEntries.filter { Self.current($0, at: date) }
@@ -300,7 +308,11 @@ struct ExploreReportsList: View {
     let refreshMarkers: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+    @State private var expired = ["reports-expired-empty", "reports-expired"].contains(ScreenCapture.name ?? "")
+    #else
     @State private var expired = false
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -378,6 +390,12 @@ private struct ExploreReportStorageActions: View {
             if working { ProgressView("Updating report storage…") }
             if let notice { Text(notice).foregroundStyle(.secondary) }
         }
+        #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+        .onAppear {
+            if ScreenCapture.name == "reports-clock-confirmation" { confirm(.recoverClock) }
+            if ScreenCapture.name == "reports-cleanup-confirmation" { confirm(.removeExpired) }
+        }
+        #endif
         .confirmationDialog(action?.title ?? "Report storage", isPresented: $showingConfirmation,
                             titleVisibility: .visible, presenting: action) { selected in
             Button("Confirm", role: .destructive) {
@@ -513,6 +531,20 @@ struct ExploreReportComposer: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(saving) }
             }
+            #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+            .onAppear {
+                switch ScreenCapture.name {
+                case "report-location-pending": waitingForLocation = true
+                case "report-location-denied": error = "Location access is off. Choose a point on the map."
+                case "report-location-unavailable": error = "Couldn’t get a precise location. Try again or choose on the map."
+                case "report-saving": saving = true
+                case "report-storage-error":
+                    error = "Report storage needs attention. Try again after checking the clock."
+                    storageNeedsAttention = true
+                default: break
+                }
+            }
+            #endif
             .onDisappear {
                 location.cancelFix(for: .composer)
             }

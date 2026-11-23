@@ -38,6 +38,14 @@ final class ExploreLocation: NSObject, @preconcurrency CLLocationManagerDelegate
         manager.distanceFilter = 5
     }
 
+    #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+    func capture(point: MapPoint? = nil, issue: Issue? = nil) {
+        self.issue = issue
+        fix = point.map { CLLocation(coordinate: .init(latitude: Double($0.latE7) / 1e7, longitude: Double($0.lonE7) / 1e7),
+                                     altitude: 1700, horizontalAccuracy: 8, verticalAccuracy: 10, timestamp: Date()) }
+    }
+    #endif
+
     func requestFix(for owner: FixOwner) {
         deadline?.cancel()
         requester = owner
@@ -138,6 +146,10 @@ final class ExploreRoute {
     private(set) var turnInstruction: String?
     private var lastMatch: (fixAt: Date, match: HikingRoute.Progress)?
     private var requestID: UUID?
+
+    #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+    func captureLoading() { loading = true }
+    #endif
 
     func setMaximumTrailGrade(_ grade: Int) {
         guard grade != maximumTrailGrade else { return }
@@ -299,7 +311,13 @@ struct ExploreRoutePlanner: View {
                     selecting = nil
                 }
             }
-            .onAppear { if destination == nil { destination = initialDestination } }
+            .onAppear {
+                if destination == nil { destination = initialDestination }
+                #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+                if ScreenCapture.name == "route-start-picker" { selecting = .start }
+                if ScreenCapture.name == "route-destination-picker" { selecting = .destination }
+                #endif
+            }
             .onDisappear {
                 request?.cancel()
                 location.cancelFix(for: .planner)

@@ -16,7 +16,12 @@ struct ExploreView: View {
         }
     }
 
+    #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+    @State private var model = ExploreModel(manifestHash: ScreenCapture.hash ?? RilaRegion.manifestHash)
+    @State private var capturePrepared = false
+    #else
     @State private var model = ExploreModel()
+    #endif
     @State private var route = ExploreRoute()
     @State private var location = ExploreLocation()
     @State private var showingRoutes = false
@@ -99,7 +104,15 @@ struct ExploreView: View {
             .navigationTitle("Explore")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(showsMap ? .hidden : .visible, for: .navigationBar)
-            .task { await model.reopen() }
+            .task {
+                #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+                if let name = ScreenCapture.name {
+                    await prepareCapture(name)
+                    return
+                }
+                #endif
+                await model.reopen()
+            }
             .onChange(of: scenePhase, initial: true) { _, phase in
                 synchronizeNearbyForeground()
                 location.setForeground(phase != .background)
@@ -141,6 +154,135 @@ struct ExploreView: View {
         }
     }
 
+    #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+    private func prepareCapture(_ name: String) async {
+        do {
+            switch name {
+            case "first-download":
+                await model.reopen()
+                guard case .needsDownload = model.state else { throw MapFailure.corrupt }
+            case "opening-rila": model.capture(.checking)
+            case "downloading-rila": model.capture(.downloading)
+            case "download-failed": model.capture(.downloadFailed("Check your connection, then try again."))
+            case "download-insufficient-space": model.capture(.downloadFailed("Free up some storage, then try again."))
+            case "map-repair", "map-replace-confirmation":
+                model.capture(.needsRepair("The saved map couldn’t be verified."))
+                confirmingReplacement = name == "map-replace-confirmation"
+            case "map-missing-resource": model.capture(.needsRepair("Part of the saved map is missing."))
+            case "map-open-failed": model.capture(.mapFailed)
+            case "diagnostics", "diagnostics-clock-confirmation", "diagnostics-cleanup-confirmation", "diagnostics-maps":
+                await model.reopen()
+                showingDiagnostics = true
+                await diagnostics.load()
+            default:
+                try await prepareMapCapture(name)
+                capturePrepared = true
+                return
+            }
+            await ScreenCapture.markReady()
+        } catch {
+            ScreenCapture.signal("error: \(error)")
+        }
+    }
+
+    private func prepareMapCapture(_ name: String) async throws {
+        await model.reopen()
+        guard case .ready(let resources) = model.state else { throw MapFailure.corrupt }
+        let smoke = try ScreenCapture.smoke()
+        if ["explore-location", "route-location", "report-location"].contains(name) {
+            location.capture(point: smoke.from)
+        }
+        if name == "explore-location" {
+            cameraRequest = ExploreCameraRequest(command: .location(smoke.from))
+        }
+        if ["explore-location-denied", "route-location-denied", "guidance-location-denied"].contains(name) {
+            location.capture(issue: .denied)
+            if name == "explore-location-denied" { showLocationIssue(.denied) }
+        }
+        if name == "explore-location-unavailable" {
+            location.capture(issue: .unavailable)
+            showLocationIssue(.unavailable)
+        }
+        if name == "place-details" {
+            guard let place = resources.places.search(smoke.query).first else { throw MapFailure.corrupt }
+            selectedPlace = place
+            cameraRequest = ExploreCameraRequest(command: .place(place))
+        }
+        if ["route-result", "route-preview", "route-no-result", "nearby-active-route"].contains(name) || name.hasPrefix("guidance-") {
+            route.setMaximumTrailGrade(name == "route-no-result" ? 2 : smoke.maximumHikingDifficulty)
+            await route.calculate(region: resources.region, from: smoke.from, to: smoke.to, destination: "Malyovitsa Peak")
+            if name == "route-no-result" {
+                guard route.error != nil else { throw MapFailure.corrupt }
+            } else {
+                guard let result = route.result else { throw MapFailure.noRoute }
+                cameraRequest = ExploreCameraRequest(command: .route(result.points))
+                if name.hasPrefix("guidance-") {
+                    if ["guidance-active", "guidance-centering-paused"].contains(name) {
+                        location.capture(point: smoke.from)
+                    }
+                    route.start(using: location.recentFix)
+                    followsHikePosition = name != "guidance-centering-paused"
+                }
+            }
+        }
+        if name.hasPrefix("route-") && name != "route-preview" {
+            if name == "route-loading" { route.captureLoading() }
+            showingRoutes = true
+        }
+        if name.hasPrefix("search-") { showingSearch = true }
+        if name == "offline-maps" { showingOfflineMaps = true }
+        if name == "map-credits" { showingCredits = true }
+        if name == "nearby-area-picker" || name == "nearby-area-outside" {
+            pickingNearbyArea = true
+            if name == "nearby-area-outside" { pickerNotice = "Pick a point within the downloaded map." }
+        } else if name.hasPrefix("nearby-") {
+            nearby.capture(name, point: smoke.from)
+            showingNearby = true
+        }
+        if name.hasPrefix("reports-") || name.hasPrefix("report-details") || ["report-on-map", "report-saved"].contains(name) {
+            if ["reports-recent", "reports-expired", "report-details", "report-details-expired", "report-on-map", "report-saved"].contains(name) {
+                try await seedCaptureReport(at: smoke.from, expired: name == "reports-expired" || name == "report-details-expired")
+            }
+            await reports.page(in: resources.region.manifest)
+            if name.hasPrefix("report-details") {
+                guard let report = reports.entries.first else { throw MapFailure.corrupt }
+                reportDestination = .details(report)
+            } else if ["report-on-map", "report-saved"].contains(name) {
+                cameraRequest = ExploreCameraRequest(command: .location(smoke.from))
+                await reports.refreshMapReports(in: resources.region.manifest)
+                markerRevision = UUID()
+                if name == "report-saved" { reportNotice = "Report saved on this phone." }
+            } else {
+                if name == "reports-loading" { reports.capture(loading: true) }
+                if name == "reports-more" { reports.capture(hasMore: true) }
+                if name == "reports-failed" { reports.capture(error: "Reports couldn’t open. Check your device clock and try again.") }
+                reportDestination = .list
+            }
+        } else if name == "report-pin-picker" || name == "report-pin-outside" {
+            pickingReportLocation = true
+            if name == "report-pin-outside" { pickerNotice = "Pick a point within the downloaded map." }
+        } else if name.hasPrefix("report-") {
+            if ["report-pin-selected", "report-ready-to-save", "report-saving", "report-location", "report-storage-error"].contains(name) {
+                reportDraft.position = .init(point: smoke.from, accuracy: name == "report-location" ? 8 : 100, isGPS: name == "report-location")
+                reportDraft.note = "Muddy trail near the hut after rain."
+            }
+            reportDraft.publicConsent = ["report-ready-to-save", "report-saving", "report-storage-error"].contains(name)
+            if name == "report-note-too-long" { reportDraft.note = String(repeating: "Long note. ", count: 49) }
+            reportDestination = .compose
+        }
+    }
+
+    private func seedCaptureReport(at point: MapPoint, expired: Bool) async throws {
+        let repository = try await ProductReportStorage.shared.repository()
+        let identity = try await ProductReportStorage.shared.identity()
+        let now = Int64(Date().timeIntervalSince1970 * 1000) - (expired ? 120_000 : 0)
+        let draft = ReportDraft(category: "trail", status: "muddy", observedAt: now - 1000,
+                                latitude: point.latE7, longitude: point.lonE7, accuracy: 100,
+                                note: "Muddy trail near the hut after rain.", expiresAt: now + (expired ? 60_000 : 86_000_000), maxHops: 4)
+        guard case .stored = try await repository.author(draft, identity: identity, now: now) else { throw MapFailure.corrupt }
+    }
+    #endif
+
     private var pickingMapPoint: Bool { pickingReportLocation || pickingNearbyArea }
 
     private func synchronizeNearbyForeground() {
@@ -178,7 +320,12 @@ struct ExploreView: View {
     }
 
     private func mapPage(_ resources: ExploreMapResources) -> some View {
+        #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+        let captureMapReady = loadedStyleURL == resources.styleURL
+        let mapLoaded = captureMapReady && ScreenCapture.name != "map-loading"
+        #else
         let mapLoaded = loadedStyleURL == resources.styleURL
+        #endif
         return ZStack {
             InteractiveRilaMap(
                 resources: resources, cameraRequest: cameraRequest,
@@ -379,6 +526,12 @@ struct ExploreView: View {
             }
             .padding(.horizontal, 16)
         }
+        #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+        .task(id: capturePrepared && captureMapReady) {
+            guard capturePrepared && captureMapReady else { return }
+            await ScreenCapture.markReady()
+        }
+        #endif
         .task(id: mapLoaded) {
             guard mapLoaded, creditedStyleURL != resources.styleURL else { return }
             do {
@@ -389,6 +542,9 @@ struct ExploreView: View {
         .task(id: MarkerRefresh(styleURL: resources.styleURL, revision: markerRevision,
                                 foreground: scenePhase != .background)) {
             guard scenePhase != .background else { return }
+            #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+            if ScreenCapture.name != nil { return }
+            #endif
             await reports.refreshMapReports(in: resources.region.manifest)
         }
         .task(id: resources.styleURL) {
@@ -707,6 +863,15 @@ struct ExplorePlaceSearch: View {
             }
             .navigationTitle("Find a place")
             .navigationBarTitleDisplayMode(.inline)
+            #if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+            .onAppear {
+                switch ScreenCapture.name {
+                case "search-results": query = "Malyovitsa"
+                case "search-no-results": query = "zzzxxyy"
+                default: break
+                }
+            }
+            #endif
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search Rila")
             .task(id: searchTerm) {
                 let term = searchTerm
@@ -980,3 +1145,29 @@ private struct InteractiveRilaMap: UIViewRepresentable {
         }
     }
 }
+
+#if TRAILMESH_DEVELOPMENT && targetEnvironment(simulator)
+enum ScreenCapture {
+    struct Smoke: Decodable {
+        let from: MapPoint
+        let to: MapPoint
+        let query: String
+        let maximumHikingDifficulty: Int
+    }
+
+    static var name: String? { ProcessInfo.processInfo.environment["TRAILMESH_CAPTURE_SCREEN"] }
+    static var hash: String? { ProcessInfo.processInfo.environment["TRAILMESH_CAPTURE_MAP_HASH"] }
+    static func smoke() throws -> Smoke {
+        try JSONDecoder().decode(Smoke.self, from: Data(contentsOf: URL.documentsDirectory.appendingPathComponent("capture-rila.json")))
+    }
+    static func signal(_ message: String) {
+        try? Data(message.utf8).write(to: URL.documentsDirectory.appendingPathComponent("capture-status.txt"), options: .atomic)
+    }
+    static func markReady() async {
+        do {
+            try await Task.sleep(for: .seconds(2))
+            signal("ready")
+        } catch {}
+    }
+}
+#endif
