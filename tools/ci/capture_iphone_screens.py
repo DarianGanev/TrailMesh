@@ -74,9 +74,9 @@ def menu_screens():
                                  for phone in entries if phone["name"] in ("iPhone 16", "iPhone 17"))
     if state != "Booted":
         command("boot", simulator, timeout=45)
-    command("bootstatus", simulator, "-b", timeout=180)
+    command("bootstatus", simulator, "-b", timeout=360)
     command("status_bar", simulator, "override", "--time", "9:41", "--wifiMode", "active", "--wifiBars", 3,
-            "--cellularMode", "active", "--cellularBars", 4, "--batteryState", "unplugged", "--batteryLevel", 100)
+            "--cellularMode", "active", "--cellularBars", 4, "--batteryState", "discharging", "--batteryLevel", 100)
     command("ui", simulator, "appearance", "light")
     build = ["xcodebuild", "-project", "apps/ios/Product/TrailMesh.xcodeproj", "-scheme", "TrailMesh",
              "-destination", f"platform=iOS Simulator,id={simulator}",
@@ -107,16 +107,17 @@ def main():
     devices = json.loads(command("list", "devices", "available", "--json", capture_output=True).stdout)["devices"]
     prefix = "com.apple.CoreSimulator.SimRuntime.iOS-"
     candidates = [(tuple(int(p) for p in runtime.removeprefix(prefix).split("-")),
-                   phone["name"] == "iPhone 17", phone["udid"], phone["name"])
+                   phone["name"] == "iPhone 17", phone["udid"], phone["name"], phone["state"])
                   for runtime, phones in devices.items() if runtime.startswith(prefix + "26-")
                   for phone in phones if phone["name"] in ("iPhone 16", "iPhone 17")]
-    version, _, simulator, model = max(candidates)
+    version, _, simulator, model, state = max(candidates)
     index.update(model=model, osVersion=".".join(map(str, version)))
-    command("boot", simulator, timeout=45)
-    command("bootstatus", simulator, "-b", timeout=180)
+    if state != "Booted":
+        command("boot", simulator, timeout=45)
+    command("bootstatus", simulator, "-b", timeout=360)
     command("status_bar", simulator, "override", "--time", "9:41", "--dataNetwork", "wifi",
             "--wifiMode", "active", "--wifiBars", 3, "--cellularMode", "active", "--cellularBars", 4,
-            "--batteryState", "unplugged", "--batteryLevel", 100)
+            "--batteryState", "discharging", "--batteryLevel", 100)
     command("ui", simulator, "appearance", "light")
     command("install", simulator, BASE / "TrailMeshCapture/Build/Products/Debug-iphonesimulator/TrailMesh.app")
     data = Path(command("get_app_container", simulator, BUNDLE, "data", capture_output=True).stdout.strip())
